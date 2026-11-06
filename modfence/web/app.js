@@ -1,15 +1,16 @@
-/* modfence UI: a module graph you can click, and a scoped conversation with Claude Code per module. No dependencies. */
+/* modfence UI: see the modules, fence the ones the agent may edit, give an instruction, review what changed. */
 "use strict";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const NODE_W = 216, NODE_H = 74, GAP_X = 44, GAP_Y = 78;
+const NODE_W = 220, NODE_H = 76, GAP_X = 36, GAP_Y = 52;
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || "");
 
 const S = {
-  projects: [], p: 0, graph: null, pos: {}, rows: [], view: "graph", selected: null, scope: new Set(), tab: "over",
-  marks: { changed: new Set(), ripple: new Set() }, job: null, es: null, tasks: [],
-  cam: { x: 0, y: 0, k: 1 }, camV: { x: 0, y: 0, k: 0 }, camTarget: null, raf: 0,
+  projects: [], p: 0, graph: null, pos: {}, rows: [], view: "graph", selected: null, scope: new Set(), readOnly: false,
+  tab: "over", marks: { changed: new Set(), ripple: new Set(), stats: {} }, job: null, tasks: [], claude: null,
+  cam: { x: 0, y: 0, k: 1 }, camV: { x: 0, y: 0, k: 0 }, camTarget: null, raf: 0, userCam: false,
 };
 
 /* ---------------- api ---------------- */
@@ -26,14 +27,14 @@ const q = (extra = "") => `p=${S.p}${extra}`;
 async function boot() {
   applyTheme(store.get("modfence.theme") || "auto");
   const { projects, claude } = await api("/api/projects");
-  S.projects = projects;
+  S.projects = projects; S.claude = claude;
   const saved = Number(store.get("modfence.project") || 0);
   S.p = projects[saved] ? saved : 0;
   $("#picker").innerHTML = projects.map((p) => `<option value="${p.i}">${esc(p.name)}</option>`).join("");
-  $("#picker").value = S.p;
   const hp = new URLSearchParams(location.hash.slice(1));
-  if (hp.get("p") && projects[+hp.get("p")]) { S.p = +hp.get("p"); $("#picker").value = S.p; }
-  if (!claude) toast("Claude Code CLI not found: set CLAUDE_BIN and restart modfence.", false, 8000);
+  if (hp.get("p") && projects[+hp.get("p")]) S.p = +hp.get("p");
+  $("#picker").value = S.p;
+  if (IS_MAC) $("#chint").innerHTML = "<kbd>⌘</kbd> <kbd>Enter</kbd> to run";
   await loadGraph(true);
   setView(hp.get("v") || store.get("modfence.view") || "graph");
   if (hp.get("m") && mod(hp.get("m"))) { if (hp.get("tab")) S.tab = hp.get("tab"); select(hp.get("m")); }
@@ -48,16 +49,19 @@ async function loadGraph(fit) {
   if (fit) fitView(false);
   loadTasks();
   if (S.selected && !mod(S.selected)) closePanel();
-  else if (S.selected) renderOverview();
+  else if (S.selected) { renderHeader(); renderOverview(); renderFence(); }
 }
 
 function mod(id) { return S.graph && S.graph.modules.find((m) => m.id === id); }
 const label = (id) => (id === "." ? "(root)" : id.split("/").pop());
 const parent = (id) => (id.includes("/") ? id.slice(0, id.lastIndexOf("/")) : "");
+const shown = (id) => (id === "." ? "(root)" : id);
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+const maxLines = () => Math.max(1, ...S.graph.modules.map((m) => m.lines));
 
 function updateStats() {
   const g = S.graph, files = Object.keys(g.files).length, lines = g.modules.reduce((a, m) => a + m.lines, 0);
-  $("#stats").textContent = `${g.modules.length} modules · ${files} files · ${lines.toLocaleString()} lines`;
+  $("#stats").textContent = `${plural(g.modules.length, "module")} · ${plural(files, "file")} · ${lines.toLocaleString()} lines`;
 }
 
 /* ---------------- layout: layered, foundations at the bottom ---------------- */
@@ -94,7 +98,7 @@ function layout() {
       rows[ri].sort((a, b) => bc(a) - bc(b) || a.localeCompare(b));
     }
   }
-  S.rows = rows.map((r) => r.slice());
+  S.rows = rows.map((row) => row.slice());
   S.pos = {};
   rows.forEach((row, ri) => row.forEach((id, k) => {
     S.pos[id] = { x: (k - (row.length - 1) / 2) * (NODE_W + GAP_X) - NODE_W / 2, y: ri * (NODE_H + GAP_Y) };
@@ -118,17 +122,16 @@ function edgePath(e, spread) {
   }
   if (b.y > a.y) {
     const sx = a.x + NODE_W / 2 + spread.out, sy = a.y + NODE_H, tx = b.x + NODE_W / 2 + spread.in, ty = b.y - 3;
-    const dy = Math.max(36, (ty - sy) * 0.5);
+    const dy = Math.max(32, (ty - sy) * 0.5);
     return `M${sx},${sy} C${sx},${sy + dy} ${tx},${ty - dy} ${tx},${ty}`;
   }
-  // same row or upward (a cycle): loop around the right side
-  const sx = a.x + NODE_W, sy = a.y + NODE_H / 2, tx = b.x + NODE_W + 3, ty = b.y + NODE_H / 2;
+  const sx = a.x + NODE_W, sy = a.y + NODE_H / 2, tx = b.x + NODE_W + 3, ty = b.y + NODE_H / 2; // a cycle: around the right
   const bulge = 60 + Math.abs(ty - sy) * 0.2;
   return `M${sx},${sy} C${sx + bulge},${sy} ${tx + bulge},${ty} ${tx},${ty}`;
 }
 
 function drawGraph() {
-  const g = S.graph, eg = $("#edges"), ng = $("#nodes");
+  const g = S.graph, eg = $("#edges"), ng = $("#nodes"), mx = maxLines();
   eg.innerHTML = ""; ng.innerHTML = "";
   const outs = {}, ins = {};
   g.edges.forEach((e) => { (outs[e.source] ||= []).push(e); (ins[e.target] ||= []).push(e); });
@@ -141,35 +144,39 @@ function drawGraph() {
   Object.values(ins).forEach((l) => assign(l, "in", "source"));
   routeLanes(g);
   g.edges.forEach((e) => {
-    const d = edgePath(e, spread.get(e));
-    const w = 1.3 + Math.min(2, Math.log2(e.receipts.length));
+    const d = (e._d = edgePath(e, spread.get(e)));
     e._base = mod(e.source).kind === "tests" ? "edge from-tests" : "edge";
-    const p = el("path", { d, class: e._base, "marker-end": "url(#ah)", "stroke-width": w, "data-s": e.source, "data-t": e.target }, eg);
+    e._el = el("path", { d, class: e._base, "marker-end": "url(#ah)", "stroke-width": 1.3 + Math.min(2, Math.log2(e.receipts.length)) }, eg);
     const hit = el("path", { d, class: "edge-hit" }, eg);
     hit.addEventListener("pointerdown", (ev) => ev.stopPropagation());
     hit.addEventListener("pointerenter", (ev) => showEdgeTip(ev, e));
     hit.addEventListener("pointermove", moveTip);
     hit.addEventListener("pointerleave", hideTip);
     hit.addEventListener("click", () => { const r = e.receipts[0]; openFile(r.file, e.receipts.filter((x) => x.file === r.file).map((x) => x.line)); });
-    e._el = p;
   });
   g.modules.forEach((m) => {
     const { x, y } = S.pos[m.id];
-    const n = el("g", { class: `node ${m.kind === "tests" ? "tests" : ""}`, transform: `translate(${x},${y})`, tabindex: 0, role: "button", "aria-label": `Module ${m.id}`, "data-id": m.id }, ng);
-    el("rect", { class: "ring", x: -3, y: -3, width: NODE_W + 6, height: NODE_H + 6, rx: 17 }, n);
-    el("rect", { class: "card", width: NODE_W, height: NODE_H, rx: 14 }, n);
-    el("rect", { class: "accent", x: 14, y: 19, width: 8, height: 8, rx: 4 }, n);
-    const name = el("text", { class: "name", x: 30, y: 28 }, n);
-    name.textContent = clip(label(m.id), 20);
-    const meta = el("text", { class: "meta", x: 14, y: 54 }, n);
-    const pre = parent(m.id);
-    meta.textContent = clip(`${pre ? pre + " · " : ""}${m.files.length} file${m.files.length === 1 ? "" : "s"} · ${m.lines} lines`, 30);
+    const n = el("g", { class: `node${m.kind === "tests" ? " tests" : ""}`, transform: `translate(${x},${y})`, tabindex: 0, role: "button", "data-id": m.id }, ng);
+    el("rect", { class: "ring", x: -3, y: -3, width: NODE_W + 6, height: NODE_H + 6, rx: 10 }, n);
+    el("rect", { class: "card", width: NODE_W, height: NODE_H, rx: 7 }, n);
+    el("rect", { class: "fill", width: NODE_W, height: NODE_H, rx: 7 }, n);
+    const name = el("text", { class: "name", x: 12, y: 25 }, n);
+    name.textContent = clip(label(m.id), 22);
+    const meta = el("text", { class: "meta", x: 12, y: 45 }, n);
+    meta.textContent = clip(`${parent(m.id) ? parent(m.id) + "/ · " : ""}${plural(m.files.length, "file")}`, 30);
+    el("rect", { class: "bar-bg", x: 12, y: 57, width: NODE_W - 24, height: 5, rx: 2.5 }, n);
+    el("rect", { class: "bar", x: 12, y: 57, width: Math.max(3, (NODE_W - 24) * (m.lines / mx)), height: 5, rx: 2.5 }, n);
+    const lines = el("text", { class: "meta", x: NODE_W - 12, y: 45, "text-anchor": "end" }, n);
+    lines.textContent = `${m.lines} ln`;
+    el("text", { class: "tag", x: NODE_W - 12, y: 25, "text-anchor": "end", "data-tag": "" }, n);
     if (m.files.some((f) => S.graph.files[f].error)) n.classList.add("error");
     n.addEventListener("pointerdown", (ev) => ev.stopPropagation());
     n.addEventListener("click", (ev) => onNodeClick(m.id, ev));
     n.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onNodeClick(m.id, ev); } });
     n.addEventListener("pointerenter", () => hoverNode(m.id, true));
     n.addEventListener("pointerleave", () => hoverNode(m.id, false));
+    n.addEventListener("focus", () => hoverNode(m.id, true));
+    n.addEventListener("blur", () => hoverNode(m.id, false));
   });
   paintSelection();
 }
@@ -180,7 +187,7 @@ function routeLanes(g) {
   Object.entries(S.pos).forEach(([id, p]) => (byRow[rowOf(id)] ||= []).push(p));
   const lanes = { left: 0, right: 0 };
   S.extent = { x0: Infinity, x1: -Infinity };
-  g.edges.forEach((e, k) => {
+  g.edges.forEach((e) => {
     e._lane = 0;
     const rs = rowOf(e.source), rt = rowOf(e.target);
     if (rt - rs < 2) return;
@@ -191,7 +198,7 @@ function routeLanes(g) {
     const dx = S.pos[e.target].x - S.pos[e.source].x;
     const side = dx > 1 ? "right" : dx < -1 ? "left" : lanes.right <= lanes.left ? "right" : "left";
     const n = lanes[side]++;
-    e._lane = side === "right" ? maxX + 26 + n * 14 : minX - 26 - n * 14;
+    e._lane = side === "right" ? maxX + 24 + n * 12 : minX - 24 - n * 12;
     S.extent.x0 = Math.min(S.extent.x0, e._lane);
     S.extent.x1 = Math.max(S.extent.x1, e._lane);
   });
@@ -203,32 +210,62 @@ function related(id) {
   S.graph.edges.forEach((e) => { if (e.source === id) dep.add(e.target); if (e.target === id) use.add(e.source); });
   return { dep, use };
 }
+function fenced(id) { return S.selected !== null && !S.readOnly && S.scope.has(id); }
+function stateWords(id, rel, focus) {
+  const w = [];
+  if (id === S.selected) w.push("selected");
+  if (fenced(id)) w.push("editable");
+  if (focus && rel.dep.has(id)) w.push(`${shown(focus)} depends on it`);
+  if (focus && rel.use.has(id)) w.push(`uses ${shown(focus)}`);
+  const st = S.marks.stats[id];
+  if (S.marks.changed.has(id)) w.push(st ? `changed, ${st.plus} added and ${st.minus} removed lines` : "changed");
+  else if (S.marks.ripple.has(id)) w.push("imports changed code");
+  return w;
+}
+function diffTag(id) { const st = S.marks.stats[id]; return st ? `+${st.plus} −${st.minus}` : ""; }
 
 function paintSelection(hover) {
   const focus = hover || S.selected;
   const rel = focus ? related(focus) : { dep: new Set(), use: new Set() };
   document.querySelectorAll(".node").forEach((n) => {
-    const id = n.dataset.id;
+    const id = n.dataset.id, m = mod(id);
     n.classList.toggle("selected", id === S.selected);
-    n.classList.toggle("inscope", S.scope.has(id) && id !== S.selected);
-    n.classList.toggle("dep", focus && rel.dep.has(id));
-    n.classList.toggle("use", focus && rel.use.has(id));
-    n.classList.toggle("faded", !!focus && id !== focus && !rel.dep.has(id) && !rel.use.has(id) && !S.scope.has(id));
+    n.classList.toggle("fenced", fenced(id));
+    n.classList.toggle("dep", !!focus && rel.dep.has(id));
+    n.classList.toggle("use", !!focus && rel.use.has(id));
+    n.classList.toggle("faded", !!focus && id !== focus && !rel.dep.has(id) && !rel.use.has(id) && !fenced(id) && !S.marks.changed.has(id));
     n.classList.toggle("changed", S.marks.changed.has(id));
     n.classList.toggle("ripple", S.marks.ripple.has(id) && !S.marks.changed.has(id));
+    const tag = $("[data-tag]", n);
+    const d = diffTag(id);
+    tag.setAttribute("class", `tag ${d ? "plus" : fenced(id) ? "fence" : ""}`);
+    tag.textContent = d || (fenced(id) ? "editable" : "");
+    n.setAttribute("aria-label", `Module ${shown(id)}, ${plural(m.files.length, "file")}, ${m.lines} lines${stateWords(id, rel, focus).length ? ", " + stateWords(id, rel, focus).join(", ") : ""}`);
   });
+  document.querySelectorAll("#edges .flow").forEach((f) => f.remove());
   S.graph.edges.forEach((e) => {
     const k = !focus ? "" : e.source === focus ? "dep" : e.target === focus ? "use" : "faded";
     e._el.setAttribute("class", `${e._base} ${k}`);
     e._el.setAttribute("marker-end", k === "dep" ? "url(#ah-dep)" : k === "use" ? "url(#ah-use)" : "url(#ah)");
+    // A short pulse travels each highlighted edge in import direction. pathLength=100 makes the dash the same share of any edge.
+    if (k === "dep" || k === "use") el("path", { d: e._d, class: `flow ${k}`, pathLength: 100 }, $("#edges"));
   });
   paintAlt(focus, rel);
+  renderLegend(!!focus);
 }
 let hoverT = 0;
 function hoverNode(id, on) {
   clearTimeout(hoverT);
   if (on) paintSelection(id);
   else hoverT = setTimeout(() => paintSelection(), 60);
+}
+function renderLegend(focus) {
+  const items = [];
+  if (focus) items.push(["var(--select)", "", "selected"], ["var(--dep)", "", "depends on"], ["var(--use)", "", "used by"]);
+  if (S.selected && !S.readOnly) items.push(["var(--fence)", "hatch", "editable (in the fence)"]);
+  if (S.marks.changed.size) items.push(["var(--ok)", "", "changed by the last run"]);
+  if (S.marks.ripple.size) items.push(["var(--warn)", "", "imports changed code"]);
+  $("#legend").innerHTML = items.map(([c, cls, t]) => `<span><i class="${cls}" style="border-color:${c}"></i>${esc(t)}</span>`).join("");
 }
 
 /* ---------------- camera: 1:1 pan, zoom at pointer, critically damped spring for fit/focus ---------------- */
@@ -238,7 +275,7 @@ function springTo(target) {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) { Object.assign(S.cam, target); S.camV = { x: 0, y: 0, k: 0 }; applyCam(); return; }
   if (S.raf) return;
   let last = performance.now();
-  const response = 0.42, zeta = 1.0, stiff = (2 * Math.PI / response) ** 2, damp = (4 * Math.PI * zeta) / response;
+  const response = 0.4, stiff = (2 * Math.PI / response) ** 2, damp = (4 * Math.PI) / response;
   const step = (now) => {
     const dt = Math.min(0.032, (now - last) / 1000); last = now;
     let moving = false;
@@ -255,41 +292,36 @@ function springTo(target) {
   S.raf = requestAnimationFrame(step);
 }
 function stopSpring() { if (S.raf) cancelAnimationFrame(S.raf); S.raf = 0; S.camV = { x: 0, y: 0, k: 0 }; }
-
 function bounds() {
   const xs = Object.values(S.pos);
   if (!xs.length) return { x0: 0, y0: 0, x1: 1, y1: 1 };
   const ex = S.extent || { x0: Infinity, x1: -Infinity };
-  return { x0: Math.min(ex.x0, ...xs.map((p) => p.x)) - 40, y0: Math.min(...xs.map((p) => p.y)) - 30,
-           x1: Math.max(ex.x1, ...xs.map((p) => p.x + NODE_W)) + 40, y1: Math.max(...xs.map((p) => p.y + NODE_H)) + 30 };
+  return { x0: Math.min(ex.x0, ...xs.map((p) => p.x)) - 30, y0: Math.min(...xs.map((p) => p.y)) - 24,
+           x1: Math.max(ex.x1, ...xs.map((p) => p.x + NODE_W)) + 30, y1: Math.max(...xs.map((p) => p.y + NODE_H)) + 24 };
 }
-function viewport() {
-  const w = innerWidth - (document.body.classList.contains("panel-open") && innerWidth > 760 ? 470 : 0);
-  return { w, h: innerHeight, top: 76, bottom: 92 };
-}
+function viewport() { const c = $("#canvas").getBoundingClientRect(); return { w: c.width || innerWidth, h: c.height || innerHeight, bottom: 52 }; }
 function fitView(animate = true) {
   const b = bounds(), v = viewport();
-  const k = Math.min(1.15, Math.max(0.3, Math.min(v.w / (b.x1 - b.x0), (v.h - v.top - v.bottom) / (b.y1 - b.y0))));
-  const t = { k, x: v.w / 2 - ((b.x0 + b.x1) / 2) * k, y: v.top + (v.h - v.top - v.bottom) / 2 - ((b.y0 + b.y1) / 2) * k };
+  const k = Math.min(1.2, Math.max(0.35, Math.min((v.w - 40) / (b.x1 - b.x0), (v.h - v.bottom - 20) / (b.y1 - b.y0))));
+  const t = { k, x: v.w / 2 - ((b.x0 + b.x1) / 2) * k, y: 16 + (v.h - v.bottom - 16) / 2 - ((b.y0 + b.y1) / 2) * k };
   if (animate) springTo(t); else { stopSpring(); Object.assign(S.cam, t); applyCam(); }
 }
 function revealNode(id) {
   const p = S.pos[id], v = viewport(), k = S.cam.k;
   const sx = S.cam.x + p.x * k, sy = S.cam.y + p.y * k, w = NODE_W * k, h = NODE_H * k;
   let dx = 0, dy = 0;
-  if (sx < 24) dx = 24 - sx; else if (sx + w > v.w - 24) dx = v.w - 24 - (sx + w);
-  if (sy < v.top + 10) dy = v.top + 10 - sy; else if (sy + h > v.h - v.bottom) dy = v.h - v.bottom - (sy + h);
+  if (sx < 20) dx = 20 - sx; else if (sx + w > v.w - 20) dx = v.w - 20 - (sx + w);
+  if (sy < 16) dy = 16 - sy; else if (sy + h > v.h - v.bottom) dy = v.h - v.bottom - (sy + h);
   if (dx || dy) springTo({ x: S.cam.x + dx, y: S.cam.y + dy, k });
 }
 function zoomAt(f, cx, cy) {
-  stopSpring();
+  stopSpring(); S.userCam = true;
   const k = Math.min(2.2, Math.max(0.25, S.cam.k * f));
   S.cam.x = cx - ((cx - S.cam.x) * k) / S.cam.k;
   S.cam.y = cy - ((cy - S.cam.y) * k) / S.cam.k;
   S.cam.k = k;
   applyCam();
 }
-
 function wireCanvas() {
   const c = $("#canvas");
   let drag = null;
@@ -303,7 +335,7 @@ function wireCanvas() {
   c.addEventListener("pointermove", (e) => {
     if (!drag) return;
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+    if (Math.abs(dx) + Math.abs(dy) > 3) { drag.moved = true; S.userCam = true; }
     S.cam.x = drag.cx + dx; S.cam.y = drag.cy + dy; applyCam();
   });
   const end = (e) => {
@@ -313,39 +345,38 @@ function wireCanvas() {
   };
   c.addEventListener("pointerup", end);
   c.addEventListener("pointercancel", end);
-  c.addEventListener("dblclick", () => fitView());
+  c.addEventListener("dblclick", () => { S.userCam = false; fitView(); });
   c.addEventListener("wheel", (e) => {
     e.preventDefault();
+    const r = c.getBoundingClientRect(), cx = e.clientX - r.left, cy = e.clientY - r.top;
     const trackpad = e.deltaMode === 0 && (Math.abs(e.deltaX) > 0 || Math.abs(e.deltaY) < 40);
-    if (e.ctrlKey || e.metaKey) zoomAt(Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY); // pinch
-    else if (trackpad) { stopSpring(); S.cam.x -= e.deltaX; S.cam.y -= e.deltaY; applyCam(); } // two-finger pan
-    else zoomAt(Math.exp(-e.deltaY * (e.deltaMode ? 0.06 : 0.0022)), e.clientX, e.clientY); // mouse wheel
+    if (e.ctrlKey || e.metaKey) zoomAt(Math.exp(-e.deltaY * 0.01), cx, cy);
+    else if (trackpad) { stopSpring(); S.userCam = true; S.cam.x -= e.deltaX; S.cam.y -= e.deltaY; applyCam(); }
+    else zoomAt(Math.exp(-e.deltaY * (e.deltaMode ? 0.06 : 0.0022)), cx, cy);
   }, { passive: false });
-  $("#zin").onclick = () => zoomAt(1.2, viewport().w / 2, innerHeight / 2);
-  $("#zout").onclick = () => zoomAt(1 / 1.2, viewport().w / 2, innerHeight / 2);
-  $("#zfit").onclick = () => fitView();
-  addEventListener("resize", () => fitView(false));
+  $("#zin").onclick = () => { const v = viewport(); zoomAt(1.2, v.w / 2, v.h / 2); };
+  $("#zout").onclick = () => { const v = viewport(); zoomAt(1 / 1.2, v.w / 2, v.h / 2); };
+  $("#zfit").onclick = () => { S.userCam = false; fitView(); };
+  addEventListener("resize", () => { if (!S.userCam) fitView(false); });
 }
 
-/* ---------------- tooltip ---------------- */
+/* ---------------- edge tooltip (keyboard users get the same receipts in the panel) ---------------- */
 function showEdgeTip(ev, e) {
-  const t = $("#tip");
-  const rs = e.receipts.slice(0, 6);
-  t.innerHTML = `<div class="h">${esc(e.source)} → ${esc(e.target)} <span style="color:var(--text-3);font-weight:400">· ${e.receipts.length} import${e.receipts.length > 1 ? "s" : ""}</span></div>`
-    + rs.map((r) => `<code><span class="loc">${esc(r.file)}:${r.line}</span>  ${esc(r.code)}</code>`).join("")
-    + (e.receipts.length > rs.length ? `<code>… ${e.receipts.length - rs.length} more</code>` : "")
-    + `<div style="color:var(--text-3);margin-top:5px">Click to open the import</div>`;
+  const t = $("#tip"), rs = e.receipts.slice(0, 6);
+  t.innerHTML = `<div class="h">${esc(shown(e.source))} imports ${esc(shown(e.target))} · ${plural(e.receipts.length, "import")}</div>`
+    + rs.map((r) => `<code>${esc(r.file)}:${r.line}  ${esc(r.code)}</code>`).join("")
+    + (e.receipts.length > rs.length ? `<code>… ${e.receipts.length - rs.length} more</code>` : "");
   t.classList.add("show"); moveTip(ev);
 }
 function moveTip(ev) { const t = $("#tip"); t.style.left = Math.min(ev.clientX + 14, innerWidth - t.offsetWidth - 10) + "px"; t.style.top = Math.min(ev.clientY + 16, innerHeight - t.offsetHeight - 10) + "px"; }
 function hideTip() { $("#tip").classList.remove("show"); }
 
-/* ---------------- selection & panel ---------------- */
+/* ---------------- selection, fence & panel ---------------- */
 function onNodeClick(id, ev) {
   if ((ev.shiftKey || ev.metaKey || ev.ctrlKey) && S.selected) {
-    if (id === S.selected) return;
-    S.scope.has(id) ? S.scope.delete(id) : S.scope.add(id);
-    renderScope(); paintSelection(); loadTalk();
+    if (S.scope.has(id) && S.scope.size > 1) S.scope.delete(id); else S.scope.add(id);
+    if (!S.scope.has(S.selected)) S.selected = [...S.scope][0];
+    afterFenceChange();
     return;
   }
   select(id);
@@ -353,85 +384,107 @@ function onNodeClick(id, ev) {
 function select(id) {
   const opening = !document.body.classList.contains("panel-open");
   S.selected = id;
-  S.scope = new Set([id]);
+  // A plain click starts a new fence, unless a multi-module fence is set: then the fence is kept and the module is only shown.
+  if (!(S.scope.size > 1 && !opening)) S.scope = new Set([id]);
   document.body.classList.add("panel-open");
-  $("#panel").setAttribute("aria-hidden", "false");
-  renderHeader(); renderOverview(); renderScope(); loadTalk(); paintSelection();
-  setTab(S.tab);
-  setTimeout(() => {
-    if (S.view === "graph") opening ? fitView() : revealNode(id);
+  $("#panel").inert = false;
+  renderHeader(); renderOverview(); renderFence(); loadTalk(); paintSelection();
+  setTab(S.tab, false);
+  requestAnimationFrame(() => {
+    if (S.view === "graph") { if (opening && !S.userCam) fitView(); else revealNode(id); }
     else { if (opening && S.view === "map") renderAltView(); revealCard(id); }
-  }, 30);
-  $("#prompt").focus({ preventScroll: true });
+  });
 }
 function closePanel() {
   const wasOpen = document.body.classList.contains("panel-open");
   S.selected = null; S.scope.clear();
   document.body.classList.remove("panel-open");
-  if (wasOpen) setTimeout(() => (S.view === "graph" ? fitView() : S.view === "map" && renderAltView()), 30);
-  $("#panel").setAttribute("aria-hidden", "true");
+  $("#panel").inert = true;
+  if (wasOpen) requestAnimationFrame(() => (S.view === "graph" ? !S.userCam && fitView() : S.view === "map" && renderAltView()));
   paintSelection();
 }
-function setTab(t) {
+function afterFenceChange() { renderFence(); renderHeader(); paintSelection(); loadTalk(); }
+function setTab(t, focus) {
   S.tab = t;
-  $("#seg").dataset.tab = t;
-  document.querySelectorAll("#seg button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === t)));
+  document.querySelectorAll("#seg [role=tab]").forEach((b) => {
+    const on = b.dataset.tab === t;
+    b.setAttribute("aria-selected", String(on));
+    b.tabIndex = on ? 0 : -1;
+    if (on && focus) b.focus();
+  });
   $("#v-over").hidden = t !== "over";
   $("#v-talk").hidden = t !== "talk";
+  requestAnimationFrame(() => slideInk($("#seg"), "[aria-selected=true]"));
   if (t === "talk") scrollTalk();
 }
 
 function renderHeader() {
   const m = mod(S.selected);
-  $("#mname").textContent = label(m.id);
-  $("#mpath").textContent = m.id === "." ? "project root" : m.id + "/";
+  if (!m) return;
+  $("#mname").textContent = m.id === "." ? "(project root)" : m.id + "/";
   $("#mdoc").textContent = m.doc || "";
-  $("#mdoc").hidden = !m.doc;
+  $("#mfacts").textContent = `${plural(m.files.length, "file")} · ${m.lines} lines · ${plural(m.names.length, "public name")}`;
+}
+
+function relRows(ids, other, dir) {
+  if (!ids.length) return `<p class="none">${dir === "dep" ? "Imports nothing else in this project." : "No other module imports it."}</p>`;
+  const color = dir === "dep" ? "var(--dep)" : "var(--use)";
+  return `<div class="rows">${ids.map((id) => {
+    const e = S.graph.edges.find((x) => (dir === "dep" ? x.source === other && x.target === id : x.source === id && x.target === other));
+    const rs = e ? e.receipts : [];
+    return `<details class="rel"><summary><span class="row"><span class="sw" style="background:${color}"></span><span class="k">${esc(shown(id))}</span><span class="d"></span><span class="n">${plural(rs.length, "import")}</span></span></summary>
+      <div class="receipts">${rs.map((r) => `<button data-file="${esc(r.file)}" data-line="${r.line}"><b>${esc(r.file)}:${r.line}</b>  ${esc(r.code)}</button>`).join("")}
+      <button data-go="${esc(id)}">Open ${esc(shown(id))} →</button></div></details>`;
+  }).join("")}</div>`;
 }
 
 function renderOverview() {
   const m = mod(S.selected); if (!m) return;
-  renderHeader();
   const { dep, use } = related(m.id);
-  const edgeCount = (a, b) => (S.graph.edges.find((e) => e.source === a && e.target === b) || { receipts: [] }).receipts.length;
-  const chip = (id, color, n) => `<button class="chip" data-go="${esc(id)}"><i style="background:var(${color})"></i>${esc(id === "." ? "(root)" : id)}<span class="n">${n}</span></button>`;
   const tasks = S.tasks.filter((t) => t.modules.includes(m.id));
   $("#v-over").innerHTML = `
-    <div class="statrow">
-      <div class="stat"><b>${m.files.length}</b><span>files</span></div>
-      <div class="stat"><b>${m.lines.toLocaleString()}</b><span>lines</span></div>
-      <div class="stat"><b>${m.names.length}</b><span>public names</span></div>
-    </div>
-    <div class="sect"><h4>Depends on</h4><div class="chips">${[...dep].map((d) => chip(d, "--blue", edgeCount(m.id, d))).join("") || '<span class="none">Nothing in this project</span>'}</div></div>
-    <div class="sect"><h4>Used by</h4><div class="chips">${[...use].map((u) => chip(u, "--clay", edgeCount(u, m.id))).join("") || '<span class="none">No other module imports it</span>'}</div></div>
-    ${tasks.length ? `<div class="sect"><h4>Tasks for this module</h4>${tasks.map((t, i) => `<button class="task" data-task="${i}"><b>${esc(t.title)}</b>${t.level ? `<span class="lv">${esc(t.level)}</span>` : ""}<p>${esc(clip(t.summary, 150))}</p></button>`).join("")}</div>` : ""}
-    <div class="sect"><h4>Files</h4><div class="files">${m.files.map((f) => {
+    <div class="sect"><h3>Depends on <small>what ${esc(label(m.id))} imports</small></h3>${relRows([...dep], m.id, "dep")}</div>
+    <div class="sect"><h3>Used by <small>what imports ${esc(label(m.id))}</small></h3>${relRows([...use], m.id, "use")}</div>
+    ${tasks.length ? `<div class="sect"><h3>Exercises <small>from TASKS.md</small></h3><div class="rows">${tasks.map((t, i) => `<button class="task" data-task="${i}"><b>${esc(t.title)}</b><span class="lv">${esc(t.level)}</span><p>${esc(clip(t.summary, 170))}</p></button>`).join("")}</div></div>` : ""}
+    <div class="sect"><h3>Files</h3><div class="rows">${m.files.map((f) => {
       const fi = S.graph.files[f];
-      return `<button class="frow" data-file="${esc(f)}"><span class="fn">${esc(f.split("/").pop())}</span><span class="fd">${esc(fi.error || fi.doc)}</span><span class="fl">${fi.lines}</span></button>`;
+      return `<button class="row" data-file="${esc(f)}"><span class="k">${esc(f.split("/").pop())}</span><span class="d">${esc(fi.error || fi.doc)}</span><span class="n">${fi.lines}</span></button>`;
     }).join("")}</div></div>
-    ${m.names.length ? `<div class="sect"><h4>Interface</h4><div class="names">${m.names.slice(0, 60).map((n) => `<span><em>${n.kind}</em> ${esc(n.name)}</span>`).join("")}</div></div>` : ""}`;
-  $("#v-over").querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => select(b.dataset.go)));
-  $("#v-over").querySelectorAll("[data-file]").forEach((b) => (b.onclick = () => openFile(b.dataset.file)));
-  $("#v-over").querySelectorAll("[data-task]").forEach((b) => (b.onclick = () => useTask(tasks[+b.dataset.task])));
+    ${m.names.length ? `<div class="sect"><h3>Public names</h3><div class="names">${m.names.slice(0, 60).map((n) => `<span><em>${n.kind}</em> ${esc(n.name)}</span>`).join("")}</div></div>` : ""}`;
+  const v = $("#v-over");
+  v.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => select(b.dataset.go)));
+  v.querySelectorAll("[data-file]").forEach((b) => (b.onclick = () => openFile(b.dataset.file, b.dataset.line ? [+b.dataset.line] : [])));
+  v.querySelectorAll("[data-task]").forEach((b) => (b.onclick = () => useTask(tasks[+b.dataset.task])));
 }
 
-function renderScope() {
+const X_ICON = '<svg viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l6 6M8 2L2 8"/></svg>';
+function renderFence() {
+  if (!S.selected) return;
   const testsMod = S.graph.modules.find((m) => m.kind === "tests");
-  const items = [...S.scope].map((id) => `<span class="chip">${esc(id === "." ? "(root)" : id)}${S.scope.size > 1 ? `<button data-rm="${esc(id)}" aria-label="Remove ${esc(id)}" style="border:0;background:none;padding:0;display:grid;color:inherit"><svg viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 2l6 6M8 2L2 8"/></svg></button>` : ""}</span>`);
-  if (testsMod && !S.scope.has(testsMod.id)) items.push(`<button class="chip off" data-add="${esc(testsMod.id)}">+ ${esc(testsMod.id)}</button>`);
-  $("#scope").innerHTML = `<span class="lab">Can edit</span>${items.join("")}`;
-  $("#scope").querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { S.scope.delete(b.dataset.rm); if (!S.scope.has(S.selected)) S.selected = [...S.scope][0]; renderScope(); paintSelection(); loadTalk(); }));
-  $("#scope").querySelectorAll("[data-add]").forEach((b) => (b.onclick = () => { S.scope.add(b.dataset.add); renderScope(); paintSelection(); loadTalk(); }));
+  const mode = `<div class="mode" role="group" aria-label="Fence mode">
+    <button type="button" data-ro="0" aria-pressed="${!S.readOnly}">Edit inside the fence</button>
+    <button type="button" data-ro="1" aria-pressed="${S.readOnly}">Read only: explain</button></div>`;
+  let line;
+  if (S.readOnly) {
+    line = `<div class="fline ro"><span class="lab">Read only.</span> The agent explains ${[...S.scope].map((id) => `<span class="mono">${esc(shown(id))}</span>`).join(", ")} and can edit nothing. <span class="reads">It reads the whole project.</span></div>`;
+  } else {
+    const chips = [...S.scope].map((id) => `<span class="fchip">${esc(shown(id))}${S.scope.size > 1 ? `<button type="button" data-rm="${esc(id)}" aria-label="Remove ${esc(shown(id))} from the fence">${X_ICON}</button>` : ""}</span>`).join("");
+    const add = testsMod && !S.scope.has(testsMod.id) ? `<button type="button" class="fadd" data-add="${esc(testsMod.id)}">+ ${esc(testsMod.id)}</button>` : "";
+    line = `<div class="fline"><span class="lab">Can edit:</span>${chips}${add} <span class="reads">Reads everything. Shift-click a module to add it.</span></div>`;
+  }
+  const nocli = S.claude ? "" : `<div class="nocli">Claude Code CLI not found. Install it and log in, or start modfence with CLAUDE_BIN set to its path, then restart. Reading the project still works.</div>`;
+  $("#fence").innerHTML = nocli + mode + line;
+  $("#fence").querySelectorAll("[data-ro]").forEach((b) => (b.onclick = () => { S.readOnly = b.dataset.ro === "1"; afterFenceChange(); }));
+  $("#fence").querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { S.scope.delete(b.dataset.rm); if (!S.scope.has(S.selected)) S.selected = [...S.scope][0]; afterFenceChange(); }));
+  $("#fence").querySelectorAll("[data-add]").forEach((b) => (b.onclick = () => { S.scope.add(b.dataset.add); afterFenceChange(); }));
+  syncSend();
 }
 const scopeKey = () => [...S.scope].sort().join("+");
 
 /* ---------------- tasks from TASKS.md ---------------- */
 async function loadTasks() {
   S.tasks = [];
-  try {
-    const { text } = await api(`/api/file?${q("&path=TASKS.md")}`);
-    S.tasks = parseTasks(text);
-  } catch { /* no TASKS.md */ }
+  try { S.tasks = parseTasks((await api(`/api/file?${q("&path=TASKS.md")}`)).text); } catch { /* no TASKS.md */ }
   if (S.selected) renderOverview();
 }
 function parseTasks(text) {
@@ -451,99 +504,116 @@ function parseTasks(text) {
     }
     const body = lines.slice(1).join("\n").trim();
     const summary = body.replace(/^target[^\n]*\n?/i, "").replace(/[*`#>]/g, "").replace(/\s+/g, " ").trim();
-    const level = modules.length > 1 ? `${modules.length} modules` : "1 module";
-    return { title: num ? `${num}. ${title}` : title, body, modules: [...new Set(modules)], level, summary };
+    return { title: num ? `${num}. ${title}` : title, body, modules: [...new Set(modules)], level: modules.length > 1 ? `${modules.length} modules` : "1 module", summary };
   }).filter((t) => t.modules.length);
 }
-function useTask(t) {
-  S.scope = new Set([S.selected, ...t.modules.filter((m) => m !== S.selected)]);
-  renderScope(); paintSelection(); loadTalk();
+function fillPrompt(text) {
   const ta = $("#prompt");
-  ta.value = `${t.title}\n\n${t.body}`;
-  autosize(); ta.focus();
+  if (ta.value.trim() && ta.value.trim() !== text.trim() && !confirm("Replace the instruction you are writing?")) return false;
+  ta.value = text; autosize(); ta.focus();
+  return true;
+}
+function useTask(t) {
+  if (!fillPrompt(`${t.title}\n\n${t.body}`)) return;
+  S.readOnly = false;
+  S.scope = new Set([S.selected, ...t.modules.filter((m) => m !== S.selected)]);
+  afterFenceChange();
 }
 
-/* ---------------- conversation ---------------- */
+/* ---------------- runs: a log per fence ---------------- */
 async function loadTalk() {
   const v = $("#v-talk");
   v.innerHTML = "";
   $("#tcount").textContent = "";
   if (!S.scope.size) return;
   const key = scopeKey();
-  try {
-    const { runs } = await api(`/api/history?${q("&scope=" + encodeURIComponent(key))}`);
-    if (key !== scopeKey()) return;
-    runs.forEach((r) => { const view = newRun(r.prompt, r.scope); r.events.forEach((e) => view.add(e, true)); view.flush(); });
-    $("#tcount").textContent = runs.length ? String(runs.length) : "";
-  } catch { /* none */ }
+  let runs = [];
+  try { runs = (await api(`/api/history?${q("&scope=" + encodeURIComponent(key))}`)).runs; } catch { /* none */ }
+  if (key !== scopeKey()) return;
+  v.innerHTML = "";
+  runs.forEach((r) => { const view = newRun(r.prompt, r.scope, r.at, r.read_only); r.events.forEach((e) => view.add(e, true)); view.flush(); });
+  $("#tcount").textContent = runs.length ? String(runs.length) : "";
   if (S.job && !S.job.done && S.job.key === key) S.job.view = attachLive(S.job);
-  if (!v.children.length) v.innerHTML = `<p class="none" id="talk-empty">No conversation for this scope yet. Ask something below: Claude reads the whole project, but can only edit ${esc([...S.scope].join(", "))}.</p>`;
+  if (!v.children.length) renderStarters();
+}
+function renderStarters() {
+  const m = mod(S.selected);
+  const name = shown(m ? m.id : "");
+  const starters = [
+    ["Read only", `Explain what ${name} does, how data flows through it, and which file I should read first.`, true],
+    ["Read only", `Find one bug or unhandled edge case in ${name}. Point to the exact line and explain why, but do not fix it.`, true],
+    ["Edit", `Add one test for ${name} that covers a case the current tests miss, and run the tests.`, false],
+  ];
+  $("#v-talk").innerHTML = `<p class="none">No runs in this fence yet. A run is one instruction: the agent reads the project, edits only inside the fence, and you review every change it made.</p>
+    <div class="starters">${starters.map(([k, t], i) => `<button type="button" data-st="${i}"><b>${k}</b>${esc(t)}</button>`).join("")}</div>`;
+  $("#v-talk").querySelectorAll("[data-st]").forEach((b) => (b.onclick = () => {
+    const [, text, ro] = starters[+b.dataset.st];
+    if (fillPrompt(text)) { S.readOnly = ro; afterFenceChange(); }
+  }));
 }
 function attachLive(job) {
-  const view = newRun(job.prompt, job.scope);
+  const view = newRun(job.prompt, job.scope, job.at, job.readOnly);
   job.events.forEach((e) => view.add(e, true));
   view.flush();
   return view;
 }
 function scrollTalk() { const b = $("#pbody"); requestAnimationFrame(() => (b.scrollTop = b.scrollHeight)); }
+const hhmm = (t) => (t ? new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now");
 
-function newRun(prompt, scope) {
-  $("#talk-empty")?.remove();
-  const root = document.createElement("div");
+function newRun(prompt, scope, at, readOnly) {
+  $("#v-talk .starters")?.remove(); $("#v-talk > p.none")?.remove();
+  const root = document.createElement("article");
   root.className = "run";
-  root.innerHTML = `<div class="you"><div>${esc(prompt)}<span class="sc">scope: ${esc(scope.join(", "))}</span></div></div><div class="stream"></div>`;
+  root.innerHTML = `<div class="rhead"><span class="mono">${hhmm(at)}</span><span>${readOnly ? "read only" : "can edit"} <span class="mono">${esc(scope.map(shown).join(", "))}</span></span><span class="st live">Running</span></div>
+    <p class="instr">${esc(prompt)}</p><div class="rbody"></div>`;
   $("#v-talk").appendChild(root);
-  const stream = $(".stream", root);
-  let textEl = null, textBuf = "", stepsEl = null, typing = null, pending = 0;
+  const body = $(".rbody", root), st = $(".rhead .st", root);
+  let textEl = null, textBuf = "", stepsEl = null, pending = 0;
   const steps = {};
-  const showTyping = (on) => {
-    if (on && !typing) { typing = document.createElement("div"); typing.className = "typing"; typing.innerHTML = "<span></span><span></span><span></span>"; stream.appendChild(typing); }
-    if (!on && typing) { typing.remove(); typing = null; }
-  };
   const renderText = () => { pending = 0; if (textEl) textEl.innerHTML = md(textBuf); };
   const view = {
+    root,
     add(e, replay) {
       if (e.kind === "text") {
-        showTyping(false);
-        if (!textEl) { textEl = document.createElement("div"); textEl.className = "md"; stream.appendChild(textEl); stepsEl = null; textBuf = ""; }
+        if (!textEl) { textEl = document.createElement("div"); textEl.className = "md"; body.appendChild(textEl); stepsEl = null; textBuf = ""; }
         textBuf += e.text;
-        if (replay) return;
-        if (!pending) pending = requestAnimationFrame(renderText);
+        if (!replay && !pending) pending = requestAnimationFrame(renderText);
       } else if (e.kind === "text_end") {
         renderText(); textEl = null;
       } else if (e.kind === "tool") {
-        showTyping(false);
         if (textEl) { renderText(); textEl = null; }
-        if (!stepsEl) { stepsEl = document.createElement("div"); stepsEl.className = "steps"; stream.appendChild(stepsEl); }
+        if (!stepsEl) { stepsEl = document.createElement("div"); stepsEl.className = "steps"; body.appendChild(stepsEl); }
         const s = document.createElement("div");
-        s.className = `step ${e.edit ? "edit" : ""}`;
-        s.innerHTML = `<span class="ic">${toolIcon(e.name)}</span><span class="tn">${esc(e.name)}</span><span class="td">${esc(shortPath(e.detail))}</span><span class="st spin"></span>`;
+        s.className = `step${e.edit ? " edit" : ""}`;
+        s.innerHTML = `<span class="ic">${toolIcon(e.name)}</span><span class="tn">${esc(e.name)}</span><span class="td">${esc(shortPath(e.detail))}</span><span class="st">…</span>`;
         stepsEl.appendChild(s);
         steps[e.id] = s;
-        if (!replay) showTyping(true);
       } else if (e.kind === "tool_result") {
         const s = steps[e.id];
         if (!s) return;
-        const st = $(".st", s);
-        st.className = "st";
-        st.innerHTML = e.denied ? ICON.shield : e.error ? ICON.x : ICON.check;
-        if (e.denied) { s.classList.add("denied"); s.title = e.text; $(".tn", s).textContent += " blocked"; }
-        else if (e.error) { s.classList.add("err"); s.title = e.text; }
+        $(".st", s).textContent = e.denied ? "blocked" : e.error ? "failed" : "ok";
+        if (e.denied || e.error) {
+          s.classList.add(e.denied ? "denied" : "err");
+          const why = document.createElement("span");
+          why.className = "why";
+          why.textContent = e.denied ? "Outside the fence, so the edit was blocked." : clip(String(e.text || "").trim(), 240);
+          s.after(why);
+        }
       } else if (e.kind === "status") {
-        const d = document.createElement("div"); d.className = "status"; d.textContent = e.text; stream.appendChild(d);
-        if (!replay) showTyping(true);
+        const d = document.createElement("div"); d.className = "status"; d.textContent = e.text; body.appendChild(d);
       } else if (e.kind === "error") {
-        showTyping(false);
-        const d = document.createElement("div"); d.className = "error"; d.textContent = e.text; stream.appendChild(d);
+        const d = document.createElement("div"); d.className = "error"; d.textContent = e.text; body.appendChild(d);
       } else if (e.kind === "result") {
         view.result = e;
       } else if (e.kind === "changes") {
         view.changes = e;
       } else if (e.kind === "done") {
-        showTyping(false);
         if (textEl) { renderText(); textEl = null; }
-        stream.querySelectorAll(".st.spin").forEach((x) => { x.className = "st"; x.innerHTML = ICON.dash; });
-        summary(stream, view.result, view.changes);
+        body.querySelectorAll(".step .st").forEach((x) => { if (x.textContent === "…") x.textContent = "stopped"; });
+        const r = view.result;
+        st.className = `st ${r && r.ok ? "ok" : "bad"}`;
+        st.textContent = r ? (r.ok ? `Done${r.duration_s ? ` · ${r.duration_s}s` : ""}` : "Stopped with an error") : "Stopped";
+        renderChanges(root, view.changes, r);
       }
       if (!replay) scrollTalk();
     },
@@ -553,30 +623,65 @@ function newRun(prompt, scope) {
   return view;
 }
 
-function summary(stream, r, c) {
-  const files = c ? [...c.added, ...c.modified] : [];
+function renderChanges(root, c, r) {
+  const files = c && c.files ? c.files : c ? [...c.added, ...c.modified, ...c.deleted].map((p) => ({ path: p, status: "modified", plus: null, minus: null, outside: c.outside_scope.includes(p), revertible: false })) : [];
   const box = document.createElement("div");
-  box.className = "summary";
-  const fileBtns = files.map((f) => `<button data-file="${esc(f)}">${esc(f)}</button>`).join("") + (c && c.deleted.length ? ` <span class="warn">deleted: ${esc(c.deleted.join(", "))}</span>` : "");
-  box.innerHTML = (files.length || (c && c.deleted.length) ? `<div class="row"><span class="k">Changed</span><span class="v">${fileBtns}</span></div>` : `<div class="row"><span class="k">Changed</span><span class="v" style="color:var(--text-3)">no files</span></div>`)
-    + (c && c.ripple.length ? `<div class="row"><span class="k">Ripple</span><span class="v">${c.ripple.map((m) => `<button data-go="${esc(m)}" style="color:var(--amber)">${esc(m)}</button>`).join("")}<span style="color:var(--text-3)"> import a changed module</span></span></div>` : "")
-    + (c && c.outside_scope.length ? `<div class="row"><span class="k warn">Outside</span><span class="v warn">${esc(c.outside_scope.join(", "))} changed outside the scope</span></div>` : "")
-    + (r ? `<div class="meta">${r.ok ? "Done" : "Stopped with an error"}${r.duration_s ? ` in ${r.duration_s} s` : ""}${r.turns ? ` · ${r.turns} turns` : ""}${r.cost_usd != null ? ` · $${r.cost_usd.toFixed(3)}` : ""}</div>` : "");
-  box.querySelectorAll("[data-file]").forEach((b) => (b.onclick = () => openFile(b.dataset.file)));
-  box.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => select(b.dataset.go)));
-  stream.appendChild(box);
+  box.className = "changes";
+  const outside = files.filter((f) => f.outside);
+  const rev = files.some((f) => f.revertible) && c && c.run;
+  box.innerHTML = (outside.length ? `<div class="banner bad">${plural(outside.length, "file")} changed outside the fence: <span class="mono">${esc(outside.map((f) => f.path).join(", "))}</span>${rev ? `<button class="btn" type="button" data-rev-out>Revert those</button>` : ""}</div>` : "")
+    + (files.length ? `<table><thead><tr><th>Changed file</th><th>Lines</th><th></th></tr></thead><tbody>${files.map((f, i) => `
+      <tr><td class="f" title="${esc(f.path)}">${esc(f.path)}${f.outside ? '<span class="out">outside fence</span>' : ""}${f.status !== "modified" ? ` <span class="out" style="color:var(--text-3)">${f.status}</span>` : ""}</td>
+      <td class="s">${f.plus == null ? "N/A" : `<span class="plus">+${f.plus}</span> <span class="minus">−${f.minus}</span>`}</td>
+      <td class="a">${c.run ? `<button class="btn" type="button" data-diff="${i}" aria-expanded="false">Diff</button>` : ""}</td></tr>`).join("")}</tbody></table>`
+      : `<p class="none" style="padding:8px 10px">No files changed.</p>`);
+  const foot = document.createElement("div");
+  foot.className = "rfoot";
+  foot.innerHTML = (c && c.ripple.length ? `<div class="ripple">Imports the changed code: ${c.ripple.map((m) => `<button type="button" data-go="${esc(m)}">${esc(shown(m))}</button>`).join("")} run the tests to check them.</div>` : "")
+    + (files.length ? `<button class="btn" type="button" data-tests>Run tests</button>` : "")
+    + (rev ? `<button class="btn" type="button" data-rev>Revert this run</button>` : "")
+    + (r ? `<span class="meta">${r.turns ? plural(r.turns, "turn") : ""}${r.cost_usd != null ? ` · $${r.cost_usd.toFixed(3)}` : ""}</span>` : "");
+  root.appendChild(box);
+  root.appendChild(foot);
+  box.querySelectorAll("[data-diff]").forEach((b) => (b.onclick = () => toggleDiff(b, c.run, files[+b.dataset.diff].path)));
+  foot.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => select(b.dataset.go)));
+  $("[data-tests]", foot)?.addEventListener("click", runTests);
+  $("[data-rev]", foot)?.addEventListener("click", () => revert(root, c.run, null, files.length));
+  $("[data-rev-out]", box)?.addEventListener("click", () => revert(root, c.run, outside.map((f) => f.path), outside.length));
+}
+async function toggleDiff(btn, run, path) {
+  const tr = btn.closest("tr");
+  if (tr.nextElementSibling && tr.nextElementSibling.classList.contains("diffrow")) {
+    tr.nextElementSibling.remove(); btn.setAttribute("aria-expanded", "false"); btn.textContent = "Diff"; return;
+  }
+  let diff;
+  try { ({ diff } = await api(`/api/diff?${q(`&run=${encodeURIComponent(run)}&path=${encodeURIComponent(path)}`)}`)); }
+  catch (e) { toast(`Could not load the diff: ${e.message}`, false); return; }
+  const row = document.createElement("tr");
+  row.className = "diffrow";
+  row.innerHTML = `<td colspan="3"><pre class="diff">${diff.split("\n").map((l) => `<span class="${l.startsWith("@@") ? "hunk" : l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : ""}">${esc(l) || " "}</span>`).join("")}</pre></td>`;
+  tr.after(row);
+  btn.setAttribute("aria-expanded", "true"); btn.textContent = "Hide";
+}
+async function revert(root, run, paths, n) {
+  if (S.job && !S.job.done) { toast("Wait for the current run to finish.", false); return; }
+  if (!confirm(`Revert ${plural(n, "file")} to how they were before this run? Files edited again since then are left alone.`)) return;
+  let res;
+  try { res = await api(`/api/revert?${q()}`, { run, paths }); }
+  catch (e) { toast(`Revert failed: ${e.message}`, false); return; }
+  const note = document.createElement("div");
+  note.className = "rfoot";
+  note.innerHTML = `<span class="reverted">Reverted ${plural(res.reverted.length, "file")}.</span>${res.skipped.length ? ` Left alone: ${res.skipped.map((s) => `<span class="mono">${esc(s.path)}</span> (${esc(s.why)})`).join(", ")}.` : ""}`;
+  root.appendChild(note);
+  S.marks = { changed: new Set(), ripple: new Set(), stats: {} };
+  await loadGraph(false);
+  toast(`Reverted ${plural(res.reverted.length, "file")}${res.skipped.length ? `, left ${res.skipped.length} alone` : ""}.`);
 }
 
 const fwd = (s) => String(s || "").replace(/\\/g, "/");
 const shortPath = (s) => {
   const root = fwd(S.graph && S.graph.root) + "/", v = fwd(s);
   return root.length > 1 && v.toLowerCase().startsWith(root.toLowerCase()) ? v.slice(root.length) : v;
-};
-const ICON = {
-  check: '<svg viewBox="0 0 14 14" fill="none" stroke="var(--green)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5l2.5 2.5L11 4.5"/></svg>',
-  x: '<svg viewBox="0 0 14 14" fill="none" stroke="var(--red)" stroke-width="1.8" stroke-linecap="round"><path d="M4 4l6 6M10 4l-6 6"/></svg>',
-  shield: '<svg viewBox="0 0 14 14" fill="none" stroke="var(--red)" stroke-width="1.5" stroke-linejoin="round"><path d="M7 1.5l4.5 1.8v3.4c0 2.8-2 4.6-4.5 5.6C4.5 11.3 2.5 9.5 2.5 6.7V3.3z"/><path d="M5 7h4" stroke-linecap="round"/></svg>',
-  dash: '<svg viewBox="0 0 14 14" stroke="var(--text-3)" stroke-width="1.6" stroke-linecap="round"><path d="M4 7h6"/></svg>',
 };
 function toolIcon(name) {
   const p = {
@@ -586,17 +691,14 @@ function toolIcon(name) {
     Grep: '<circle cx="6.5" cy="6.5" r="4"/><path d="M9.5 9.5L13 13"/>', Glob: '<circle cx="6.5" cy="6.5" r="4"/><path d="M9.5 9.5L13 13"/>',
     TodoWrite: '<path d="M2.5 4h1M2.5 7.5h1M2.5 11h1M6 4h6.5M6 7.5h6.5M6 11h6.5"/>',
   }[name] || '<circle cx="7.5" cy="7.5" r="2.5"/>';
-  return `<svg viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+  return `<svg viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
 }
 
 /* tiny markdown: fenced code, inline code, bold, italics, headings, lists, paragraphs */
 function md(src) {
   const blocks = [];
   let s = String(src).replace(/```[^\n]*\n([\s\S]*?)(```|$)/g, (_, code) => { blocks.push(code); return `\u0000${blocks.length - 1}\u0000`; });
-  s = esc(s)
-    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  s = esc(s).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
   const out = [];
   let list = null;
   for (const line of s.split("\n")) {
@@ -618,91 +720,129 @@ function md(src) {
 }
 
 /* ---------------- composer & runs ---------------- */
-function autosize() { const t = $("#prompt"); t.style.height = "auto"; t.style.height = Math.min(160, t.scrollHeight) + "px"; syncSend(); }
+function autosize() { const t = $("#prompt"); t.style.height = "auto"; t.style.height = Math.min(200, Math.max(54, t.scrollHeight)) + "px"; syncSend(); }
 function syncSend() {
   const running = S.job && !S.job.done;
   const b = $("#send");
   b.classList.toggle("stop", !!running);
-  b.disabled = !running && !$("#prompt").value.trim();
-  b.setAttribute("aria-label", running ? "Stop" : "Send");
-  b.innerHTML = running ? '<svg viewBox="0 0 16 16"><rect x="4.5" y="4.5" width="7" height="7" rx="1.5" fill="currentColor"/></svg>'
-    : '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5L8 3l4.5 4.5"/></svg>';
+  b.textContent = running ? "Stop" : S.readOnly ? "Explain" : "Run";
+  b.disabled = !running && (!$("#prompt").value.trim() || !S.claude);
 }
 
 async function send() {
   if (S.job && !S.job.done) { await api("/api/cancel", { job: S.job.id }).catch(() => {}); return; }
   const prompt = $("#prompt").value.trim();
-  if (!prompt || !S.scope.size) return;
-  const scope = [...S.scope];
+  if (!prompt || !S.scope.size || !S.claude) return;
+  const scope = [...S.scope], readOnly = S.readOnly;
   let res;
-  try { res = await api(`/api/ask?${q()}`, { prompt, scope }); }
+  try { res = await api(`/api/ask?${q()}`, { prompt, scope, read_only: readOnly }); }
   catch (e) { toast(e.message, false); return; }
   $("#prompt").value = ""; autosize();
-  S.marks = { changed: new Set(), ripple: new Set() }; paintSelection();
-  const job = { id: res.job, prompt, scope, key: scopeKey(), events: [], done: false };
+  S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; paintSelection();
+  const job = { id: res.job, prompt, scope, readOnly, key: scopeKey(), events: [], done: false, at: Date.now() / 1000 };
   S.job = job;
   setTab("talk");
-  $("#talk-empty")?.remove();
-  job.view = newRun(prompt, scope);
-  syncSend();
+  job.view = newRun(prompt, scope, job.at, readOnly);
+  syncSend(); showRunbar();
   listen(job);
 }
-
 function listen(job) {
   const es = new EventSource(`/api/events?job=${job.id}&from=${job.events.length}`);
-  S.es = es;
   es.onmessage = (m) => {
     const e = JSON.parse(m.data);
-    if (e.i < job.events.length) return; // already seen
+    if (e.i < job.events.length) return;
     job.events.push(e);
-    if (job.key === scopeKey() && job.view) job.view.add(e);
+    if (job.key === scopeKey() && job.view && job.view.root.isConnected) job.view.add(e);
     if (e.kind === "tool" && e.edit) markEditing(e.detail);
     if (e.kind === "changes") onChanges(e);
-    if (e.kind === "done") { job.done = true; es.close(); syncSend(); const n = Number($("#tcount").textContent || 0); if (job.key === scopeKey()) $("#tcount").textContent = String(n + 1); }
+    if (e.kind === "done") {
+      job.done = true; es.close(); syncSend(); showRunbar();
+      if (job.key === scopeKey()) $("#tcount").textContent = String(Number($("#tcount").textContent || 0) + 1);
+      const r = job.events.find((x) => x.kind === "result");
+      toast(r && r.ok ? "Run finished. Review the changes in the Runs tab." : "Run stopped.", !!(r && r.ok));
+    }
   };
-  es.onerror = () => { es.close(); if (!job.done) setTimeout(() => listen(job), 800); }; // resume where we left off
+  es.onerror = () => { es.close(); if (!job.done) setTimeout(() => listen(job), 800); };
 }
-
+let runTimer = 0;
+function showRunbar() {
+  const bar = $("#runbar"), job = S.job, on = !!(job && !job.done);
+  bar.hidden = !on;
+  document.body.classList.toggle("running", on);
+  clearInterval(runTimer);
+  if (!on) return;
+  const draw = () => {
+    const secs = Math.round(Date.now() / 1000 - job.at);
+    bar.innerHTML = `<span class="dot" aria-hidden="true"></span><span>Agent running · ${job.readOnly ? "read only" : "can edit"} <span class="mono">${esc(job.scope.map(shown).join(", "))}</span> · ${secs}s</span><button class="btn" type="button" id="rb-open">Show</button><button class="btn" type="button" id="rb-stop">Stop</button>`;
+    $("#rb-open").onclick = () => { select(job.scope[0]); S.scope = new Set(job.scope); afterFenceChange(); setTab("talk"); };
+    $("#rb-stop").onclick = () => api("/api/cancel", { job: job.id }).catch(() => {});
+  };
+  draw();
+  runTimer = setInterval(draw, 1000);
+}
 function markEditing(path) {
-  const rel = shortPath(path).replace(/\\/g, "/");
+  const rel = shortPath(path);
   const id = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : ".";
   document.querySelectorAll(`.node[data-id="${CSS.escape(id)}"], #alt .mcard[data-id="${CSS.escape(id)}"]`).forEach((n) => {
-    n.classList.remove("changed"); void n.getBoundingClientRect(); n.classList.add("changed"); // restart the pulse
+    n.classList.remove("changed"); void n.getBoundingClientRect(); n.classList.add("changed");
   });
 }
-
 async function onChanges(c) {
   await loadGraph(false);
-  S.marks = { changed: new Set(c.modules), ripple: new Set(c.ripple) };
+  const stats = {};
+  (c.files || []).forEach((f) => {
+    if (!f.path.endsWith(".py")) return;
+    const id = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : ".";
+    const s = (stats[id] ||= { plus: 0, minus: 0 });
+    s.plus += f.plus || 0; s.minus += f.minus || 0;
+  });
+  S.marks = { changed: new Set(c.modules), ripple: new Set(c.ripple), stats };
   paintSelection();
-  if (c.outside_scope.length) toast(`Changed outside the scope: ${c.outside_scope.join(", ")}`, false, 6000);
 }
 
-/* ---------------- file viewer ---------------- */
+/* ---------------- sheet: file, diff, help, output ---------------- */
+let sheetReturn = null;
+function showSheet(on) {
+  $("#scrim").classList.toggle("show", on);
+  $("#sheet").hidden = !on;
+  document.body.classList.toggle("sheet-open", on);
+  if (on) { sheetReturn = document.activeElement; $("#sclose").focus(); }
+  else if (sheetReturn && sheetReturn.isConnected) sheetReturn.focus();
+}
 async function openFile(path, lines = []) {
   let text;
   try { ({ text } = await api(`/api/file?${q("&path=" + encodeURIComponent(path))}`)); }
   catch (e) { toast(e.message, false); return; }
   const hl = new Set(lines);
   $("#stitle").textContent = path;
-  $("#scode").innerHTML = text.split("\n").map((l, i) => `<div class="ln${hl.has(i + 1) ? " hl" : ""}" id="L${i + 1}"><b>${i + 1}</b>${esc(l) || " "}</div>`).join("");
+  $("#scode").innerHTML = `<div class="code">${text.split("\n").map((l, i) => `<div class="ln${hl.has(i + 1) ? " hl" : ""}" id="L${i + 1}"><b>${i + 1}</b>${esc(l) || " "}</div>`).join("")}</div>`;
   showSheet(true);
   if (lines.length) requestAnimationFrame(() => $(`#L${lines[0]}`)?.scrollIntoView({ block: "center" }));
 }
-function showText(title, text) {
-  $("#stitle").textContent = title;
-  $("#scode").innerHTML = `<pre>${esc(text)}</pre>`;
+function showText(title, text) { $("#stitle").textContent = title; $("#scode").innerHTML = `<pre class="out">${esc(text)}</pre>`; showSheet(true); }
+function showHelp() {
+  $("#stitle").textContent = "How modfence works";
+  $("#scode").innerHTML = `<div class="help">
+    <p>modfence is for learning a codebase and practicing coding with an AI agent without losing track of what it changed. The agent is your own Claude Code; modfence decides what it may touch and shows you everything it did.</p>
+    <h3>A run in four steps</h3>
+    <ol><li><b>Pick a module.</b> Click it in any view, or press <kbd>/</kbd> and type its name.</li>
+      <li><b>Set the fence.</b> The selected module is editable. <kbd>Shift</kbd>-click adds more. Switch to <i>Read only</i> when you want explanations and hints, with no edits at all.</li>
+      <li><b>Give one instruction.</b> The agent reads the whole project, but a hook blocks every edit outside the fence.</li>
+      <li><b>Review.</b> Each run lists the changed files with added and removed lines. Open the diff, run the tests, or revert the run.</li></ol>
+    <h3>Words on the screen</h3>
+    <dl><dt>fence</dt><dd>The modules the agent may edit in the next run (teal, hatched).</dd>
+      <dt>depends on</dt><dd>Modules this one imports (blue). Hover an arrow to see the exact import lines.</dd>
+      <dt>used by</dt><dd>Modules that import this one (violet). Changing its public names can break them.</dd>
+      <dt>imports changed code</dt><dd>After a run: modules that depend on what changed (amber). Run the tests.</dd>
+      <dt>layers</dt><dd>Modules that import others sit above the ones they import. The bottom layer imports nothing in the project.</dd></dl>
+    <h3>Keys</h3>
+    <dl><dt>/</dt><dd>Find a module</dd><dt>1 2 3 4</dt><dd>Graph, Layers, Outline, Map</dd><dt>${IS_MAC ? "⌘" : "Ctrl"} Enter</dt><dd>Run the instruction</dd><dt>Esc</dt><dd>Close the panel or this sheet</dd><dt>?</dt><dd>This help</dd></dl></div>`;
   showSheet(true);
 }
-function showSheet(on) {
-  $("#scrim").classList.toggle("show", on);
-  $("#sheet").classList.toggle("show", on);
-  if (on) $("#sclose").focus();
-}
 
-/* ---------------- tests, toast, theme ---------------- */
-let toastT = 0, lastTests = null;
-function toast(text, ok = true, ms = 3600, onclick) {
+/* ---------------- tests, toast, theme, search, resize ---------------- */
+let toastT = 0;
+function toast(text, ok = true, ms = 4200, onclick) {
   const t = $("#toast");
   $("#ttext").textContent = text;
   t.classList.toggle("bad", !ok);
@@ -712,54 +852,108 @@ function toast(text, ok = true, ms = 3600, onclick) {
   toastT = setTimeout(() => t.classList.remove("show"), ms);
 }
 async function runTests() {
-  const b = $("#tests");
-  b.classList.remove("ok", "bad"); b.classList.add("busy");
-  $(".lbl", b).textContent = "Testing";
+  const b = $("#tests"), lbl = $(".lbl", b);
+  b.classList.remove("ok", "bad"); b.disabled = true; lbl.textContent = "Testing…";
   try {
     const r = await api(`/api/tests?${q()}`, {});
-    lastTests = r;
-    b.classList.add(r.ok ? "ok" : "bad");
-    $(".lbl", b).textContent = r.ok ? "Tests pass" : r.ok === null ? "No tests" : "Tests fail";
-    toast(r.summary || "No tests found", r.ok !== false, 4200, () => showText("Test output", r.output || r.summary));
-  } catch (e) { toast(e.message, false); $(".lbl", b).textContent = "Run tests"; }
-  b.classList.remove("busy");
+    const ran = (r.summary.match(/Ran (\d+)/) || [])[1];
+    b.classList.add(r.ok ? "ok" : r.ok === false ? "bad" : "");
+    lbl.textContent = r.ok === null ? "No tests" : `Tests: ${ran || "?"} ${r.ok ? "passed" : "· failing"}`;
+    toast(`${r.summary || "No tests found"}. Show output`, r.ok !== false, 8000, () => showText("Test output", r.output || r.summary));
+  } catch (e) { toast(e.message, false); lbl.textContent = "Run tests"; }
+  b.disabled = false;
 }
 function applyTheme(mode) {
-  if (mode === "auto") document.documentElement.removeAttribute("data-theme");
-  else document.documentElement.dataset.theme = mode;
+  if (mode === "auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.dataset.theme = mode;
   store.set("modfence.theme", mode);
-  $("#theme").title = `Appearance: ${mode}`;
+  $("#theme .lbl").textContent = { auto: "Auto", light: "Light", dark: "Dark" }[mode];
+  $("#theme").setAttribute("aria-label", `Appearance: ${mode}. Click to change.`);
+}
+function wireSearch() {
+  const input = $("#find"), list = $("#findlist");
+  let hits = [], at = 0;
+  const close = () => { list.hidden = true; input.setAttribute("aria-expanded", "false"); };
+  const draw = () => {
+    const t = input.value.trim().toLowerCase();
+    hits = S.graph.modules.filter((m) => !t || m.id.toLowerCase().includes(t) || (m.doc || "").toLowerCase().includes(t)).slice(0, 12);
+    at = Math.min(at, Math.max(0, hits.length - 1));
+    list.innerHTML = hits.map((m, i) => `<li role="option" id="fo${i}" aria-selected="${i === at}" data-id="${esc(m.id)}">${esc(shown(m.id))}<span>${m.lines} ln</span></li>`).join("") || `<li aria-disabled="true">No module matches</li>`;
+    list.hidden = false; input.setAttribute("aria-expanded", "true");
+    input.setAttribute("aria-activedescendant", hits.length ? `fo${at}` : "");
+  };
+  const pick = (id) => { close(); input.value = ""; select(id); };
+  input.addEventListener("input", () => { at = 0; draw(); });
+  input.addEventListener("focus", draw);
+  input.addEventListener("blur", () => setTimeout(close, 150));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { at = Math.min(hits.length - 1, at + 1); draw(); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { at = Math.max(0, at - 1); draw(); e.preventDefault(); }
+    else if (e.key === "Enter" && hits[at]) { pick(hits[at].id); e.preventDefault(); }
+    else if (e.key === "Escape") { close(); input.blur(); }
+  });
+  list.addEventListener("mousedown", (e) => { const li = e.target.closest("li[data-id]"); if (li) pick(li.dataset.id); });
+}
+function wireResize() {
+  const grip = $("#grip");
+  const setW = (w) => { w = Math.max(340, Math.min(Math.round(innerWidth * 0.7), w)); document.documentElement.style.setProperty("--panel-w", w + "px"); store.set("modfence.panel", w); };
+  const saved = Number(store.get("modfence.panel")); if (saved) setW(saved);
+  grip.addEventListener("pointerdown", (e) => {
+    grip.setPointerCapture(e.pointerId);
+    const move = (ev) => setW(innerWidth - ev.clientX);
+    const up = () => { grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); if (S.view === "map") renderAltView(); };
+    grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up);
+  });
+  grip.addEventListener("keydown", (e) => {
+    const w = $("#panel").getBoundingClientRect().width;
+    if (e.key === "ArrowLeft") { setW(w + 24); e.preventDefault(); }
+    if (e.key === "ArrowRight") { setW(w - 24); e.preventDefault(); }
+  });
 }
 
 /* ---------------- wiring ---------------- */
+const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || document.activeElement?.isContentEditable;
 function wire() {
-  wireCanvas();
-  wireViews();
+  wireCanvas(); wireViews(); wireSearch(); wireResize();
+  $("#panel").inert = true;
   $("#picker").onchange = async (e) => {
     S.p = Number(e.target.value); store.set("modfence.project", S.p);
-    closePanel(); S.marks = { changed: new Set(), ripple: new Set() };
+    closePanel(); S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; S.userCam = false;
     const b = $("#tests"); b.classList.remove("ok", "bad"); $(".lbl", b).textContent = "Run tests";
     await loadGraph(true);
   };
-  $("#refresh").onclick = () => loadGraph(false);
+  $("#refresh").onclick = () => loadGraph(false).then(() => toast("Project re-scanned."));
   $("#tests").onclick = runTests;
-  $("#theme").onclick = () => { const order = ["auto", "light", "dark"]; const cur = store.get("modfence.theme") || "auto"; applyTheme(order[(order.indexOf(cur) + 1) % 3]); };
+  $("#help").onclick = showHelp;
+  $("#theme").onclick = () => { const order = ["auto", "light", "dark"], cur = store.get("modfence.theme") || "auto"; applyTheme(order[(order.indexOf(cur) + 1) % 3]); };
   $("#close").onclick = closePanel;
-  $("#seg").addEventListener("click", (e) => { const b = e.target.closest("button[data-tab]"); if (b) setTab(b.dataset.tab); });
+  $("#seg").addEventListener("click", (e) => { const b = e.target.closest("[data-tab]"); if (b) setTab(b.dataset.tab, true); });
+  $("#seg").addEventListener("keydown", (e) => { if (e.key === "ArrowRight" || e.key === "ArrowLeft") { setTab(S.tab === "over" ? "talk" : "over", true); e.preventDefault(); } });
   $("#prompt").addEventListener("input", autosize);
   $("#prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } });
   $("#send").onclick = send;
   $("#forget").onclick = async () => {
     if (!S.scope.size || (S.job && !S.job.done)) return;
+    if (!confirm(`Clear the run history and the agent's session for the fence ${[...S.scope].map(shown).join(", ")}? Files are not touched.`)) return;
     await api(`/api/forget?${q()}`, { scope: [...S.scope] }).catch(() => {});
-    loadTalk(); toast("Started a new conversation for this scope.");
+    loadTalk(); toast("Run history cleared for this fence.");
   };
   $("#sclose").onclick = () => showSheet(false);
   $("#scrim").onclick = () => showSheet(false);
   addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    if ($("#sheet").classList.contains("show")) showSheet(false);
-    else if (S.selected) closePanel();
+    if (e.key === "Escape") {
+      if (!$("#sheet").hidden) showSheet(false);
+      else if (S.selected && !typing()) closePanel();
+      return;
+    }
+    if (!$("#sheet").hidden) {
+      if (e.key === "Tab") { e.preventDefault(); $("#sclose").focus(); } // the sheet has one control: keep focus there
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); $("#find").focus(); $("#find").select(); return; }
+    if (typing() || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "/") { e.preventDefault(); $("#find").focus(); }
+    else if (e.key === "?") { e.preventDefault(); showHelp(); }
+    else if ("1234".includes(e.key) && e.key.length === 1) setView(VIEWS[+e.key - 1].id);
   });
 }
 

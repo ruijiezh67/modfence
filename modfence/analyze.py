@@ -145,6 +145,33 @@ def snapshot(root):
     return out
 
 
+def snapshot_bytes(root, budget=50_000_000):
+    """{relative path: bytes} for files up to SNAPSHOT_MAX_BYTES each and `budget` in total, smallest first.
+    Files beyond the budget are left out; changes to them can be shown but not reverted."""
+    root = os.path.abspath(root)
+    sizes = []
+    for d, dirs, files in os.walk(root):
+        dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
+        for f in files:
+            full = os.path.join(d, f)
+            try:
+                n = os.path.getsize(full)
+            except OSError:
+                continue
+            if n <= SNAPSHOT_MAX_BYTES:
+                sizes.append((n, os.path.relpath(full, root).replace(os.sep, "/")))
+    out, used = {}, 0
+    for n, rel in sorted(sizes):
+        if used + n > budget:
+            break
+        try:
+            out[rel] = read_bytes(os.path.join(root, rel))
+            used += n
+        except OSError:
+            pass
+    return out
+
+
 def diff(before, after):
     """(added, modified, deleted) relative paths."""
     added = sorted(set(after) - set(before))

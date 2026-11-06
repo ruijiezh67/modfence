@@ -77,6 +77,9 @@ def make_handler(app, port):
                 if u.path == "/api/history":
                     scope = [s for s in (q.get("scope") or [""])[0].split("+") if s]
                     return self.send_json({"runs": runner.load_history(app.project(q), scope)})
+                if u.path == "/api/diff":
+                    return self.send_json({"diff": runner.run_diff(app.project(q), (q.get("run") or [""])[0],
+                                                                   (q.get("path") or [""])[0])})
                 if u.path == "/api/events":
                     return self.events((q.get("job") or [""])[0], int((q.get("from") or ["0"])[0]))
                 return self.static(u.path)
@@ -147,6 +150,13 @@ def make_handler(app, port):
                 if u.path == "/api/tests":
                     ok, summary, out = runner.run_tests(app.project(q))
                     return self.send_json({"ok": ok, "summary": summary, "output": out})
+                if u.path == "/api/revert":
+                    with app.lock:
+                        running = app.active.get(app.project(q))
+                        if running and not running.done:
+                            return self.send_json({"error": "wait for the current run to finish"}, 409)
+                    reverted, skipped = runner.revert_run(app.project(q), b.get("run") or "", b.get("paths") or None)
+                    return self.send_json({"reverted": reverted, "skipped": skipped})
                 if u.path == "/api/forget":
                     runner.forget(app.project(q), [s for s in b.get("scope") or [] if s])
                     return self.send_json({"ok": True})
@@ -167,7 +177,7 @@ def make_handler(app, port):
                 running = app.active.get(root)
                 if running and not running.done:
                     return self.send_json({"error": "a run is already in progress in this project", "job": running.id}, 409)
-                job = runner.Job(root, scope, prompt, graph, app.claude)
+                job = runner.Job(root, scope, prompt, graph, app.claude, read_only=bool(b.get("read_only")))
                 app.jobs[job.id] = job
                 app.active[root] = job
             job.start()

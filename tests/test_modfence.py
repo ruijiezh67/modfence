@@ -166,6 +166,46 @@ class RunnerTest(unittest.TestCase):
         self.assertNotIn("app/core", runner.load_sessions(d))
         self.assertEqual(runner.load_history(d, ["app/core"]), [])
 
+    def test_run_is_stored_with_diff_and_can_be_reverted(self):
+        d = project()
+        original = analyze.read_text(os.path.join(d, "app/core/values.py"))
+        job = run_job(d, ["app/core"], "edit app/core/values.py and edit app/core/new.py")
+        ch = next(e for e in job.events if e["kind"] == "changes")
+        files = {f["path"]: f for f in ch["files"]}
+        self.assertEqual(files["app/core/values.py"]["status"], "modified")
+        self.assertEqual((files["app/core/values.py"]["plus"], files["app/core/values.py"]["minus"]), (1, 0))
+        self.assertEqual(files["app/core/new.py"]["status"], "added")
+        self.assertIn("+# edited by fake claude", runner.run_diff(d, ch["run"], "app/core/values.py"))
+        with self.assertRaises(LookupError):
+            runner.run_diff(d, ch["run"], "README.md")
+        reverted, skipped = runner.revert_run(d, ch["run"])
+        self.assertEqual(sorted(reverted), ["app/core/new.py", "app/core/values.py"])
+        self.assertEqual(analyze.read_text(os.path.join(d, "app/core/values.py")), original)
+        self.assertFalse(os.path.exists(os.path.join(d, "app/core/new.py")))
+        self.assertEqual(runner.revert_run(d, ch["run"])[0], [], "a second revert changes nothing")
+
+    def test_revert_leaves_files_edited_after_the_run(self):
+        d = project()
+        job = run_job(d, ["app/core"], "edit app/core/values.py")
+        run = next(e for e in job.events if e["kind"] == "changes")["run"]
+        write(os.path.join(d, "app/core/values.py"), "Y = 2\n", "a")
+        reverted, skipped = runner.revert_run(d, run)
+        self.assertEqual(reverted, [])
+        self.assertEqual(skipped[0]["path"], "app/core/values.py")
+        with self.assertRaises(LookupError):
+            runner.revert_run(d, "../../etc")
+
+    def test_read_only_run_may_edit_nothing(self):
+        d = project()
+        job = runner.Job(d, ["app/core"], "edit app/core/values.py", analyze.analyze(d), FAKE, read_only=True).start()
+        while not job.done:
+            time.sleep(0.05)
+        self.assertEqual(load(os.path.join(d, ".modfence", "fake_argv.json"))["scope"], "")
+        argv = load(os.path.join(d, ".modfence", "fake_argv.json"))["argv"]
+        self.assertIn("read-only session", argv[argv.index("--append-system-prompt") + 1])
+        ch = next(e for e in job.events if e["kind"] == "changes")
+        self.assertEqual(ch["outside_scope"], ["app/core/values.py"], "any edit in read-only mode is outside the scope")
+
     def test_reading_state_creates_nothing(self):
         d = project()
         self.assertEqual(runner.load_history(d, ["app/core"]), [])
@@ -235,6 +275,12 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(ch["outside_scope"], [])
         s, data = self.req("GET", "/api/history?p=0&scope=app/cli")
         self.assertEqual(json.loads(data)["runs"][-1]["prompt"], "edit app/cli/main.py")
+        s, data = self.req("GET", f"/api/diff?p=0&run={ch['run']}&path=app/cli/main.py")
+        self.assertIn("+# edited by fake claude", json.loads(data)["diff"])
+        self.assertEqual(self.req("GET", "/api/diff?p=0&run=../x&path=app/cli/main.py")[0], 404)
+        self.assertEqual(self.req("POST", "/api/revert?p=0", {"run": ch["run"]})[0], 403, "needs the X-Modfence header")
+        s, data = self.req("POST", "/api/revert?p=0", {"run": ch["run"]}, {"X-Modfence": "1"})
+        self.assertEqual(json.loads(data)["reverted"], ["app/cli/main.py"])
 
 
 if __name__ == "__main__":

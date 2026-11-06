@@ -1,24 +1,25 @@
 # modfence
 
-**See your project as modules. Click one, and talk to Claude about that module only.**
+**See your project as modules. Fence the ones an AI agent may edit. Review every change it made.**
 
-![modfence on the library example](docs/screenshot-library.png)
+![modfence on the spreadsheet example](docs/graph.png)
 
-modfence draws your Python project as a graph of modules and the imports between them. Click a module and a panel opens with:
+modfence is for learning a codebase and practicing coding with an AI agent without losing track of what it did. It draws your Python project as modules and the imports between them. Select a module and a panel opens with:
 
 - what is inside it: files, public names, its docstring;
-- what it depends on, and what depends on it;
-- a prompt box.
+- what it depends on and what uses it, with the exact import lines behind each arrow;
+- exercises from the project's `TASKS.md` that touch it;
+- the fence, and an instruction box.
 
-Your request goes to your own Claude Code, scoped to that module:
+Your instruction goes to your own Claude Code:
 
-- **Claude can read the whole project, but can only edit the modules in the scope.** This is enforced by a hook, not just asked for in the prompt.
-- **The answer streams into the panel.** It shows the text, plus each file Claude read or edited and each command it ran.
-- **When it finishes, the graph shows what changed.**
-  - Modules with changed files pulse green.
-  - Modules that import them are marked amber: the ripple.
-  - A change made outside the scope by a shell command is flagged in red.
-- **Every module keeps its own conversation.** Opening the module again continues where you left off.
+- **The agent reads the whole project but edits only inside the fence.** A hook enforces this; the prompt does not just ask for it.
+- **Read only mode** fences nothing: the agent explains, points to `file:line`, and gives hints instead of solutions.
+- **Each run is a log, not a chat:** the instruction, every file read or edited, every blocked edit and why, and the agent's notes.
+- **Each run ends with a review table.** It lists every changed file with added and removed lines, and an inline diff. You can revert one file or the whole run; a file you edited again since the run is left alone.
+- **The graph shows the effect.** Changed modules turn green with a `+n −m` badge. Modules that import changed code turn amber. Files changed outside the fence get a red banner and a one-click revert.
+
+![Layers view](docs/layers.png)
 
 ## Run it
 
@@ -43,14 +44,15 @@ modfence itself uses only the Python standard library and nothing is installed.
 
 | Do | How |
 |---|---|
-| Open a module | Click it. Its dependencies turn blue and its dependents clay; everything else fades. |
-| Widen the scope | Shift-click more modules, or click `+ tests` above the prompt box. The scope is what Claude may edit. |
-| Ask or instruct | Type in the prompt box. Send with `Ctrl` + `Enter` (or `Cmd` + `Enter`). The send button turns into stop while a run is going. |
-| Follow an import | Hover an edge to see the exact import lines behind it; click to open the file at that line. |
-| Pick an exercise | If the project has a `TASKS.md`, tasks that target the open module appear in its Overview. Clicking one fills in the prompt and sets the scope to the modules the task names. |
-| Check the result | Click `Run tests` (runs `python -m unittest discover -s tests -t .`). Click the toast for the full output. |
-| Start over | `New conversation` drops this scope's session and history. |
-| Move around | Drag to pan, pinch or `Ctrl` + scroll to zoom, double-click to fit. |
+| Find a module | Press `/` or `Ctrl` + `K` and type. Or click it in any view. |
+| Switch view | `1` Graph, `2` Layers (architecture bands), `3` Outline (the project as a document), `4` Map (area is lines of code). Selection, fence and change marks carry across views. |
+| Read a module | Its dependencies turn blue and the modules that use it violet; everything else fades. Expand a row to see the import lines, and click one to open the file at that line. |
+| Set the fence | The selected module is editable (teal, hatched). Shift-click adds modules; `+ tests` adds the tests. Switch to `Read only: explain` to fence nothing. |
+| Give an instruction | Type it and press `Ctrl` + `Enter` (`Cmd` + `Enter`). The bar under the top bar shows the running agent from any view, with Stop. While it runs, the fence border marches. |
+| Pick an exercise | Exercises from `TASKS.md` that touch the module appear in its Overview. Clicking one fills in the instruction and fences the modules it names. |
+| Review | In the Runs tab: `Diff` per file, `Revert this run`, `Run tests`. |
+| Start over | `Clear runs` drops this fence's agent session and run history. Files are not touched. |
+| Move around | Drag to pan, pinch or `Ctrl` + scroll to zoom, double-click to fit. The panel is resizable. `?` opens the help. |
 | Link to a module | `http://127.0.0.1:8765/#p=1&m=library/services` opens project 1 with that module selected. |
 
 ## The example projects
@@ -63,13 +65,13 @@ modfence itself uses only the Python standard library and nothing is installed.
 | `02-library` | domain, storage, services, reports, cli | layers: the domain depends on nothing, and the CLI sits on top |
 | `03-spreadsheet` | cells, formula, functions, graph, engine, io, cli | an engine that composes four independent modules |
 
-The cross-module tasks are where the scope pays off. Here is what happened with the scope set to `calc/evaluator` only, asking for the `^` operator, which also needs the lexer and parser:
+The cross-module tasks are where the fence pays off. Here is what happened with the fence set to `calc/evaluator` only, asking for the `^` operator, which also needs the lexer and parser:
 
 - Claude implemented and tested the evaluator part.
 - It listed the exact changes `calc/lexer` and `calc/parser` still need.
 - It did not touch them.
 
-In a separate check, asked to write a file in `calc/lexer` with the same scope, the write was blocked by the hook.
+In a separate check, asked to write a file in `calc/lexer` with the same fence, the write was blocked by the hook.
 
 ## How it works
 
@@ -78,9 +80,9 @@ In a separate check, asked to write a file in `calc/lexer` with the same scope, 
 | Graph | `modfence/analyze.py` | Parses every `.py` file with `ast`. A module is a directory. An edge A → B exists when a file in A imports a file in B (absolute and relative imports). Each edge keeps its receipts: the file, line and source of every import behind it. No model draws the graph. |
 | Runs | `modfence/runner.py` | Starts `claude -p --output-format stream-json --include-partial-messages` in the project root. It adds a system note naming the scope, its files and public names, and what it depends on and is used by. It resumes the scope's previous session. After the run it diffs the project to report changes, edits outside the scope, and the ripple. |
 | Scope | `modfence/scope_guard.py` | A `PreToolUse` hook, passed with `--settings` for that run only. It denies `Edit`, `Write`, `MultiEdit` and `NotebookEdit` on any path outside the scope. `..` tricks and symlinks are resolved first. It fails closed. |
-| Server | `modfence/server.py` | `http.server` on 127.0.0.1 only. Events stream to the page as server-sent events. The page itself is plain HTML, CSS and JS with no build step, in `modfence/web/`. |
+| Server | `modfence/server.py` | `http.server` on 127.0.0.1 only. Events stream to the page as server-sent events. The page itself is plain HTML, CSS and JS with no build step, in `modfence/web/`. Motion uses platform features only (View Transitions, `@starting-style`, scroll-driven animations, `::details-content`); older browsers get the same UI without the motion, and `prefers-reduced-motion` turns it off. |
 
-**State** lives in `<project>/.modfence/` (git-ignored automatically): session ids and conversation history per scope. Browsing a project never writes to it; only a run does.
+**State** lives in `<project>/.modfence/` (git-ignored automatically): session ids and run history per fence, and `runs/<id>/` with the before and after copy of every file a run changed, which is what diff and revert read. Browsing a project never writes to it; only a run does.
 
 **Security:**
 - The server only answers requests whose `Host` is `127.0.0.1` or `localhost`.
@@ -102,4 +104,4 @@ In a separate check, asked to write a file in `calc/lexer` with the same scope, 
 python -m unittest discover -s tests -t .
 ```
 
-The suite has 15 deterministic tests. No model is called: `tests/fake_claude.py` stands in for the CLI. It emits Claude Code's stream-json events and makes the file edits the prompt asks for.
+The suite has 18 deterministic tests. No model is called: `tests/fake_claude.py` stands in for the CLI. It emits Claude Code's stream-json events and makes the file edits the prompt asks for.

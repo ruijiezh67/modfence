@@ -1,5 +1,5 @@
-/* Alternative views of the same modules. Each one shares selection, scope, hover highlighting and change marks
-   with the graph: a module is an element with class "mcard" and data-id, painted by paintAlt(). */
+/* Alternative views of the same modules. Each shares selection, fence, hover highlighting and change marks with the
+   graph: a module is an element with class "mcard" and data-id, painted by paintAlt(). */
 "use strict";
 
 const VIEWS = [
@@ -8,18 +8,32 @@ const VIEWS = [
   { id: "outline", label: "Outline", hint: "Read the project like a document" },
   { id: "map", label: "Map", hint: "Area is lines of code; color shows what changed" },
 ];
+const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* View Transitions: the browser snapshots old and new DOM and morphs elements that share a view-transition-name,
+   so a module's tile in Layers flies to its cell in Map. Falls back to an instant swap. */
+function transition(fn) {
+  if (!document.startViewTransition || reduced()) { fn(); return; }
+  document.startViewTransition(fn);
+}
+const vtName = (id) => "m-" + id.replace(/[^A-Za-z0-9_-]/g, "_");
 
 function setView(v) {
   if (!VIEWS.some((x) => x.id === v)) v = "graph";
-  S.view = v;
-  store.set("modfence.view", v);
-  document.body.dataset.view = v;
-  document.querySelectorAll("#viewseg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === v)));
-  $("#canvas").hidden = v !== "graph";
-  $("#alt").hidden = v === "graph";
-  renderAltView();
-  paintSelection();
-  if (v === "graph") fitView(false);
+  const first = !S.view || !document.body.dataset.view;
+  const apply = () => {
+    S.view = v;
+    store.set("modfence.view", v);
+    document.body.dataset.view = v;
+    document.querySelectorAll("#viewseg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === v)));
+    $("#canvas").hidden = v !== "graph";
+    $("#alt").hidden = v === "graph";
+    renderAltView();
+    paintSelection();
+    if (v === "graph") fitView(false);
+    slideInk($("#viewseg"), "[aria-pressed=true]");
+  };
+  if (first || S.view === v) apply(); else transition(apply);
 }
 
 function renderAltView() {
@@ -41,20 +55,23 @@ function altRows() {
 function rowName(row, ri, rows) {
   if (row.every((id) => mod(id).kind === "tests")) return "Tests";
   const real = rows.map((r, i) => (r.every((id) => mod(id).kind === "tests") ? -1 : i)).filter((i) => i >= 0);
+  if (real.length === 1) return "Modules";
   if (ri === real[0]) return "Entry points";
   if (ri === real[real.length - 1]) return "Foundations";
   return `Layer ${real.indexOf(ri) + 1}`;
 }
 function counts(id) {
   const { dep, use } = related(id);
-  return `<span title="depends on">↓ ${dep.size}</span><span title="used by">↑ ${use.size}</span>`;
+  return `<span title="depends on ${dep.size}"><i class="sw dep"></i>${dep.size}</span><span title="used by ${use.size}"><i class="sw use"></i>${use.size}</span>`;
 }
 function cardBody(m) {
   const pre = parent(m.id);
-  return `<div class="ct"><i class="dot"></i><b>${esc(label(m.id))}</b>${pre ? `<span class="pre">${esc(pre)}/</span>` : ""}</div>
+  return `<div class="ct"><b class="mono">${esc(label(m.id))}</b>${pre ? `<span class="pre mono">${esc(pre)}/</span>` : ""}<span class="badge mono" data-badge></span></div>
     <div class="cd">${esc(m.doc || "No docstring")}</div>
-    <div class="cm"><span>${m.files.length} file${m.files.length === 1 ? "" : "s"}</span><span>${m.lines} lines</span>${counts(m.id)}</div>`;
+    <div class="cm mono"><span>${plural(m.files.length, "file")}</span><span>${m.lines} ln</span>${counts(m.id)}</div>`;
 }
+const cardAttrs = (id, cls) => `class="mcard ${cls}${mod(id).kind === "tests" ? " tests" : ""}" tabindex="0" role="button" data-id="${esc(id)}" style="view-transition-name:${vtName(id)}"`;
+
 function wireCards(box) {
   box.querySelectorAll(".mcard").forEach((c) => {
     const id = c.dataset.id;
@@ -62,26 +79,45 @@ function wireCards(box) {
     c.addEventListener("keydown", (ev) => { if ((ev.key === "Enter" || ev.key === " ") && ev.target === c) { ev.preventDefault(); onNodeClick(id, ev); } });
     c.addEventListener("pointerenter", () => hoverNode(id, true));
     c.addEventListener("pointerleave", () => hoverNode(id, false));
+    c.addEventListener("focus", () => hoverNode(id, true));
+    c.addEventListener("blur", () => hoverNode(id, false));
   });
   box.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", (ev) => { ev.stopPropagation(); select(b.dataset.go); }));
   box.querySelectorAll("[data-file]").forEach((b) => b.addEventListener("click", (ev) => { ev.stopPropagation(); openFile(b.dataset.file); }));
-  box.onclick = (ev) => { if (!ev.target.closest(".mcard") && S.selected) closePanel(); };
+  box.querySelector("[data-maptests]")?.addEventListener("click", () => { S.mapTests = !S.mapTests; store.set("modfence.maptests", S.mapTests ? "1" : ""); transition(renderAltView); });
+  box.onclick = (ev) => { if (!ev.target.closest(".mcard,button") && S.selected) closePanel(); };
 }
+// Spotlight: a soft highlight follows the pointer across a card's border (set once on the container, read by CSS).
+addEventListener("pointermove", (e) => {
+  const c = e.target.closest && e.target.closest("#alt .mcard");
+  if (!c) return;
+  const r = c.getBoundingClientRect();
+  c.style.setProperty("--mx", `${e.clientX - r.left}px`);
+  c.style.setProperty("--my", `${e.clientY - r.top}px`);
+}, { passive: true });
+
 function paintAlt(focus, rel) {
   document.querySelectorAll("#alt .mcard").forEach((n) => {
     const id = n.dataset.id;
     n.classList.toggle("selected", id === S.selected);
-    n.classList.toggle("inscope", S.scope.has(id) && id !== S.selected);
+    n.classList.toggle("fenced", fenced(id));
     n.classList.toggle("dep", !!focus && rel.dep.has(id));
     n.classList.toggle("use", !!focus && rel.use.has(id));
-    n.classList.toggle("faded", !!focus && id !== focus && !rel.dep.has(id) && !rel.use.has(id) && !S.scope.has(id));
+    n.classList.toggle("faded", !!focus && id !== focus && !rel.dep.has(id) && !rel.use.has(id) && !fenced(id) && !S.marks.changed.has(id));
     n.classList.toggle("changed", S.marks.changed.has(id));
     n.classList.toggle("ripple", S.marks.ripple.has(id) && !S.marks.changed.has(id));
+    const b = n.querySelector("[data-badge]");
+    if (b) {
+      const st = S.marks.stats[id];
+      b.className = `badge mono${st ? " diff" : fenced(id) ? " fence" : ""}`;
+      b.innerHTML = st ? `<span class="plus">+${st.plus}</span> <span class="minus">−${st.minus}</span>` : fenced(id) ? "editable" : "";
+    }
+    n.setAttribute("aria-label", `Module ${shown(id)}${stateWords(id, rel, focus).length ? ", " + stateWords(id, rel, focus).join(", ") : ""}`);
   });
 }
 function revealCard(id) {
   const c = document.querySelector(`#alt .mcard[data-id="${CSS.escape(id)}"]`);
-  if (c) c.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  if (c) c.scrollIntoView({ block: "nearest", behavior: reduced() ? "auto" : "smooth" });
 }
 
 /* ---------- Layers: bands, no lines ---------- */
@@ -89,34 +125,34 @@ function layersHTML() {
   const rows = altRows();
   return `<div class="layers">${rows.map((row, ri) => `
     <section class="band${row.every((id) => mod(id).kind === "tests") ? " tests" : ""}">
-      <div class="blab"><b>${esc(rowName(row, ri, rows))}</b><span>${row.length} module${row.length === 1 ? "" : "s"}</span></div>
-      <div class="tiles">${row.map((id) => `<div class="mcard tile${mod(id).kind === "tests" ? " tests" : ""}" tabindex="0" role="button" data-id="${esc(id)}">${cardBody(mod(id))}</div>`).join("")}</div>
+      <div class="blab"><b>${esc(rowName(row, ri, rows))}</b><span class="mono">${row.length}</span></div>
+      <div class="tiles">${row.map((id) => `<div ${cardAttrs(id, "tile")}>${cardBody(mod(id))}</div>`).join("")}</div>
     </section>`).join("")}
-    <p class="foot">Higher layers import from lower ones. Hover a module to see its dependencies (blue) and dependents (clay).</p></div>`;
+    <p class="foot">Each layer imports only from layers below it. Hover a module: blue modules are what it depends on, violet modules use it.</p></div>`;
 }
 
 /* ---------- Outline: the project as a document ---------- */
 function outlineHTML() {
   const g = S.graph, rows = altRows(), files = Object.keys(g.files).length;
   const lines = g.modules.reduce((a, m) => a + m.lines, 0);
-  const chips = (ids, color) => ids.length ? ids.map((d) => `<button class="chip" data-go="${esc(d)}"><i style="background:var(${color})"></i>${esc(d)}</button>`).join("") : '<span class="none">none</span>';
+  const chips = (ids, kind) => ids.length ? ids.map((d) => `<button class="chip mono" data-go="${esc(d)}"><i class="sw ${kind}"></i>${esc(shown(d))}</button>`).join("") : '<span class="none">none</span>';
   const sec = (id) => {
     const m = mod(id), { dep, use } = related(id);
     const flist = m.files.map((f) => {
       const fi = g.files[f], names = fi.names.slice(0, 8).map((n) => `<code>${esc(n.name)}</code>`).join(" ");
-      return `<li><button class="fl" data-file="${esc(f)}">${esc(f.split("/").pop())}</button><span>${esc(fi.error || fi.doc || "")}</span>${names ? `<div class="nm">${names}</div>` : ""}</li>`;
+      return `<li><button class="fl mono" data-file="${esc(f)}">${esc(f.split("/").pop())}</button><span>${esc(fi.error || fi.doc || "")}</span>${names ? `<div class="nm">${names}</div>` : ""}</li>`;
     }).join("");
-    return `<section class="mcard msec${m.kind === "tests" ? " tests" : ""}" tabindex="0" data-id="${esc(id)}">
-      <div class="sh"><i class="dot"></i><h2>${esc(label(id))}</h2><span class="pre">${esc(id === "." ? "project root" : id + "/")}</span><span class="st">${m.files.length} files · ${m.lines} lines</span></div>
+    return `<section ${cardAttrs(id, "msec")}>
+      <div class="sh"><h2 class="mono">${esc(shown(id))}</h2><span class="badge mono" data-badge></span><span class="st mono">${plural(m.files.length, "file")} · ${m.lines} ln</span></div>
       <p class="sd">${esc(m.doc || "No docstring.")}</p>
-      <div class="rel"><span class="k">Uses</span>${chips([...dep], "--blue")}</div>
-      <div class="rel"><span class="k">Used by</span>${chips([...use], "--clay")}</div>
-      <details><summary>${m.files.length} file${m.files.length === 1 ? "" : "s"} and public names</summary><ul>${flist}</ul></details>
+      <div class="rel"><span class="k">Depends on</span>${chips([...dep], "dep")}</div>
+      <div class="rel"><span class="k">Used by</span>${chips([...use], "use")}</div>
+      <details><summary>${plural(m.files.length, "file")} and public names</summary><ul>${flist}</ul></details>
     </section>`;
   };
   return `<article class="doc">
-    <header><div class="eyebrow">Project</div><h1>${esc(g.name)}</h1>
-      <p>${g.modules.length} modules, ${files} files, ${lines.toLocaleString()} lines. Read from the top: entry points first, foundations last. Click a section to ask about that module.</p></header>
+    <header><h1 class="mono">${esc(g.name)}</h1>
+      <p>${plural(g.modules.length, "module")}, ${plural(files, "file")}, ${lines.toLocaleString()} lines. Read from the top: entry points first, foundations last.</p></header>
     ${rows.map((row, ri) => `<div class="part"><div class="eyebrow">${esc(rowName(row, ri, rows))}</div>${row.map(sec).join("")}</div>`).join("")}
   </article>`;
 }
@@ -142,22 +178,37 @@ function squarify(items, x, y, w, h) {
   return out;
 }
 function renderMap(box) {
-  const W = box.clientWidth - 2 * 18 - (document.body.classList.contains("panel-open") && innerWidth > 760 ? 470 : 0);
-  const H = box.clientHeight - 76 - 70;
-  const items = S.graph.modules.map((m) => ({ id: m.id, v: Math.max(1, m.lines) })).sort((a, b) => b.v - a.v);
-  const rects = squarify(items, 0, 0, Math.max(200, W), Math.max(200, H));
-  box.innerHTML = `<div class="map" style="width:${Math.max(200, W)}px;height:${Math.max(200, H)}px">${rects.map((r) => {
-    const m = mod(r.id), small = r.w < 130 || r.h < 74;
-    return `<div class="mcard cell${m.kind === "tests" ? " tests" : ""}${small ? " small" : ""}" tabindex="0" role="button" data-id="${esc(r.id)}"
-      style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px" title="${esc(r.id)} · ${m.lines} lines">
-      <div class="ct"><i class="dot"></i><b>${esc(label(r.id))}</b></div><div class="cm"><span>${m.lines} lines</span><span>${m.files.length} files</span></div>
-      ${small ? "" : `<div class="cd">${esc(m.doc || "")}</div>`}</div>`;
-  }).join("")}</div>`;
+  if (S.mapTests === undefined) S.mapTests = !!store.get("modfence.maptests");
+  const hasTests = S.graph.modules.some((m) => m.kind === "tests");
+  const W = Math.max(240, box.clientWidth - 32), H = Math.max(200, box.clientHeight - 32 - 40);
+  const items = S.graph.modules.filter((m) => S.mapTests || m.kind !== "tests").map((m) => ({ id: m.id, v: Math.max(1, m.lines) })).sort((a, b) => b.v - a.v);
+  const rects = squarify(items, 0, 0, W, H);
+  box.innerHTML = `<div class="maphead"><span>Area = lines of code.</span>${hasTests ? `<button class="btn" type="button" data-maptests aria-pressed="${S.mapTests}">Include tests</button>` : ""}</div>
+    <div class="map" style="width:${W}px;height:${H}px">${rects.map((r) => {
+      const m = mod(r.id), small = r.w < 140 || r.h < 80, tiny = r.w < 70 || r.h < 40;
+      return `<div ${cardAttrs(r.id, `cell${small ? " small" : ""}${tiny ? " tiny" : ""}`)} title="${esc(shown(r.id))} · ${m.lines} lines" data-pos="${r.x},${r.y},${r.w},${r.h}">
+        <div class="ct"><b class="mono">${esc(label(r.id))}</b><span class="badge mono" data-badge></span></div><div class="cm mono"><span>${m.lines} ln</span></div>
+        ${small ? "" : `<div class="cd">${esc(m.doc || "")}</div>`}</div>`;
+    }).join("")}</div>`;
+  box.querySelectorAll(".cell").forEach((c) => { const [x, y, w, h] = c.dataset.pos.split(",").map(Number); Object.assign(c.style, { left: x + "px", top: y + "px", width: w + "px", height: h + "px" }); });
 }
 let mapT = 0;
-addEventListener("resize", () => { clearTimeout(mapT); mapT = setTimeout(() => { if (S.view === "map") renderAltView(); }, 120); });
+addEventListener("resize", () => { clearTimeout(mapT); mapT = setTimeout(() => { if (S.view === "map") renderAltView(); slideInk($("#viewseg"), "[aria-pressed=true]"); slideInk($("#seg"), "[aria-selected=true]"); }, 120); });
+
+/* Sliding indicator under the active tab: one element that moves, instead of a border that jumps. */
+function slideInk(bar, activeSel) {
+  if (!bar) return;
+  let ink = bar.querySelector(":scope > .ink");
+  if (!ink) { ink = document.createElement("span"); ink.className = "ink"; ink.setAttribute("aria-hidden", "true"); bar.appendChild(ink); }
+  const a = bar.querySelector(activeSel);
+  if (!a || !a.offsetWidth) { ink.style.opacity = "0"; return; }
+  ink.style.opacity = "1";
+  ink.style.width = a.offsetWidth + "px";
+  ink.style.transform = `translateX(${a.offsetLeft}px)`;
+}
 
 function wireViews() {
-  $("#viewseg").innerHTML = VIEWS.map((v) => `<button data-view="${v.id}" title="${esc(v.hint)}" aria-pressed="false">${esc(v.label)}</button>`).join("");
+  $("#viewseg").innerHTML = VIEWS.map((v, i) => `<button type="button" data-view="${v.id}" title="${esc(v.hint)} (${i + 1})" aria-pressed="false">${esc(v.label)}<kbd>${i + 1}</kbd></button>`).join("");
   $("#viewseg").addEventListener("click", (e) => { const b = e.target.closest("button[data-view]"); if (b) setView(b.dataset.view); });
+  document.fonts?.ready.then(() => { slideInk($("#viewseg"), "[aria-pressed=true]"); slideInk($("#seg"), "[aria-selected=true]"); });
 }
