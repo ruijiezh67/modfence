@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>modfence</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23d97757'/%3E%3Ccircle cx='10' cy='11' r='3' fill='white'/%3E%3Ccircle cx='22' cy='11' r='3' fill='white'/%3E%3Ccircle cx='16' cy='22' r='3' fill='white'/%3E%3Cpath d='M10 11L16 22L22 11' stroke='white' stroke-width='1.8' fill='none'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand material">
+    <div class="mark" aria-hidden="true"><svg viewBox="0 0 16 16"><circle cx="4" cy="4.5" r="2" fill="currentColor"/><circle cx="12" cy="4.5" r="2" fill="currentColor"/><circle cx="8" cy="12" r="2" fill="currentColor"/><path d="M4 4.5L8 12L12 4.5" stroke="currentColor" stroke-width="1.4" fill="none"/></svg></div>
+    <span class="title">modfence</span>
+    <span class="sep"></span>
+    <select id="picker" class="picker" aria-label="Project"></select>
+    <span id="stats" class="stats"></span>
+  </div>
+  <div class="spacer"></div>
+  <nav class="viewseg material" id="viewseg" aria-label="View"></nav>
+  <div class="spacer"></div>
+  <div class="tools material">
+    <button id="tests" class="tbtn" title="Run the project's tests"><span class="dot"></span><span class="lbl">Run tests</span></button>
+    <button id="refresh" class="tbtn icon" title="Re-scan the project" aria-label="Re-scan"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M16 10a6 6 0 1 1-1.8-4.3"/><path d="M16 3.5V7h-3.5"/></svg></button>
+    <button id="theme" class="tbtn icon" title="Appearance" aria-label="Appearance"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="6.5"/><path d="M10 3.5v13a6.5 6.5 0 0 0 0-13z" fill="currentColor" stroke="none"/></svg></button>
+  </div>
+</header>
+
+<main id="canvas" aria-label="Module graph">
+  <svg id="graph" role="img" aria-label="Modules and their imports">
+    <defs>
+      <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0 1L9 5L0 9z"/></marker>
+      <marker id="ah-dep" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow dep" d="M0 1L9 5L0 9z"/></marker>
+      <marker id="ah-use" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow use" d="M0 1L9 5L0 9z"/></marker>
+    </defs>
+    <g id="world"><g id="edges"></g><g id="nodes"></g></g>
+  </svg>
+</main>
+<div class="alt" id="alt" hidden></div>
+
+<div class="empty material" id="empty">Click a module to ask about it. <kbd>Shift</kbd>-click to add more modules to the scope.</div>
+
+<div class="legend material" aria-hidden="true">
+  <span><i style="background:var(--blue)"></i>depends on</span>
+  <span><i style="background:var(--clay)"></i>used by</span>
+  <span><i style="background:var(--green)"></i>changed</span>
+  <span><i style="background:var(--amber)"></i>ripple</span>
+</div>
+
+<div class="zoom material">
+  <button class="tbtn icon" id="zin" aria-label="Zoom in" title="Zoom in"><svg viewBox="0 0 20 20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M10 5v10M5 10h10"/></svg></button>
+  <button class="tbtn icon" id="zout" aria-label="Zoom out" title="Zoom out"><svg viewBox="0 0 20 20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 10h10"/></svg></button>
+  <button class="tbtn icon" id="zfit" aria-label="Fit" title="Fit (double-click the canvas)"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 8V4h4M16 8V4h-4M4 12v4h4M16 12v4h-4"/></svg></button>
+</div>
+
+<aside class="panel" id="panel" aria-label="Module" aria-hidden="true">
+  <div class="phead">
+    <div class="txt">
+      <div class="mname" id="mname"></div>
+      <div class="mpath" id="mpath"></div>
+      <div class="mdoc" id="mdoc"></div>
+    </div>
+    <button class="close" id="close" aria-label="Close"><svg viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button>
+  </div>
+  <div class="seg" id="seg" data-tab="over" role="tablist">
+    <div class="thumb"></div>
+    <button role="tab" aria-selected="true" data-tab="over">Overview</button>
+    <button role="tab" aria-selected="false" data-tab="talk">Conversation<span class="count" id="tcount"></span></button>
+  </div>
+  <div class="pbody" id="pbody">
+    <section class="view" id="v-over"></section>
+    <section class="view" id="v-talk" hidden></section>
+  </div>
+  <div class="composer">
+    <div class="scope" id="scope"></div>
+    <div class="box">
+      <textarea id="prompt" rows="1" placeholder="Ask about this module, or tell Claude what to change"></textarea>
+      <button class="send" id="send" aria-label="Send" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5L8 3l4.5 4.5"/></svg></button>
+    </div>
+    <div class="hint"><span>Edits are limited to the scope. <kbd>Ctrl</kbd> <kbd>Enter</kbd> to send</span><button id="forget" title="Start this scope's conversation over">New conversation</button></div>
+  </div>
+</aside>
+
+<div class="tip material" id="tip"></div>
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="stitle">
+  <div class="shead"><span class="t" id="stitle"></span><button class="close" id="sclose" aria-label="Close"><svg viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
+  <div class="code" id="scode"></div>
+</div>
+<div class="toast material" id="toast"><i></i><span id="ttext"></span></div>
+
+<script src="views.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
