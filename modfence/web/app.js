@@ -56,6 +56,11 @@ function mod(id) { return S.graph && S.graph.modules.find((m) => m.id === id); }
 const label = (id) => (id === "." ? "(root)" : id.split("/").pop());
 const parent = (id) => (id.includes("/") ? id.slice(0, id.lastIndexOf("/")) : "");
 const shown = (id) => (id === "." ? "(root)" : id);
+const moduleOf = (p) => { // mirrors analyze.module_of
+  const d = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
+  const own = p.endsWith(".py") && !p.endsWith("/__init__.py") && p !== "__init__.py";
+  return d && !(own && (S.graph.split || []).includes(d)) ? d : own ? p : d || ".";
+};
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 const maxLines = () => Math.max(1, ...S.graph.modules.map((m) => m.lines));
 
@@ -421,7 +426,7 @@ function setTab(t, focus) {
 function renderHeader() {
   const m = mod(S.selected);
   if (!m) return;
-  $("#mname").textContent = m.id === "." ? "(project root)" : m.id + "/";
+  $("#mname").textContent = m.id === "." ? "(project root)" : m.id.endsWith(".py") ? m.id : m.id + "/";
   $("#mdoc").textContent = m.doc || "";
   $("#mfacts").textContent = `${plural(m.files.length, "file")} · ${m.lines} lines · ${plural(m.names.length, "public name")}`;
 }
@@ -497,7 +502,7 @@ function parseTasks(text) {
     const title = head.replace(/^\d+[.)]\s*/, "").replace(/\s*\((single module|crosses modules?)[^)]*\)\s*$/i, "").trim();
     const target = lines.find((l) => /^\s*target/i.test(l)) || "";
     const ticks = (s) => [...s.matchAll(/`([^`]+)`/g)].map((m) => m[1].replace(/\.py$/, ""));
-    let modules = ticks(target).map((t) => t.replace(/\./g, "/")).filter((t) => ids.includes(t));
+    let modules = ticks(target).flatMap((t) => [t.replace(/\./g, "/"), t + ".py"]).filter((t) => ids.includes(t));
     if (!modules.length) {
       const short = ticks((head.match(/\(([^)]*)\)/) || [])[1] || "");
       modules = ids.filter((id) => short.includes(id.split("/").pop()));
@@ -782,7 +787,7 @@ function showRunbar() {
 }
 function markEditing(path) {
   const rel = shortPath(path);
-  const id = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : ".";
+  const id = moduleOf(rel);
   document.querySelectorAll(`.node[data-id="${CSS.escape(id)}"], #alt .mcard[data-id="${CSS.escape(id)}"]`).forEach((n) => {
     n.classList.remove("changed"); void n.getBoundingClientRect(); n.classList.add("changed");
   });
@@ -792,7 +797,7 @@ async function onChanges(c) {
   const stats = {};
   (c.files || []).forEach((f) => {
     if (!f.path.endsWith(".py")) return;
-    const id = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : ".";
+    const id = moduleOf(f.path);
     const s = (stats[id] ||= { plus: 0, minus: 0 });
     s.plus += f.plus || 0; s.minus += f.minus || 0;
   });

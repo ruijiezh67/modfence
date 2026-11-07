@@ -103,7 +103,7 @@ def context_note(graph, scope, read_only=False):
     mods = {m["id"]: m for m in graph["modules"]}
     out_edges = [e for e in graph["edges"] if e["source"] in scope and e["target"] not in scope]
     in_edges = [e for e in graph["edges"] if e["target"] in scope and e["source"] not in scope]
-    where = ", ".join(f"`{s}/`" if s != "." else "`(project root files)`" for s in scope)
+    where = ", ".join("`(project root files)`" if s == "." else f"`{s}`" if s.endswith(".py") else f"`{s}/`" for s in scope)
     if read_only:
         rule = ("This is a read-only session for learning the code: you may read any file, but you may not create "
                 "or edit any file, and a hook blocks every edit. Explain, point to exact file:line locations, and give "
@@ -264,7 +264,8 @@ class Job:
             changed = [p for p in added + modified + deleted if not p.startswith(".modfence/")]
             outside = [p for p in changed if not _in_scope(p, self.editable)]
             graph = analyze.analyze(self.root)
-            changed_mods = sorted({analyze.module_of(p) for p in changed if p.endswith(".py")})
+            split = set(graph.get("split", ()))
+            changed_mods = sorted({analyze.module_of(p, split) for p in changed if p.endswith(".py")})
             ripple = analyze.dependents(graph, changed_mods)
             files = save_run(self, changed, set(added), set(deleted), set(outside))
             self.emit("changes", added=added, modified=modified, deleted=deleted, outside_scope=outside,

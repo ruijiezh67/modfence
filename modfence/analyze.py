@@ -1,6 +1,8 @@
 """Build a module graph of a Python project. Every edge carries its receipts: the import lines it came from.
 
-A module is a directory that holds source files; files directly under the project root form the module ".".
+A module is a directory that holds source files. Flat code is split: a .py file directly under the project root,
+or in a directory with SPLIT_AT or more .py files of its own (nanochat/gpt.py, nanochat/engine.py ...), is a module
+of its own. Other root files belong to the module ".".
 An edge A -> B exists when a file in A imports a file in B. Nothing here asks a model: the graph is what the
 code says, so a node or an edge can always be traced back to a file and a line.
 """
@@ -32,9 +34,28 @@ def walk(root, exts=(".py",)):
     return sorted(out)
 
 
-def module_of(path):
+SPLIT_AT = 8
+
+
+def _is_tests(d):
+    return d.split("/")[0] in ("tests", "test") or d.endswith("/tests")
+
+
+def split_dirs(paths):
+    """Directories so flat that each of their .py files becomes a module (tests stay one module)."""
+    count = {}
+    for p in paths:
+        d = os.path.dirname(p)
+        if p.endswith(".py") and os.path.basename(p) != "__init__.py":
+            count[d] = count.get(d, 0) + 1
+    return {d for d, n in count.items() if d and n >= SPLIT_AT and not _is_tests(d)}
+
+
+def module_of(path, split=()):
     d = os.path.dirname(path)
-    return d if d else "."
+    if d and (d not in split or not path.endswith(".py") or os.path.basename(path) == "__init__.py"):
+        return d
+    return path if path.endswith(".py") else "."
 
 
 def _resolve(parts, files):
@@ -87,12 +108,13 @@ def analyze(root):
     root = os.path.abspath(root)
     paths = walk(root)
     files = set(paths)
+    split = split_dirs(paths)
     mods, edges, fileinfo = {}, {}, {}
     for p in paths:
         full = os.path.join(root, p)
         text = read_text(full)
         lines = text.splitlines()
-        info = {"path": p, "module": module_of(p), "lines": len(lines), "mtime": os.path.getmtime(full),
+        info = {"path": p, "module": module_of(p, split), "lines": len(lines), "mtime": os.path.getmtime(full),
                 "doc": "", "names": [], "error": None}
         try:
             tree = ast.parse(text, filename=p)
@@ -100,7 +122,7 @@ def analyze(root):
             info["doc"] = doc.strip().splitlines()[0] if doc.strip() else ""
             info["names"] = public_names(tree)
             for target, line in imports_of(p, tree, files):
-                a, b = module_of(p), module_of(target)
+                a, b = module_of(p, split), module_of(target, split)
                 if a == b:
                     continue
                 e = edges.setdefault((a, b), {"source": a, "target": b, "receipts": []})
@@ -118,14 +140,13 @@ def analyze(root):
             m["doc"] = info["doc"]
         m["names"] += [dict(n, file=p) for n in info["names"]]
     for m in mods.values():
-        top = m["id"].split("/")[0]
-        if top in ("tests", "test") or m["id"].endswith("/tests"):
+        if _is_tests(m["id"]):
             m["kind"] = "tests"
         if not m["doc"]:
             m["doc"] = next((fileinfo[f]["doc"] for f in m["files"] if fileinfo[f]["doc"]), "")
     return {"root": root, "name": os.path.basename(root), "modules": sorted(mods.values(), key=lambda m: m["id"]),
             "edges": sorted(edges.values(), key=lambda e: (e["source"], e["target"])), "files": fileinfo,
-            "analyzed_at": time.time()}
+            "split": sorted(split), "analyzed_at": time.time()}
 
 
 def snapshot(root):

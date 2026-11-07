@@ -84,6 +84,26 @@ class AnalyzeTest(unittest.TestCase):
         self.assertEqual(analyze.diff(before, analyze.snapshot(d)), (["app/core/new.py"], ["app/core/values.py"], ["README.md"]))
 
 
+class FlatProjectTest(unittest.TestCase):
+    """Training repos often keep model.py, train.py at the root: each root .py file is its own module."""
+
+    def test_root_files_are_modules_and_fenceable(self):
+        d = tempfile.mkdtemp()
+        try:
+            for name, src in {"model.py": "class GPT: pass\n", "train.py": "from model import GPT\n",
+                              "README.md": "x\n"}.items():
+                with open(os.path.join(d, name), "w") as f:
+                    f.write(src)
+            g = analyze.analyze(d)
+            self.assertEqual(sorted(m["id"] for m in g["modules"]), ["model.py", "train.py"])
+            self.assertEqual([(e["source"], e["target"]) for e in g["edges"]], [("train.py", "model.py")])
+            self.assertTrue(scope_guard.allowed("train.py", d, ["train.py"]))
+            self.assertFalse(scope_guard.allowed("model.py", d, ["train.py"]))
+            self.assertFalse(scope_guard.allowed("README.md", d, ["train.py"]))
+        finally:
+            shutil.rmtree(d)
+
+
 class ScopeGuardTest(unittest.TestCase):
     def test_allowed(self):
         d = project()
