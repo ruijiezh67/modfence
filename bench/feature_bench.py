@@ -2,6 +2,7 @@
 
   vibe         Claude Code alone, one run, the task text only. No module map, no fence: "just ask the model".
   fence-all    One modfence run fencing every module the task needs (module map in the system note + hook).
+  fence-all-tests  Same as fence-all, with the tests module in the fence too (what an exercise sets up).
   fence-chain  One modfence run per module, foundations first; each run fences one module and is told which
                steps came before and which come after. This is the step-by-step way modfence is meant to be used.
 
@@ -52,6 +53,9 @@ def attempt(example, num, chain, condition, rep, workdir, claude):
         steps.append(run_job(root, ["."], task, "plain", claude))  # "plain" = no note; no fence sentence, no hook
     elif condition == "fence-all":
         steps.append(run_job(root, chain, task, "modfence", claude))
+    elif condition == "fence-all-tests":  # the fence a user gets from an exercise: its modules plus the tests
+        tests = [m["id"] for m in analyze.analyze(root)["modules"] if m["kind"] == "tests"]
+        steps.append(run_job(root, chain + tests, task, "modfence", claude))
     else:
         for i, m in enumerate(chain):
             note = f"\n\nThis is step {i + 1} of {len(chain)}. In this run, build only the part of the feature that belongs in `{m}`."

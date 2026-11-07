@@ -42,10 +42,11 @@ def library(root, pristine):
         return (int(m.group(1)), date.fromisoformat(m.group(2))) if code == 0 and m else (None, None)
 
     cli(root, "add-book", "111", "Dune", "Herbert", "--copies", "9")
-    for mid in ("m1", "m2"):
+    for mid in ("m1", "m2", "m3", "m4"):
         cli(root, "add-member", mid, mid.upper())
-    for days, fine in ((10, "2.50"), (100, "10.00"), (0, "0.00")):
-        lid, due = lend("m1")
+    # one member per scenario: fines from one scenario must not block the next (5.00 or more blocks lending)
+    for member, days, fine in (("m1", 10, "2.50"), ("m3", 100, "10.00"), ("m4", 0, "0.00")):
+        lid, due = lend(member)
         code, so, se = cli(root, "return", str(lid), today=due + timedelta(days=days)) if lid else (None, "", "lend failed")
         out.append((f"return {days} days late prints fine {fine}", code == 0 and f"loan {lid} returned, fine {fine}" in so,
                     f"{so!r} {se[-120:]!r}"))
