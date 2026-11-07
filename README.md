@@ -57,13 +57,14 @@ modfence itself uses only the Python standard library and nothing is installed.
 
 ## The example projects
 
-[`examples/`](examples/) holds three small modular projects, from easy to hard. Each has tests and a `TASKS.md` with five exercises, from single-module to cross-module:
+[`examples/`](examples/) holds four small modular projects, from easy to hard. Each has tests and a `TASKS.md` with five exercises, from single-module to cross-module:
 
 | Project | Modules | What it teaches |
 |---|---|---|
 | `01-calculator` | lexer, parser, evaluator, cli | a pipeline: each stage depends only on the one before it |
 | `02-library` | domain, storage, services, reports, cli | layers: the domain depends on nothing, and the CLI sits on top |
 | `03-spreadsheet` | cells, formula, functions, graph, engine, io, cli | an engine that composes four independent modules |
+| `04-tinygpt` | config, data, model, train, eval, cli | a PyTorch training codebase: a character-level GPT that trains on a CPU in seconds. Needs `torch`. |
 
 The cross-module tasks are where the fence pays off. Here is what happened with the fence set to `calc/evaluator` only, asking for the `^` operator, which also needs the lexer and parser:
 
@@ -77,9 +78,9 @@ In a separate check, asked to write a file in `calc/lexer` with the same fence, 
 
 | Part | File | What it does |
 |---|---|---|
-| Graph | `modfence/analyze.py` | Parses every `.py` file with `ast`. A module is a directory. An edge A → B exists when a file in A imports a file in B (absolute and relative imports). Each edge keeps its receipts: the file, line and source of every import behind it. No model draws the graph. |
-| Runs | `modfence/runner.py` | Starts `claude -p --output-format stream-json --include-partial-messages` in the project root. It adds a system note naming the scope, its files and public names, and what it depends on and is used by. It resumes the scope's previous session. After the run it diffs the project to report changes, edits outside the scope, and the ripple. |
-| Scope | `modfence/scope_guard.py` | A `PreToolUse` hook, passed with `--settings` for that run only. It denies `Edit`, `Write`, `MultiEdit` and `NotebookEdit` on any path outside the scope. `..` tricks and symlinks are resolved first. It fails closed. |
+| Graph | `modfence/analyze.py` | Parses every `.py` file with `ast`. A module is a directory, except where code is flat: each `.py` file at the project root (`train.py`, `model.py`), and each file in a directory with 8 or more `.py` files of its own (`nanochat/gpt.py`), is a module by itself. An edge A → B exists when a file in A imports a file in B (absolute and relative imports). Each edge keeps its receipts: the file, line and source of every import behind it. No model draws the graph. |
+| Runs | `modfence/runner.py` | Starts `claude -p --output-format stream-json --include-partial-messages` in the project root. It adds a system note naming the fenced modules, their files and public names, and what they depend on and are used by. It resumes that fence's previous session. After the run it diffs the project to report changes, edits outside the fence, and the modules that import changed code. |
+| Fence | `modfence/scope_guard.py` | A `PreToolUse` hook, passed with `--settings` for that run only. It denies `Edit`, `Write`, `MultiEdit` and `NotebookEdit` on any path outside the fence. `..` tricks and symlinks are resolved first. It fails closed. |
 | Server | `modfence/server.py` | `http.server` on 127.0.0.1 only. Events stream to the page as server-sent events. The page itself is plain HTML, CSS and JS with no build step, in `modfence/web/`. Motion uses platform features only (View Transitions, `@starting-style`, scroll-driven animations, `::details-content`); older browsers get the same UI without the motion, and `prefers-reduced-motion` turns it off. |
 
 **State** lives in `<project>/.modfence/` (git-ignored automatically): session ids and run history per fence, and `runs/<id>/` with the before and after copy of every file a run changed, which is what diff and revert read. Browsing a project never writes to it; only a run does.
@@ -93,10 +94,14 @@ In a separate check, asked to write a file in `calc/lexer` with the same fence, 
 ## Limits
 
 - **Python only.** JS/TS imports are not analyzed yet.
-- **A module is a directory.** Projects that keep everything in one folder show up as a single module.
-- **The hook sees the file tools, not shell commands.** A script that writes files can still change something outside the scope. modfence reports it after the run as "changed outside the scope", but does not prevent it. Runs only allow `python` and read-only `git`/`ls`/`cat` commands without asking.
+- **Large projects get large graphs.** Splitting flat directories into files keeps training repos useful (nanochat: 26 modules) but turns big libraries into big graphs (rich: 141 modules, fastapi with its docs examples: 430). There is no collapse or filter yet; use search (`/`) and the Layers view.
+- **The hook sees the file tools, not shell commands.** A script that writes files can still change something outside the fence. modfence reports it after the run as "changed outside the fence" and offers a revert, but does not prevent it. Runs only allow `python` and read-only `git`/`ls`/`cat` commands without asking.
 - **Runs use your Claude Code settings**, including your own CLAUDE.md, so the answer follows your usual preferences.
 - **One run at a time per project.**
+
+## Evaluation
+
+[`docs/EVALUATION.md`](docs/EVALUATION.md) has the benchmark against plain Claude Code and Claude Code's own permission rules, and the analyzer's numbers on popular open-source repos. The scripts are in [`bench/`](bench/).
 
 ## Tests
 
@@ -104,4 +109,4 @@ In a separate check, asked to write a file in `calc/lexer` with the same fence, 
 python -m unittest discover -s tests -t .
 ```
 
-The suite has 18 deterministic tests. No model is called: `tests/fake_claude.py` stands in for the CLI. It emits Claude Code's stream-json events and makes the file edits the prompt asks for.
+The suite has 19 deterministic tests. No model is called: `tests/fake_claude.py` stands in for the CLI. It emits Claude Code's stream-json events and makes the file edits the prompt asks for.

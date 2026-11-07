@@ -167,6 +167,9 @@ class Job:
                 self.proc.terminate()
             self.emit("status", text="Cancelled.")
 
+    def system_note(self):
+        return context_note(self.graph, self.scope, self.read_only)
+
     def _settings_file(self):
         p = os.path.join(state_dir(self.root), f"settings-{self.id}.json")
         fwd = lambda p: p.replace("\\", "/")  # hook commands run in a POSIX shell, also on Windows
@@ -187,8 +190,10 @@ class Job:
             session = load_sessions(self.root).get(key)
             exe = [sys.executable, self.claude] if self.claude.endswith(".py") else [self.claude]  # .py: a test double
             cmd = exe + ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-                   "--permission-mode", "acceptEdits", "--allowedTools", ALLOWED_TOOLS, "--settings", settings,
-                   "--append-system-prompt", context_note(self.graph, self.scope, self.read_only)]
+                   "--permission-mode", "acceptEdits", "--allowedTools", ALLOWED_TOOLS, "--settings", settings]
+            note = self.system_note()
+            if note:
+                cmd += ["--append-system-prompt", note]
             if session:
                 cmd += ["--resume", session]
             env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDECODE") and k != "CLAUDE_CODE_ENTRYPOINT"}
@@ -226,6 +231,7 @@ class Job:
             t = ev.get("type")
             if t == "system" and ev.get("subtype") == "init" and ev.get("session_id"):
                 save_session(self.root, key, ev["session_id"])
+                self.model = ev.get("model")
             elif t == "stream_event":
                 se = ev.get("event") or {}
                 d = se.get("delta") or {}
@@ -255,6 +261,7 @@ class Job:
                     save_session(self.root, key, ev["session_id"])
                 self.emit("result", ok=not ev.get("is_error"), cost_usd=ev.get("total_cost_usd"),
                           duration_s=round((ev.get("duration_ms") or 0) / 1000, 1), turns=ev.get("num_turns"),
+                          usage=ev.get("usage"), model=getattr(self, "model", None),
                           text=(ev.get("result") or "")[-4000:] if ev.get("is_error") else "")
 
     def _finish(self, before):
