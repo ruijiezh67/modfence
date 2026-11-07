@@ -101,7 +101,7 @@ In a separate check, asked to write a file in `calc/lexer` with the same fence, 
 
 ## Evaluation
 
-[`docs/EVALUATION.md`](docs/EVALUATION.md) has the benchmark against plain Claude Code and Claude Code's own permission rules, and the analyzer's numbers on popular open-source repos. The scripts are in [`bench/`](bench/).
+On four cross-module features, fencing the modules a feature needs (tests included) built every feature correctly at 21% lower cost, 37% less context re-read and 27% less time than handing the whole task to Claude Code, and it was cheaper on each of the four (n = 2 each, so suggestive). [`docs/EVALUATION.md`](docs/EVALUATION.md) has that benchmark, one against plain Claude Code and Claude Code's own permission rules, and the analyzer's numbers on popular open-source repos. The scripts are in [`bench/`](bench/).
 
 ## Tests
 

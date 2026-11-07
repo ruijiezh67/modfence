@@ -52,12 +52,39 @@ Three questions, each with its own experiment. All numbers below come from the r
 | Condition | Runs per attempt | What happens |
 |---|---|---|
 | vibe | 1 | The task text only. No module map, no fence. |
-| fence-all | 1 | One modfence run fencing every module the task needs. |
+| fence-all | 1 | One modfence run fencing every module the task needs (tests not fenced). |
+| fence-all-tests | 1 | The same plus the tests module: the fence an exercise sets up in the UI. Run separately, after the bug below was found. |
 | fence-chain | 2–4 | One modfence run per module, foundations first. Each run is told its step number, what earlier steps did and what later steps will do. |
 
-**Correctness** is judged by [`bench/acceptance.py`](../bench/acceptance.py), not by the agent. It has one black-box check per bullet of the task's Acceptance list in `TASKS.md`, 20 checks in all, run through the project's own CLI (or, for tinygpt, a short script that trains with fixed seeds). On the untouched examples all 20 checks fail; two checks that passed on the untouched code in a first draft were tightened so they only pass when the feature works.
+**Correctness** is judged by [`bench/acceptance.py`](../bench/acceptance.py), not by the agent. It has one black-box check per bullet of the task's Acceptance list in `TASKS.md`, 20 checks in all, run through the project's own CLI (or, for tinygpt, a short script that trains with fixed seeds). On the untouched examples all 20 checks fail; three checks that passed on the untouched code in a first draft were tightened so they only pass when the feature works.
 
-**Results:** running; this section is filled in when the run finishes.
+**Results** (4 tasks × 2 attempts = 8 per condition; [`feature-2026-11-06.jsonl`](../bench/results/feature-2026-11-06.jsonl), [`feature-tests-2026-11-06.jsonl`](../bench/results/feature-tests-2026-11-06.jsonl); tables from `bench/summarize.py`):
+
+| Condition | Features fully correct | Project tests pass | Runs | Cost per feature, mean ± sd | Turns | Context tokens read from cache | Output tokens | Wall time |
+|---|---|---|---|---|---|---|---|---|
+| vibe | 8/8 | 8/8 | 1 | $0.71 ± 0.25 | 30.4 | 726,926 | 11,156 | 172 s |
+| fence-all | 8/8 | 2/8 | 1 | $0.54 ± 0.18 | 20.5 | 519,023 | 7,464 | 125 s |
+| fence-all-tests | 8/8 | 8/8 | 1 | $0.56 ± 0.19 | 20.5 | 457,671 | 8,066 | 126 s |
+| fence-chain | 8/8 | 2/8 | 3.2 | $1.08 ± 0.43 | 34.6 | 843,091 | 9,966 | 204 s |
+
+Token and time columns are means per feature. Cost per task (mean of 2):
+
+| Task | vibe | fence-all-tests | fence-chain |
+|---|---|---|---|
+| calculator `^` (3 modules) | $0.56 | $0.51 | $0.90 |
+| library fines (4 modules) | $0.61 | $0.51 | $1.33 |
+| spreadsheet text + CONCAT (4 modules) | $1.11 | $0.84 | $1.56 |
+| tinygpt grad accumulation (2 modules) | $0.57 | $0.37 | $0.53 |
+
+**What this shows.**
+- **Everything was built correctly.** All 32 attempts passed every acceptance check. These tasks did not separate the conditions on correctness; harder tasks are needed for that.
+- **Fencing the modules a feature needs is cheaper than just asking.** With the exercise-style fence (fence-all-tests), cost per feature was 21% lower than vibe ($0.56 vs $0.71), context re-read 37% lower, output 28% lower and wall time 27% lower, with all project tests passing. It was cheaper on each of the 4 tasks (one-sided sign test over tasks: p = 0.0625, so suggestive, not established). The likely reason: the system note hands the agent the module map (files, public names, who imports what), so it explores less: 20.5 turns against 30.4.
+- **One module per run costs more, not less.** fence-chain cost 52% more than vibe. Each step is a new session that re-reads the project. Its value is smaller, reviewable steps (each run's diff touches one module), not tokens.
+- **Leaving the tests outside the fence left stale tests.** fence-all and fence-chain built correct features, but 6/8 left one old test failing, because the test that encoded the old behavior could not be updated from inside the fence. Since this run, an exercise fences the tests module too (fence-all-tests: 8/8 tests pass).
+
+**Bugs found in the benchmark itself.** One library check ("returning on the due date gives a fine of 0.00") reused a member who already owed 12.50 from the earlier checks, so lending was correctly refused and the check failed every implementation. It is excluded from the first results file (`summarize.py --exclude "02-library:return 0 days late prints fine 0.00"`, so library counts 5 checks there) and fixed for the fence-all-tests run (6 checks, all passed).
+
+**Limits.** n = 2 per task and condition; one model; tasks and checks written by the modfence author; small, cleanly layered projects; the account's default model was not recorded (N/A).
 
 ## 3. The analyzer on popular repositories
 
