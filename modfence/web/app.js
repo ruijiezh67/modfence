@@ -521,7 +521,9 @@ function fillPrompt(text) {
 function useTask(t) {
   if (!fillPrompt(`${t.title}\n\n${t.body}`)) return;
   S.readOnly = false;
-  S.scope = new Set([S.selected, ...t.modules.filter((m) => m !== S.selected)]);
+  // An exercise changes behavior, so its tests must change too: fence the tests module with it.
+  const tests = S.graph.modules.filter((m) => m.kind === "tests").map((m) => m.id);
+  S.scope = new Set([S.selected, ...t.modules.filter((m) => m !== S.selected), ...tests]);
   afterFenceChange();
 }
 
