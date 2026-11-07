@@ -59,14 +59,14 @@ def module_of(path, split=()):
 
 
 def _resolve(parts, files):
-    """The project file a dotted import refers to, trying the longest prefix first."""
+    """(project file, parts used) for a dotted import, trying the longest prefix first; (None, 0) if not ours."""
     for n in range(len(parts), 0, -1):
         base = "/".join(parts[:n])
         for cand in (base + ".py", base + "/__init__.py"):
             for prefix in ("", "src/"):
                 if prefix + cand in files:
-                    return prefix + cand
-    return None
+                    return prefix + cand, n
+    return None, 0
 
 
 _BODIES = ("body", "orelse", "finalbody", "handlers", "cases")
@@ -84,7 +84,8 @@ def _statements(tree):
 
 
 def imports_of(path, tree, files):
-    """[(target_file, line, source_text)] for imports that resolve to files in this project."""
+    """[(target_file, line, name)] for imports that resolve to files in this project. name is what `from x import
+    name` took from the file (a function, class ...), or None when the import names a module."""
     here = path.split("/")[:-1]
     found = []
     for node in _statements(tree):
@@ -99,9 +100,10 @@ def imports_of(path, tree, files):
                 mod = node.module.split(".") if node.module else []
             targets = [mod + [a.name] for a in node.names] or [mod]
         for parts in targets:
-            t = _resolve(parts, files)
+            t, used = _resolve(parts, files)
             if t and t != path:
-                found.append((t, node.lineno))
+                name = parts[-1] if isinstance(node, ast.ImportFrom) and used == len(parts) - 1 and parts[-1] != "*" else None
+                found.append((t, node.lineno, name))
     return found
 
 
@@ -115,6 +117,73 @@ def public_names(tree):
                 if isinstance(t, ast.Name) and t.id.isupper() and not t.id.startswith("_"):
                     names.append({"name": t.id, "kind": "const", "line": node.lineno})
     return names
+
+
+def _args(node):
+    a = node.args
+    names = [x.arg for x in a.posonlyargs + a.args]
+    if names and names[0] in ("self", "cls"):
+        names = names[1:]
+    names += ["*" + a.vararg.arg] if a.vararg else []
+    names += [x.arg for x in a.kwonlyargs]
+    names += ["**" + a.kwarg.arg] if a.kwarg else []
+    return ", ".join(names)
+
+
+def functions(tree, lines):
+    """The units a person reads instead of lines: top-level functions, classes and UPPER_CASE constants, and the methods
+    of those classes.
+    sha fingerprints a unit's own lines (a class without its methods), so a run's changes can be named per function."""
+    out = []
+    fdef = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+    def add(node, name, kind, skip=()):
+        own = [l for i, l in enumerate(lines[node.lineno - 1:node.end_lineno], node.lineno)
+               if l.strip() and not any(a <= i <= b for a, b in skip)]  # blank lines are not a change
+        doc = "" if kind == "const" else (ast.get_docstring(node) or "").strip()
+        out.append({"name": name, "kind": kind, "line": node.lineno, "end": node.end_lineno,
+                    "args": _args(node) if kind in ("def", "method") else "",
+                    "doc": doc.splitlines()[0] if doc else "",
+                    "sha": hashlib.sha1("\n".join(own).encode("utf-8")).hexdigest()[:12]})
+    for node in tree.body:
+        if isinstance(node, fdef):
+            add(node, node.name, "def")
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):  # module constants (SYMBOLS = {...}) are units too
+            names = [t.id for t in (node.targets if isinstance(node, ast.Assign) else [node.target])
+                     if isinstance(t, ast.Name) and t.id.isupper()]
+            if len(names) == 1:
+                add(node, names[0], "const")
+        elif isinstance(node, ast.ClassDef):
+            subs = [s for s in node.body if isinstance(s, fdef)]
+            add(node, node.name, "class", [(s.lineno, s.end_lineno) for s in subs])
+            for s in subs:
+                add(s, f"{node.name}.{s.name}", "method")
+    return out
+
+
+def function_changes(before, after):
+    """[{name, kind, status}] for units added, changed or removed between two versions (bytes or None) of a .py file;
+    None when either version does not parse. A change outside every unit is reported as the unit "(module level)"."""
+    def units(data):
+        if data is None:
+            return {}
+        text = data.decode("utf-8")
+        lines, tree = text.splitlines(), ast.parse(text)
+        out = {f["name"]: f for f in functions(tree, lines)}
+        spans = [(f["line"], f["end"]) for f in out.values() if f["kind"] != "method"]
+        rest = [l for i, l in enumerate(lines, 1) if l.strip() and not any(a <= i <= b for a, b in spans)]
+        out["(module level)"] = {"kind": "code", "sha": hashlib.sha1("\n".join(rest).encode("utf-8")).hexdigest()}
+        return out
+    try:
+        a, b = units(before), units(after)
+    except (UnicodeDecodeError, SyntaxError, ValueError):
+        return None
+    if before is None or after is None:  # a whole file added or removed: its units, not its module-level code
+        a.pop("(module level)", None), b.pop("(module level)", None)
+    out = [{"name": n, "kind": b[n]["kind"], "status": "added"} for n in b if n not in a]
+    out += [{"name": n, "kind": b[n]["kind"], "status": "changed"} for n in b if n in a and a[n]["sha"] != b[n]["sha"]]
+    out += [{"name": n, "kind": a[n]["kind"], "status": "removed"} for n in a if n not in b]
+    return out
 
 
 def analyze(root):
@@ -135,13 +204,13 @@ def analyze(root):
             doc = ast.get_docstring(tree) or ""
             info["doc"] = doc.strip().splitlines()[0] if doc.strip() else ""
             info["names"] = public_names(tree)
-            for target, line in imports_of(p, tree, files):
+            for target, line, name in imports_of(p, tree, files):
                 a, b = module_of(p, split), module_of(target, split)
                 if a == b:
                     continue
                 e = edges.setdefault((a, b), {"source": a, "target": b, "receipts": []})
                 e["receipts"].append({"file": p, "line": line, "code": lines[line - 1].strip() if line <= len(lines) else "",
-                                      "target_file": target})
+                                      "target_file": target, "name": name})
         except SyntaxError as ex:
             info["error"] = f"SyntaxError line {ex.lineno}: {ex.msg}"
         fileinfo[p] = info

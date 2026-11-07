@@ -15,6 +15,16 @@ from . import analyze
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GUARD = os.path.join(HERE, "scope_guard.py")
+DONE_CHECK = os.path.join(HERE, "done_check.py")
+PLAN_RULE = (
+    "This is the planning step of fence coding. You may read any file but edit nothing; a hook blocks every edit. "
+    "Read only what you need. Then reply with one JSON object and nothing else, in this shape:\n"
+    '{"questions": [{"q": "...", "options": ["...", "..."], "recommended": 0}], '
+    '"plan": {"goal": "one sentence", "functions": [{"file": "path.py", "name": "function or Class.method", '
+    '"change": "add|change|remove", "why": "few words"}], "done": "how we will know it works"}}\n'
+    "Ask at most 4 questions, only about decisions where different answers lead to different code, each with 2 to 4 "
+    "short options and the index of the one you recommend. Ask none when the request is clear. The plan may only "
+    "touch files inside the editable modules: {where}. If the request needs more, say so in the goal.")
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 ALLOWED_TOOLS = ("Read Glob Grep Edit Write MultiEdit TodoWrite Bash(python:*) Bash(python3:*) Bash(py:*) "
                  "Bash(ls:*) Bash(cat:*) Bash(head:*) Bash(wc:*) Bash(git status:*) Bash(git diff:*) Bash(git log:*)")
@@ -98,13 +108,15 @@ def forget(root, scope):
         pass
 
 
-def context_note(graph, scope, read_only=False):
+def context_note(graph, scope, read_only=False, phase=None):
     """System note telling the agent which modules it works on and how they connect to the rest."""
     mods = {m["id"]: m for m in graph["modules"]}
     out_edges = [e for e in graph["edges"] if e["source"] in scope and e["target"] not in scope]
     in_edges = [e for e in graph["edges"] if e["target"] in scope and e["source"] not in scope]
     where = ", ".join("`(project root files)`" if s == "." else f"`{s}`" if s.endswith(".py") else f"`{s}/`" for s in scope)
-    if read_only:
+    if phase == "plan":
+        rule = PLAN_RULE.replace("{where}", where)
+    elif read_only:
         rule = ("This is a read-only session for learning the code: you may read any file, but you may not create "
                 "or edit any file, and a hook blocks every edit. Explain, point to exact file:line locations, and give "
                 "hints rather than finished solutions unless the user asks for one.")
@@ -128,15 +140,23 @@ def context_note(graph, scope, read_only=False):
     if in_edges:
         lines.append("Used by (outside the scope; changing a public name breaks them): " + "; ".join(
             f"`{e['source']}` via " + ", ".join(f"{r['file']}:{r['line']}" for r in e["receipts"][:3]) for e in in_edges))
-    lines.append("Keep the answer short. When you change code, run the relevant tests if the project has them.")
+    if phase == "build" and os.path.isdir(os.path.join(graph["root"], "tests")):
+        lines.append("Done check: when you stop, modfence runs the project's tests (python -m unittest discover -s tests -t .) "
+                     "and sends you the output if they fail. Do not run the whole suite yourself, and do not ask the user to.")
+        lines.append("Keep the answer short: what you changed, per function, and anything the user must decide.")
+    else:
+        lines.append("Keep the answer short. When you change code, run the relevant tests if the project has them.")
     return "\n".join(lines)
 
 
 class Job:
-    def __init__(self, root, scope, prompt, graph, claude_bin, read_only=False):
+    """phase: None (a plain run), "plan" (read-only, answers with questions and a plan as JSON) or "build" (edits, and
+    a Stop hook runs the project's tests before the agent may finish)."""
+    def __init__(self, root, scope, prompt, graph, claude_bin, read_only=False, phase=None):
         self.id = f"r{int(time.time() * 1000)}{next(_ids)}"  # unique across restarts: runs are stored on disk
         self.root, self.scope, self.prompt, self.graph, self.claude = root, list(scope), prompt, graph, claude_bin
-        self.read_only = bool(read_only)
+        self.phase = phase if phase in ("plan", "build") else None
+        self.read_only = bool(read_only) or self.phase == "plan"
         self.editable = [] if self.read_only else list(scope)
         self.events, self.cond, self.done, self.proc = [], threading.Condition(), False, None
         self.started = time.time()
@@ -168,14 +188,18 @@ class Job:
             self.emit("status", text="Cancelled.")
 
     def system_note(self):
-        return context_note(self.graph, self.scope, self.read_only)
+        return context_note(self.graph, self.scope, self.read_only, self.phase)
 
     def _settings_file(self):
         p = os.path.join(state_dir(self.root), f"settings-{self.id}.json")
         fwd = lambda p: p.replace("\\", "/")  # hook commands run in a POSIX shell, also on Windows
         cmd = f'"{fwd(sys.executable)}" "{fwd(GUARD)}"'
-        write_text(p, json.dumps({"hooks": {"PreToolUse": [{"matcher": "Edit|Write|MultiEdit|NotebookEdit",
-                                                          "hooks": [{"type": "command", "command": cmd, "timeout": 10, "onFailure": "block"}]}]}}))
+        hooks = {"PreToolUse": [{"matcher": "Edit|Write|MultiEdit|NotebookEdit",
+                                 "hooks": [{"type": "command", "command": cmd, "timeout": 10, "onFailure": "block"}]}]}
+        if self.phase == "build" and os.path.isdir(os.path.join(self.root, "tests")):
+            hooks["Stop"] = [{"hooks": [{"type": "command", "command": f'"{fwd(sys.executable)}" "{fwd(DONE_CHECK)}"',
+                                         "timeout": 300}]}]
+        write_text(p, json.dumps({"hooks": hooks}))
         return p
 
     def _run(self):
@@ -197,8 +221,8 @@ class Job:
             if session:
                 cmd += ["--resume", session]
             env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDECODE") and k != "CLAUDE_CODE_ENTRYPOINT"}
-            env.update(MODFENCE_ROOT=self.root, MODFENCE_SCOPE=os.pathsep.join(self.editable))
-            mode = "read-only" if self.read_only else "can edit " + ", ".join(self.editable)
+            env.update(MODFENCE_ROOT=self.root, MODFENCE_SCOPE=os.pathsep.join(self.editable), MODFENCE_RUN=self.id)
+            mode = "planning, read-only" if self.phase == "plan" else "read-only" if self.read_only else "can edit " + ", ".join(self.editable)
             self.emit("status", text=("Resumed this scope's session" if session else "New session") + f" ({mode}).")
             self.proc = subprocess.Popen(cmd, cwd=self.root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
@@ -235,7 +259,8 @@ class Job:
             elif t == "stream_event":
                 se = ev.get("event") or {}
                 d = se.get("delta") or {}
-                if se.get("type") == "content_block_delta" and d.get("type") == "text_delta" and not ev.get("parent_tool_use_id"):
+                if (se.get("type") == "content_block_delta" and d.get("type") == "text_delta" and not ev.get("parent_tool_use_id")
+                        and self.phase != "plan"):  # a plan streams as JSON: shown as a card when it is complete
                     self.emit("text", text=d.get("text", ""))
             elif t == "assistant":
                 if ev.get("parent_tool_use_id"):
@@ -245,7 +270,7 @@ class Job:
                         tools[block.get("id")] = block.get("name")
                         self.emit("tool", id=block.get("id"), name=block.get("name"), detail=_tool_detail(block),
                                   edit=block.get("name") in EDIT_TOOLS)
-                    elif block.get("type") == "text":
+                    elif block.get("type") == "text" and self.phase != "plan":
                         self.emit("text_end")
             elif t == "user":
                 for block in (ev.get("message") or {}).get("content") or []:
@@ -259,6 +284,9 @@ class Job:
             elif t == "result":
                 if ev.get("session_id"):
                     save_session(self.root, key, ev["session_id"])
+                if self.phase == "plan" and not ev.get("is_error"):
+                    plan = parse_plan(ev.get("result") or "")
+                    self.emit("plan", plan=plan) if plan else self.emit("text", text=ev.get("result") or "")
                 self.emit("result", ok=not ev.get("is_error"), cost_usd=ev.get("total_cost_usd"),
                           duration_s=round((ev.get("duration_ms") or 0) / 1000, 1), turns=ev.get("num_turns"),
                           usage=ev.get("usage"), model=getattr(self, "model", None),
@@ -275,6 +303,9 @@ class Job:
             changed_mods = sorted({analyze.module_of(p, split) for p in changed if p.endswith(".py")})
             ripple = analyze.dependents(graph, changed_mods)
             files = save_run(self, changed, set(added), set(deleted), set(outside))
+            checks = _read_jsonl(os.path.join(run_dir(self.root, self.id), "checks.jsonl"))
+            if checks:
+                self.emit("check", ok=checks[-1]["ok"], summary=checks[-1]["summary"], blocked=sum(c["blocked"] for c in checks))
             self.emit("changes", added=added, modified=modified, deleted=deleted, outside_scope=outside,
                       modules=changed_mods, ripple=ripple, run=self.id, files=files)
         except Exception as e:
@@ -286,7 +317,7 @@ class Job:
                 os.makedirs(os.path.join(state_dir(self.root), "history"), exist_ok=True)
                 with open(history_path(self.root, self.scope), "a", encoding="utf-8") as f:
                     f.write(json.dumps({"job": self.id, "prompt": self.prompt, "scope": self.scope, "at": self.started,
-                                        "read_only": self.read_only, "events": self.events + [done]},
+                                        "read_only": self.read_only, "phase": self.phase, "events": self.events + [done]},
                                        ensure_ascii=False) + "\n")
             except OSError:
                 pass
@@ -344,8 +375,9 @@ def save_run(job, changed, added, deleted, outside):
                     f.write(data)
         plus, minus = _stat(before, after)
         status = "added" if p in added else "deleted" if p in deleted else "modified"
+        funcs = analyze.function_changes(before, after) if p.endswith(".py") else None
         files.append({"path": p, "status": status, "plus": plus, "minus": minus, "outside": p in outside,
-                      "revertible": revertible})
+                      "revertible": revertible, "funcs": funcs})
     os.makedirs(d, exist_ok=True)
     write_text(os.path.join(d, "run.json"), json.dumps({"run": job.id, "scope": job.scope, "editable": job.editable,
                                                         "at": job.started, "files": files}, indent=1))
@@ -400,6 +432,25 @@ def revert_run(root, run_id, paths=None):
                 out.write(analyze.read_bytes(os.path.join(d, "before", p)))
         reverted.append(p)
     return reverted, skipped
+
+
+def _read_jsonl(path):
+    try:
+        return [json.loads(l) for l in analyze.read_text(path).splitlines() if l.strip()]
+    except (OSError, ValueError):
+        return []
+
+
+def parse_plan(text):
+    """The plan object from a planning reply (JSON, possibly inside a code fence), or None."""
+    try:
+        obj = json.loads(text[text.index("{"): text.rindex("}") + 1])
+    except ValueError:
+        return None
+    if not isinstance(obj, dict) or not isinstance(obj.get("plan"), dict):
+        return None
+    qs = [q for q in obj.get("questions") or [] if isinstance(q, dict) and q.get("q") and isinstance(q.get("options"), list)]
+    return {"questions": qs[:4], "plan": obj["plan"]}
 
 
 def _in_scope(path, scope):

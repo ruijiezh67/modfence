@@ -3,11 +3,11 @@
 Binds to 127.0.0.1 only. Requests must carry a localhost Host header, and state-changing requests must come
 from the page itself (X-Modfence header), so another website cannot drive your Claude Code through it.
 """
-import json, os, threading
+import json, os, subprocess, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import analyze, runner
+from . import analyze, purpose, runner
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -71,7 +71,14 @@ def make_handler(app, port):
                                                         for i, p in enumerate(app.projects)],
                                            "claude": app.claude or None})
                 if u.path == "/api/graph":
-                    return self.send_json(analyze.analyze(app.project(q)))
+                    root = app.project(q)
+                    g = analyze.analyze(root)
+                    # ponytail: module summaries are not keyed by content; they are refreshed when the module is described again
+                    g["ai_purposes"] = {k: v.get("text", "") for k, v in purpose.load(root).get("modules", {}).items()}
+                    return self.send_json(g)
+                if u.path == "/api/module":
+                    root = app.project(q)
+                    return self.send_json(purpose.module_view(root, analyze.analyze(root), (q.get("m") or [""])[0]))
                 if u.path == "/api/file":
                     return self.file(app.project(q), (q.get("path") or [""])[0])
                 if u.path == "/api/history":
@@ -157,6 +164,14 @@ def make_handler(app, port):
                             return self.send_json({"error": "wait for the current run to finish"}, 409)
                     reverted, skipped = runner.revert_run(app.project(q), b.get("run") or "", b.get("paths") or None)
                     return self.send_json({"reverted": reverted, "skipped": skipped})
+                if u.path == "/api/describe":
+                    root, m = app.project(q), b.get("module") or ""
+                    graph = analyze.analyze(root)
+                    try:
+                        cost = purpose.describe(root, graph, m, app.claude)
+                    except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+                        return self.send_json(dict(purpose.module_view(root, graph, m), error=str(e)))
+                    return self.send_json(dict(purpose.module_view(root, graph, m), cost_usd=cost))
                 if u.path == "/api/forget":
                     runner.forget(app.project(q), [s for s in b.get("scope") or [] if s])
                     return self.send_json({"ok": True})
@@ -177,7 +192,7 @@ def make_handler(app, port):
                 running = app.active.get(root)
                 if running and not running.done:
                     return self.send_json({"error": "a run is already in progress in this project", "job": running.id}, 409)
-                job = runner.Job(root, scope, prompt, graph, app.claude, read_only=bool(b.get("read_only")))
+                job = runner.Job(root, scope, prompt, graph, app.claude, read_only=bool(b.get("read_only")), phase=b.get("phase"))
                 app.jobs[job.id] = job
                 app.active[root] = job
             job.start()

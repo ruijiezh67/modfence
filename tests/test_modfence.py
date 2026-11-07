@@ -6,7 +6,7 @@ import atexit, http.client, json, os, shutil, subprocess, sys, tempfile, threadi
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from modfence import analyze, runner, scope_guard, server  # noqa: E402
+from modfence import analyze, purpose, runner, scope_guard, server  # noqa: E402
 
 FAKE = os.path.join(HERE, "fake_claude.py")
 _dirs = []
@@ -102,6 +102,25 @@ class FlatProjectTest(unittest.TestCase):
             self.assertFalse(scope_guard.allowed("README.md", d, ["train.py"]))
         finally:
             shutil.rmtree(d)
+
+
+class PurposeTest(unittest.TestCase):
+    def test_docstrings_first_then_cached_summaries_until_the_file_changes(self):
+        d = project()
+        write(os.path.join(d, "app/core/values.py"), '"""Values."""\nLIMIT = 3\n\ndef double(x):\n    """Twice x."""\n    return 2 * x\n\ndef half(x):\n    return x / 2\n')
+        g = analyze.analyze(d)
+        v = purpose.module_view(d, g, "app/core")
+        self.assertEqual([(f["name"], f["source"], f["purpose"]) for f in v["functions"]],
+                         [("LIMIT", None, ""), ("double", "doc", "Twice x."), ("half", None, "")])
+        self.assertEqual(v["functions"][1]["used_by"], ["app/api"], "from app.core.values import double")
+        self.assertEqual(v["undescribed"], 2)
+        self.assertFalse(os.path.exists(os.path.join(d, ".modfence")), "viewing does not write")
+        self.assertEqual(purpose.describe(d, g, "app/core", FAKE), 0.001)
+        v = purpose.module_view(d, g, "app/core")
+        self.assertEqual((v["functions"][2]["source"], v["functions"][2]["purpose"]), ("ai", "Does half."))
+        self.assertIsNone(purpose.describe(d, g, "app/core", FAKE), "cached: no second call")
+        write(os.path.join(d, "app/core/values.py"), "\n", "a")
+        self.assertIsNone(purpose.module_view(d, g, "app/core")["functions"][2]["source"], "file changed: summary is stale")
 
 
 class ScopeGuardTest(unittest.TestCase):
@@ -225,6 +244,52 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("read-only session", argv[argv.index("--append-system-prompt") + 1])
         ch = next(e for e in job.events if e["kind"] == "changes")
         self.assertEqual(ch["outside_scope"], ["app/core/values.py"], "any edit in read-only mode is outside the scope")
+
+    def test_changes_are_named_per_function(self):
+        d = project()
+        job = run_job(d, ["app/core"], "edit app/core/values.py and edit app/core/new.py")
+        files = {f["path"]: f for f in next(e for e in job.events if e["kind"] == "changes")["files"]}
+        self.assertEqual(files["app/core/values.py"]["funcs"], [{"name": "(module level)", "kind": "code", "status": "changed"}])
+        self.assertEqual(files["app/core/new.py"]["funcs"], [], "a new file with only a comment has no functions")
+        before = b"X = 1\n\ndef a():\n    return 1\n\nclass K:\n    def m(self):\n        return 1\n"
+        after = b"X = 2\n\ndef a():\n    return 2\n\nclass K:\n    def m(self):\n        return 1\n\n    def n(self):\n        pass\n"
+        self.assertEqual(analyze.function_changes(before, after), [
+            {"name": "K.n", "kind": "method", "status": "added"}, {"name": "X", "kind": "const", "status": "changed"},
+            {"name": "a", "kind": "def", "status": "changed"}])
+        self.assertIsNone(analyze.function_changes(before, b"def (:"), "unparsable: no function list, not a wrong one")
+
+    def test_plan_phase_reads_only_and_returns_a_plan(self):
+        d = project()
+        job = runner.Job(d, ["app/core"], "make double faster", analyze.analyze(d), FAKE, phase="plan").start()
+        while not job.done:
+            time.sleep(0.05)
+        self.assertEqual(load(os.path.join(d, ".modfence", "fake_argv.json"))["scope"], "", "planning may edit nothing")
+        plan = next(e for e in job.events if e["kind"] == "plan")["plan"]
+        self.assertEqual(plan["questions"][0]["recommended"], 0)
+        self.assertEqual(plan["plan"]["functions"][0]["name"], "double")
+        self.assertFalse([e for e in job.events if e["kind"] == "text"], "the raw JSON is not streamed as text")
+        self.assertEqual(runner.load_sessions(d)["app/core"], "fake-plan", "the build resumes the planning session")
+        self.assertIsNone(runner.parse_plan("no json here"))
+
+    def test_build_phase_adds_the_done_check_hook(self):
+        d = project()
+        job = runner.Job(d, ["app/core"], "x", analyze.analyze(d), FAKE, phase="build")
+        hooks = load(job._settings_file())["hooks"]
+        self.assertIn("done_check.py", hooks["Stop"][0]["hooks"][0]["command"])
+        self.assertIn("Do not run the whole suite yourself", job.system_note(), "the agent is told the check runs the tests")
+        self.assertNotIn("Stop", load(runner.Job(d, ["app/core"], "x", analyze.analyze(d), FAKE)._settings_file())["hooks"])
+
+    def test_done_check_blocks_once_then_lets_the_agent_stop(self):
+        d = project()
+        write(os.path.join(d, "tests/test_fail.py"), "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.fail('no')\n")
+        env = dict(os.environ, MODFENCE_ROOT=d, MODFENCE_RUN="r1")
+        hook = os.path.join(os.path.dirname(HERE), "modfence", "done_check.py")
+        first = subprocess.run([sys.executable, hook], input='{"stop_hook_active": false}', capture_output=True, text=True, env=env)
+        self.assertEqual(json.loads(first.stdout)["decision"], "block")
+        second = subprocess.run([sys.executable, hook], input='{"stop_hook_active": true}', capture_output=True, text=True, env=env)
+        self.assertEqual(second.stdout.strip(), "", "a second stop is let through")
+        rec = [json.loads(l) for l in open(os.path.join(d, ".modfence/runs/r1/checks.jsonl"))]
+        self.assertEqual([(r["ok"], r["blocked"]) for r in rec], [(False, 1), (False, 0)])
 
     def test_reading_state_creates_nothing(self):
         d = project()
