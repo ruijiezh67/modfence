@@ -980,7 +980,7 @@ async function runTests() {
   b.classList.remove("ok", "bad"); b.disabled = true; lbl.textContent = "Testing…";
   try {
     const r = await api(`/api/tests?${q()}`, {});
-    const ran = (r.summary.match(/Ran (\d+)/) || [])[1];
+    const ran = (r.summary.match(/Ran (\d+)/) || r.summary.match(/(\d+) passed/) || [])[1];
     b.classList.add(r.ok ? "ok" : r.ok === false ? "bad" : "");
     lbl.textContent = r.ok === null ? "No tests" : `Tests: ${ran || "?"} ${r.ok ? "passed" : "· failing"}`;
     toast(`${r.summary || "No tests found"}. Show output`, r.ok !== false, 8000, () => showText("Test output", r.output || r.summary));

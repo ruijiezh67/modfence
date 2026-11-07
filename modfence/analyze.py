@@ -6,7 +6,7 @@ of its own. Other root files belong to the module ".".
 An edge A -> B exists when a file in A imports a file in B. Nothing here asks a model: the graph is what the
 code says, so a node or an edge can always be traced back to a file and a line.
 """
-import ast, hashlib, os, time
+import ast, hashlib, os, threading, time
 
 
 def read_text(path):
@@ -86,6 +86,21 @@ def _statements(tree):
 def imports_of(path, tree, files):
     """[(target_file, line, name)] for imports that resolve to files in this project. name is what `from x import
     name` took from the file (a function, class ...), or None when the import names a module."""
+    return [(t, line, name) for t, line, name, _ in _resolved(path, [s + ("",) for s in import_specs(path, tree)], files)]
+
+
+def _resolved(path, specs, files):
+    found = []
+    for parts, line, is_from, code in specs:
+        t, used = _resolve(parts, files)
+        if t and t != path:
+            name = parts[-1] if is_from and used == len(parts) - 1 and parts[-1] != "*" else None
+            found.append((t, line, name, code))
+    return found
+
+
+def import_specs(path, tree):
+    """[(dotted parts, line, is_from)] for every import statement, before resolving against the project's files."""
     here = path.split("/")[:-1]
     found = []
     for node in _statements(tree):
@@ -99,11 +114,7 @@ def imports_of(path, tree, files):
             else:
                 mod = node.module.split(".") if node.module else []
             targets = [mod + [a.name] for a in node.names] or [mod]
-        for parts in targets:
-            t, used = _resolve(parts, files)
-            if t and t != path:
-                name = parts[-1] if isinstance(node, ast.ImportFrom) and used == len(parts) - 1 and parts[-1] != "*" else None
-                found.append((t, node.lineno, name))
+        found += [(parts, node.lineno, isinstance(node, ast.ImportFrom)) for parts in targets]
     return found
 
 
@@ -186,6 +197,33 @@ def function_changes(before, after):
     return out
 
 
+_PARSED = {}  # full path -> ((size, mtime_ns), parsed). ponytail: never evicted; one entry per .py file seen
+
+
+def _parse(full, p):
+    """What analyze needs from one file. Cached until the file's size or mtime changes, so re-analyzing a big
+    project after a run only parses the files the run touched."""
+    st = os.stat(full)
+    key = (st.st_size, st.st_mtime_ns)
+    hit = _PARSED.get(full)
+    if hit and hit[0] == key:
+        return hit[1]
+    text = read_text(full)
+    lines = text.splitlines()
+    r = {"lines": len(lines), "mtime": st.st_mtime, "doc": "", "names": [], "error": None, "imports": []}
+    try:
+        tree = ast.parse(text, filename=p)
+        doc = ast.get_docstring(tree) or ""
+        r["doc"] = doc.strip().splitlines()[0] if doc.strip() else ""
+        r["names"] = public_names(tree)
+        r["imports"] = [(parts, line, is_from, lines[line - 1].strip() if line <= len(lines) else "")
+                        for parts, line, is_from in import_specs(p, tree)]
+    except SyntaxError as ex:
+        r["error"] = f"SyntaxError line {ex.lineno}: {ex.msg}"
+    _PARSED[full] = (key, r)
+    return r
+
+
 def analyze(root):
     """The full graph: modules, files and edges with receipts."""
     root = os.path.abspath(root)
@@ -194,25 +232,15 @@ def analyze(root):
     split = split_dirs(paths)
     mods, edges, fileinfo = {}, {}, {}
     for p in paths:
-        full = os.path.join(root, p)
-        text = read_text(full)
-        lines = text.splitlines()
-        info = {"path": p, "module": module_of(p, split), "lines": len(lines), "mtime": os.path.getmtime(full),
-                "doc": "", "names": [], "error": None}
-        try:
-            tree = ast.parse(text, filename=p)
-            doc = ast.get_docstring(tree) or ""
-            info["doc"] = doc.strip().splitlines()[0] if doc.strip() else ""
-            info["names"] = public_names(tree)
-            for target, line, name in imports_of(p, tree, files):
-                a, b = module_of(p, split), module_of(target, split)
-                if a == b:
-                    continue
-                e = edges.setdefault((a, b), {"source": a, "target": b, "receipts": []})
-                e["receipts"].append({"file": p, "line": line, "code": lines[line - 1].strip() if line <= len(lines) else "",
-                                      "target_file": target, "name": name})
-        except SyntaxError as ex:
-            info["error"] = f"SyntaxError line {ex.lineno}: {ex.msg}"
+        r = _parse(os.path.join(root, p), p)
+        info = {"path": p, "module": module_of(p, split), "lines": r["lines"], "mtime": r["mtime"],
+                "doc": r["doc"], "names": r["names"], "error": r["error"]}
+        for target, line, name, code in _resolved(p, r["imports"], files):
+            a, b = module_of(p, split), module_of(target, split)
+            if a == b:
+                continue
+            e = edges.setdefault((a, b), {"source": a, "target": b, "receipts": []})
+            e["receipts"].append({"file": p, "line": line, "code": code, "target_file": target, "name": name})
         fileinfo[p] = info
         m = mods.setdefault(info["module"], {"id": info["module"], "files": [], "lines": 0, "names": [], "doc": "",
                                             "mtime": 0, "kind": "module"})
@@ -232,48 +260,47 @@ def analyze(root):
             "split": sorted(split), "analyzed_at": time.time()}
 
 
-def snapshot(root):
-    """{relative path: sha1} of every file in the project (any type), for before/after diffs of a run."""
+_SNAP, _SNAP_LOCK = {}, threading.Lock()  # root -> {rel: (size, mtime_ns, sha1, bytes or None)}
+
+
+def snapshot(root, budget=50_000_000):
+    """{relative path: sha1} of every file in the project (any type) up to SNAPSHOT_MAX_BYTES, for before/after
+    diffs of a run. A file is read again only when its size or mtime changed since the last call for this root, so
+    a warm snapshot of a big project is one directory walk. The bytes of up to `budget` of the files are kept for
+    snapshot_bytes, so a run's changes can be reverted; files beyond it can be shown but not reverted.
+    ponytail: (size, mtime) is the change test, as in make and rsync; a same-size edit in the same mtime tick is missed."""
     root = os.path.abspath(root)
-    out = {}
-    for d, dirs, files in os.walk(root):
-        dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
-        for f in files:
-            full = os.path.join(d, f)
-            try:
-                if os.path.getsize(full) > SNAPSHOT_MAX_BYTES:
+    with _SNAP_LOCK:
+        old, new, used = _SNAP.get(root, {}), {}, 0
+        for d, dirs, files in os.walk(root):
+            dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
+            for f in files:
+                full = os.path.join(d, f)
+                rel = os.path.relpath(full, root).replace(os.sep, "/")
+                try:
+                    st = os.stat(full)
+                    if st.st_size > SNAPSHOT_MAX_BYTES:
+                        continue
+                    hit = old.get(rel)
+                    fresh = hit and hit[:2] == (st.st_size, st.st_mtime_ns)
+                    data = hit[3] if fresh else None
+                    if data is None and (not fresh or used + st.st_size <= budget):
+                        data = read_bytes(full)
+                    sha = hit[2] if fresh else hashlib.sha1(data).hexdigest()
+                except OSError:
                     continue
-                out[os.path.relpath(full, root).replace(os.sep, "/")] = hashlib.sha1(read_bytes(full)).hexdigest()
-            except OSError:
-                pass
-    return out
+                if data is not None and used + len(data) > budget:
+                    data = None
+                used += len(data or b"")
+                new[rel] = (st.st_size, st.st_mtime_ns, sha, data)
+        _SNAP[root] = new
+        return {k: v[2] for k, v in new.items()}
 
 
-def snapshot_bytes(root, budget=50_000_000):
-    """{relative path: bytes} for files up to SNAPSHOT_MAX_BYTES each and `budget` in total, smallest first.
-    Files beyond the budget are left out; changes to them can be shown but not reverted."""
-    root = os.path.abspath(root)
-    sizes = []
-    for d, dirs, files in os.walk(root):
-        dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
-        for f in files:
-            full = os.path.join(d, f)
-            try:
-                n = os.path.getsize(full)
-            except OSError:
-                continue
-            if n <= SNAPSHOT_MAX_BYTES:
-                sizes.append((n, os.path.relpath(full, root).replace(os.sep, "/")))
-    out, used = {}, 0
-    for n, rel in sorted(sizes):
-        if used + n > budget:
-            break
-        try:
-            out[rel] = read_bytes(os.path.join(root, rel))
-            used += n
-        except OSError:
-            pass
-    return out
+def snapshot_bytes(root):
+    """{relative path: bytes} kept by the last snapshot(root)."""
+    with _SNAP_LOCK:
+        return {k: v[3] for k, v in _SNAP.get(os.path.abspath(root), {}).items() if v[3] is not None}
 
 
 def diff(before, after):

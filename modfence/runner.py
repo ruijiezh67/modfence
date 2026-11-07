@@ -140,8 +140,10 @@ def context_note(graph, scope, read_only=False, phase=None):
     if in_edges:
         lines.append("Used by (outside the scope; changing a public name breaks them): " + "; ".join(
             f"`{e['source']}` via " + ", ".join(f"{r['file']}:{r['line']}" for r in e["receipts"][:3]) for e in in_edges))
-    if phase == "build" and os.path.isdir(os.path.join(graph["root"], "tests")):
-        lines.append("Done check: when you stop, modfence runs the project's tests (python -m unittest discover -s tests -t .) "
+    cmd = test_command(graph["root"]) if phase == "build" else None
+    if cmd:
+        shown = cmd if isinstance(cmd, str) else " ".join(["python"] + cmd[1:])
+        lines.append(f"Done check: when you stop, modfence runs the project's tests ({shown}) "
                      "and sends you the output if they fail. Do not run the whole suite yourself, and do not ask the user to.")
         lines.append("Keep the answer short: what you changed, per function, and anything the user must decide.")
     else:
@@ -196,7 +198,7 @@ class Job:
         cmd = f'"{fwd(sys.executable)}" "{fwd(GUARD)}"'
         hooks = {"PreToolUse": [{"matcher": "Edit|Write|MultiEdit|NotebookEdit",
                                  "hooks": [{"type": "command", "command": cmd, "timeout": 10, "onFailure": "block"}]}]}
-        if self.phase == "build" and os.path.isdir(os.path.join(self.root, "tests")):
+        if self.phase == "build" and test_command(self.root):
             hooks["Stop"] = [{"hooks": [{"type": "command", "command": f'"{fwd(sys.executable)}" "{fwd(DONE_CHECK)}"',
                                          "timeout": 300}]}]
         write_text(p, json.dumps({"hooks": hooks}))
@@ -206,6 +208,9 @@ class Job:
         settings = None
         before = analyze.snapshot(self.root)
         self.before_bytes = analyze.snapshot_bytes(self.root)
+        for p in before:  # the fence's own files stay revertible in a project too big for the byte budget
+            if p not in self.before_bytes and _in_scope(p, self.editable):
+                self.before_bytes[p] = _read_or_none(os.path.join(self.root, p))
         try:
             if not self.claude or not os.path.exists(self.claude) and not shutil.which(self.claude):
                 raise RuntimeError("Claude Code CLI not found. Install it, log in, or set CLAUDE_BIN.")
@@ -473,13 +478,55 @@ def _tool_detail(block):
     return ""
 
 
-def run_tests(root, timeout=120):
-    """Run the project's unittest suite. Returns (ok, summary line, tail of output)."""
-    if not os.path.isdir(os.path.join(root, "tests")):
-        return None, "No tests/ folder.", ""
-    p = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."], cwd=root,
-                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+PYTEST_MARKERS = (("pytest.ini", ""), ("conftest.py", ""), ("pyproject.toml", "[tool.pytest"), ("setup.cfg", "[tool:pytest]"),
+                  ("tox.ini", "[pytest]"))
+
+
+def project_python(root):
+    """The project's own virtualenv Python (.venv, venv or env), else the Python running modfence."""
+    for d in (".venv", "venv", "env"):
+        for exe in ("Scripts/python.exe", "bin/python"):
+            if os.path.isfile(os.path.join(root, d, exe)):
+                return os.path.join(root, d, exe)
+    return sys.executable
+
+
+def test_command(root):
+    """How to run the project's tests, or None if it has none: MODFENCE_TEST_CMD (a shell command) if set; pytest
+    when the project is configured for it; else unittest discover on tests/ or test/."""
+    if os.environ.get("MODFENCE_TEST_CMD"):
+        return os.environ["MODFENCE_TEST_CMD"]
+    py = project_python(root)
+    for name, marker in PYTEST_MARKERS:
+        try:
+            if marker in analyze.read_text(os.path.join(root, name)):
+                return [py, "-m", "pytest", "-q", "-x"]
+        except OSError:
+            pass
+    for d in ("tests", "test"):
+        if os.path.isdir(os.path.join(root, d)):
+            return [py, "-m", "unittest", "discover", "-s", d, "-t", "."]
+    return None
+
+
+def run_tests(root, timeout=270):
+    """Run the project's tests. Returns (ok, summary line, tail of output); ok is None when nothing could be
+    checked (no tests, no pytest, too slow), so the done check never blocks on that."""
+    cmd = test_command(root)
+    if not cmd:
+        return None, "No tests found (tests/, test/ or a pytest config).", ""
+    try:
+        p = subprocess.run(cmd, cwd=root, shell=isinstance(cmd, str), capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None, f"The tests did not finish in {timeout} s. Set MODFENCE_TEST_CMD to a faster subset.", ""
     out = (p.stdout + p.stderr).strip()
-    summary = next((l for l in reversed(out.splitlines()) if l.startswith(("OK", "FAILED"))), "")
-    ran = next((l for l in reversed(out.splitlines()) if l.startswith("Ran ")), "")
-    return p.returncode == 0, f"{ran} {summary}".strip(), out[-3000:]
+    if "No module named pytest" in out:
+        return None, f"pytest is not installed for {cmd[0]}.", out[-3000:]
+    lines = [l.strip() for l in out.splitlines() if l.strip()]
+    ran = next((l for l in reversed(lines) if l.startswith("Ran ")), "")
+    if ran:  # unittest
+        summary = ran + " " + next((l for l in reversed(lines) if l.startswith(("OK", "FAILED"))), "")
+    else:  # pytest: "=== 3 passed, 1 failed in 0.4s ===", or any other runner's last line
+        summary = (lines[-1] if lines else "").strip("= ")
+    return p.returncode == 0, summary.strip(), out[-3000:]

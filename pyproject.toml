@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "modfence"
+version = "0.2.0"
+description = "Fence coding: see a Python project as modules, aim Claude Code at one of them, review each run by function."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Ruijie Zheng", email = "ruijiezh@umich.edu" }]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/ruijiezh67/modfence"
+
+[project.scripts]
+modfence = "modfence.__main__:main"
+
+[tool.setuptools]
+packages = ["modfence"]
+
+[tool.setuptools.package-data]
+modfence = ["web/*"]

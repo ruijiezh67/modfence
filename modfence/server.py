@@ -210,6 +210,11 @@ def serve(projects, port=8765, claude_bin=None, open_browser=True):
     for i, p in enumerate(app.projects):
         print(f"  [{i}] {p}")
     print(f"  claude: {app.claude or 'NOT FOUND (set CLAUDE_BIN)'}")
+    def warm():  # parse and hash every project once, so the first graph and the first run start fast
+        for p in app.projects:
+            analyze.analyze(p)
+            analyze.snapshot(p)
+    threading.Thread(target=warm, daemon=True).start()
     if open_browser:
         import webbrowser
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
