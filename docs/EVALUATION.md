@@ -86,6 +86,18 @@ Token and time columns are means per feature. Cost per task (mean of 2):
 
 **Limits.** n = 2 per task and condition; one model; tasks and checks written by the modfence author; small, cleanly layered projects; the account's default model was not recorded (N/A).
 
+### First look at plan and build (n = 1, not a benchmark)
+
+Plan and build were added after the runs above. One real run on a fresh copy of the calculator, fence = lexer, parser, evaluator and tests, request = the `^` operator (2026-11-07, Claude Code 2.1.319, account default model):
+
+| Step | Cost | Turns | Result |
+|---|---|---|---|
+| plan (read only) | $0.244 | 5 | 2 questions with recommendations; 8 functions and classes to touch |
+| build (resumes the plan session) | $0.512 | 19 | done check passed first time (24 tests); 16 units added or changed across 7 files |
+| total | $0.756 | 24 | |
+
+For comparison only: fence-all-tests on the same task cost $0.51 (mean of 2) without a plan step. This single run cost 48% more, but the prompt differed (no acceptance list) and n = 1, so it says nothing yet about whether the plan step pays for itself. Two things it did show: the build agent spent 4 tool calls trying to run the tests with commands the run did not allow, while the done check had already run them; build runs are now told that the done check runs the tests. And the planner answered in the account's chat language (Chinese here), because runs keep the user's own Claude Code settings.
+
 ## 3. The analyzer on popular repositories
 
 Shallow clones at the commits below, parsed as data (nothing in them is executed). Times are warm-cache, single process, on the machine above.
