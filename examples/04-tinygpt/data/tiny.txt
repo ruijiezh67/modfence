@@ -1,0 +1,120 @@
+The quick brown fox jumps over the lazy dog.
+A small model learns the shape of a small text.
+The fence keeps the agent inside one module at a time.
+Each module has one job: data, model, train, eval, or the command line.
+The tokenizer maps every character to a number and back again.
+The model reads a block of characters and guesses the next one.
+Attention lets each position look back at the positions before it.
+The training loop samples a batch, computes the loss, and steps the optimizer.
+The learning rate warms up first, then stays the same.
+Held out text tells us whether the model learned or only remembered.
+Sampling feeds the model its own guesses, one character after another.
+Pack my box with five dozen liquor jugs.
+How vexingly quick daft zebras jump.
+Sphinx of black quartz, judge my vow.
+The five boxing wizards jump quickly.
+A change in one module should not surprise the modules that use it.
+Read the whole project, but edit only what you mean to edit.
+Small steps, each one tested, add up to a working model.
+The loss falls fast at first and then slowly, step by step.
+When the loss stops falling, look at the data before the model.
+The quick brown fox jumps over the lazy dog.
+A small model learns the shape of a small text.
+The fence keeps the agent inside one module at a time.
+Each module has one job: data, model, train, eval, or the command line.
+The tokenizer maps every character to a number and back again.
+The model reads a block of characters and guesses the next one.
+Attention lets each position look back at the positions before it.
+The training loop samples a batch, computes the loss, and steps the optimizer.
+The learning rate warms up first, then stays the same.
+Held out text tells us whether the model learned or only remembered.
+Sampling feeds the model its own guesses, one character after another.
+Pack my box with five dozen liquor jugs.
+How vexingly quick daft zebras jump.
+Sphinx of black quartz, judge my vow.
+The five boxing wizards jump quickly.
+A change in one module should not surprise the modules that use it.
+Read the whole project, but edit only what you mean to edit.
+Small steps, each one tested, add up to a working model.
+The loss falls fast at first and then slowly, step by step.
+When the loss stops falling, look at the data before the model.
+The quick brown fox jumps over the lazy dog.
+A small model learns the shape of a small text.
+The fence keeps the agent inside one module at a time.
+Each module has one job: data, model, train, eval, or the command line.
+The tokenizer maps every character to a number and back again.
+The model reads a block of characters and guesses the next one.
+Attention lets each position look back at the positions before it.
+The training loop samples a batch, computes the loss, and steps the optimizer.
+The learning rate warms up first, then stays the same.
+Held out text tells us whether the model learned or only remembered.
+Sampling feeds the model its own guesses, one character after another.
+Pack my box with five dozen liquor jugs.
+How vexingly quick daft zebras jump.
+Sphinx of black quartz, judge my vow.
+The five boxing wizards jump quickly.
+A change in one module should not surprise the modules that use it.
+Read the whole project, but edit only what you mean to edit.
+Small steps, each one tested, add up to a working model.
+The loss falls fast at first and then slowly, step by step.
+When the loss stops falling, look at the data before the model.
+The quick brown fox jumps over the lazy dog.
+A small model learns the shape of a small text.
+The fence keeps the agent inside one module at a time.
+Each module has one job: data, model, train, eval, or the command line.
+The tokenizer maps every character to a number and back again.
+The model reads a block of characters and guesses the next one.
+Attention lets each position look back at the positions before it.
+The training loop samples a batch, computes the loss, and steps the optimizer.
+The learning rate warms up first, then stays the same.
+Held out text tells us whether the model learned or only remembered.
+Sampling feeds the model its own guesses, one character after another.
+Pack my box with five dozen liquor jugs.
+How vexingly quick daft zebras jump.
+Sphinx of black quartz, judge my vow.
+The five boxing wizards jump quickly.
+A change in one module should not surprise the modules that use it.
+Read the whole project, but edit only what you mean to edit.
+Small steps, each one tested, add up to a working model.
+The loss falls fast at first and then slowly, step by step.
+When the loss stops falling, look at the data before the model.
+The quick brown fox jumps over the lazy dog.
+A small model learns the shape of a small text.
+The fence keeps the agent inside one module at a time.
+Each module has one job: data, model, train, eval, or the command line.
+The tokenizer maps every character to a number and back again.
+The model reads a block of characters and guesses the next one.
+Attention lets each position look back at the positions before it.
+The training loop samples a batch, computes the loss, and steps the optimizer.
+The learning rate warms up first, then stays the same.
+Held out text tells us whether the model learned or only remembered.
+Sampling feeds the model its own guesses, one character after another.
+Pack my box with five dozen liquor jugs.
+How vexingly quick daft zebras jump.
+Sphinx of black quartz, judge my vow.
+The five boxing wizards jump quickly.
+A change in one module should not surprise the modules that use it.
+Read the whole project, but edit only what you mean to edit.
+Small steps, each one tested, add up to a working model.
+The loss falls fast at first and then slowly, step by step.
+When the loss stops falling, look at the data before the model.
+The quick brown fox jumps over the lazy dog.
+A small model learns the shape of a small text.
+The fence keeps the agent inside one module at a time.
+Each module has one job: data, model, train, eval, or the command line.
+The tokenizer maps every character to a number and back again.
+The model reads a block of characters and guesses the next one.
+Attention lets each position look back at the positions before it.
+The training loop samples a batch, computes the loss, and steps the optimizer.
+The learning rate warms up first, then stays the same.
+Held out text tells us whether the model learned or only remembered.
+Sampling feeds the model its own guesses, one character after another.
+Pack my box with five dozen liquor jugs.
+How vexingly quick daft zebras jump.
+Sphinx of black quartz, judge my vow.
+The five boxing wizards jump quickly.
+A change in one module should not surprise the modules that use it.
+Read the whole project, but edit only what you mean to edit.
+Small steps, each one tested, add up to a working model.
+The loss falls fast at first and then slowly, step by step.
+When the loss stops falling, look at the data before the model.
