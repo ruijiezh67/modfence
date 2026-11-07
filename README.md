@@ -1,119 +1,94 @@
 # modfence
 
-**See your project as modules and functions. Fence what an AI agent may edit. Plan, build, and review every function it changed.**
+**Vibe code one module at a time. Fence what the AI agent may edit, agree on a plan, and get every run back as a version you can read by function and undo.**
 
-![modfence on the spreadsheet example](docs/graph.png)
+![modfence on the iris example: the evaluate module selected and fenced, its functions with what each does](docs/graph.png)
 
-modfence is a tool for **fence coding**: working with an AI agent on a codebase you read as modules and functions instead of lines. Vibe coding hands the agent the whole repo and a wish. Fence coding asks a little more of you first: you say which modules may change, settle the open questions, and agree on what "done" means. In return the agent explores less, and every change comes back as a list of functions you can check.
+Tools that draw a repository's structure help you read it. modfence is for changing it with an AI agent without losing track of your own project. You work in **fence coding**:
 
-It draws your Python project as modules and the imports between them. Select a module and a panel opens with:
+1. **Pick the module.** Select it on the map, see its functions and what each one does, what it uses and who uses it. Shift-click to fence more modules.
+2. **Agree on a plan.** The agent reads the project (it cannot edit yet), asks up to four questions with its recommended answer preselected, and lists the functions it will add, change or remove. You answer and press *Build*.
+3. **Build inside the fence.** A hook blocks every edit outside the fenced modules. Before the agent may stop, the project's tests run; if they fail it is sent back once.
+4. **Review the version.** Every run that changed code becomes a numbered version in **History**: what you asked, which modules and functions changed, whether the tests passed, the cost, the diff, and a revert.
 
-- **its functions**, each with one line on what it does: the author's docstring, or, where there is none, a summary written by a small model (Haiku) the first time you open the module and cached until the file changes (marked `AI`);
-- what it uses and who uses it, by name (`parser uses tokenize, Token from lexer`);
-- exercises from the project's `TASKS.md` that touch it;
-- the fence, and an instruction box. Click a function to mention it in the instruction.
-
-The source files are one click further, under *Source files*, for whoever wants them.
-
-Your instruction goes to your own Claude Code:
-
-- **An edit starts with a plan.** The agent reads the project (it cannot edit yet), asks up to four questions with its recommended answer preselected, and lists the functions it will add, change or remove. You answer and press *Build*; the build resumes the same session, so nothing the planner read is read again.
-- **The agent reads the whole project but edits only inside the fence.** A hook enforces this; the prompt does not just ask for it.
-- **A done check before it may finish.** A `Stop` hook runs the project's tests. If they fail, the agent is sent back once with the output; a second failure is let through and the run is marked "done check failed", so it cannot loop and burn tokens.
-- **Read only mode** fences nothing and skips the plan: the agent explains and gives hints instead of solutions.
-- **Each run ends with the functions it touched:** added, changed or removed, with what each one now does. The line diff is behind *Source*. You can revert the run; a file you edited again since the run is left alone.
-- **The graph shows the effect.** Changed modules get green dots and a `+n −m` badge. Modules that use changed code turn yellow. Files changed outside the fence get a red banner and a one-click revert.
-
-![A build run on the calculator: the functions it touched, and the done check](docs/runs.png)
-
-![Layers view](docs/layers.png)
+![History: two builds on the iris example, which module each changed, and the functions of v2](docs/history.png)
 
 ## Run it
 
 ```bash
-cd modfence
-python -m modfence                         # the four example projects
-python -m modfence path/to/your/project    # or your own (one or more)
+pip install git+https://github.com/ruijiezh67/modfence
+cd path/to/your/project
+modfence
 ```
 
-It opens `http://127.0.0.1:8765`.
+It opens `http://127.0.0.1:8765` on the current directory. `modfence a b` opens several projects; To try the bundled examples from a clone of this repo: `python -m modfence examples/*`.
 
-**Requirements:** Python 3.10+, and a logged-in [Claude Code](https://code.claude.com) CLI. Runs use your own subscription or API setup, so modfence needs no API key of its own.
+**Requirements:** Python 3.10+ and a logged-in [Claude Code](https://code.claude.com) CLI. Runs use your own Claude subscription or API setup; modfence has no API key and no dependencies.
 
-**Which Claude Code it uses:** the first one it finds of:
-1. `CLAUDE_BIN`;
-2. the newest binary bundled with the VS Code extension;
-3. `claude` on your PATH.
+**Tests for the done check:** pytest if the project is configured for it (`conftest.py`, `pytest.ini`, or `[tool.pytest...]`), else `unittest` on `tests/` or `test/`, using the project's `.venv` if it has one. Override with `modfence --test-cmd "pytest -q tests/unit"`. A suite that takes longer than 270 s is not used to block the agent.
 
-modfence itself uses only the Python standard library and nothing is installed.
+## Big projects
+
+- **Folders fold.** A project with more than 60 modules opens as its top folders (fastapi: 430 modules as 4 folders). Click a folder to open it; the path at the top goes back. Search (`/`) finds any module and opens the folders down to it.
+- **Fast after the first scan.** Parsed files and file hashes are cached by size and modification time. Measured on a laptop: fastapi (1,219 Python files) scans and snapshots in 1.6 s once cached (8.9 s for the first scan; 61 s right after cloning, when the disk cache is cold too); pydantic (3,155 files) in 2.2 s (11.8 s first scan).
+- **Revert is kept for the fence.** Before a run, modfence keeps a copy of up to 50 MB of the project's files, and always of the fenced modules' files, so the run can be undone.
+
+![fastapi opened at its fastapi/ folder; tests, docs_src and scripts stay folded](docs/big.png)
+
+## The example: an ML pipeline in six modules
+
+[`examples/00-iris`](examples/00-iris/) trains a classifier on Fisher's Iris data with the standard library only: `data` (load, stratified split), `features` (standardize), `model` (softmax regression), `train` (gradient descent), `evaluate` (accuracy, confusion matrix), and `cli`, which runs them in that order. 34 tests run in about a second; `python -m iris train` prints test accuracy 0.9778. Its `TASKS.md` has five exercises, from one module (a k-NN model) to several (save and load as JSON: `model` + `cli`).
+
+The two versions in the History screenshot are real runs on it (Claude Code 2.1.319, 2026-11-07):
+
+| Version | Fence | Plan | Build | Done check | Functions |
+|---|---|---|---|---|---|
+| v1 k-NN classifier | `iris/model`, `tests` | $0.23 | $0.39 | passed, 43 tests | +5 in `knn.py`; +10 in tests |
+| v2 precision, recall, F1 | `iris/evaluate`, `iris/cli`, `tests` | $0.25 | $0.51 | passed, 49 tests | +3 and ~4 in code; +6 in tests |
+
+[`examples/`](examples/) also holds a calculator (a pipeline), a library system (layers), a spreadsheet engine, and a PyTorch tinygpt (needs `torch`).
 
 ## Using it
 
 | Do | How |
 |---|---|
-| Find a module | Press `/` or `Ctrl` + `K` and type. Or click it in any view. |
-| Switch view | `1` Graph, `2` Layers (architecture bands), `3` Outline (the project as a document), `4` Map (area is lines of code). Selection, fence and change marks carry across views. |
-| Read a module | What it uses turns blue and the modules that use it orange; everything else fades. Its functions are listed with what each does; hover an arrow to see which names it carries. |
-| Set the fence | The selected module is editable (pink, hatched). Shift-click adds modules; `+ tests` adds the tests. Switch to `Read only: explain` to fence nothing. |
-| Give an instruction | Type it (click a function to mention it) and press *Plan* or `Ctrl` + `Enter` (`Cmd` + `Enter`). Answer the plan's questions and press *Build*. The bar under the top bar shows the running agent from any view, with Stop. While it runs, the fence border marches. |
-| Pick an exercise | Exercises from `TASKS.md` that touch the module appear in its Overview. Clicking one fills in the instruction and fences the modules it names, plus the tests. |
-| Review | In the Runs tab: the functions each run changed, *Source* for the line diff, `Revert this run`, `Run tests`. |
-| Start over | `Clear runs` drops this fence's agent session and run history. Files are not touched. |
-| Move around | Drag to pan, pinch or `Ctrl` + scroll to zoom, double-click to fit. The panel is resizable. `?` opens the help. |
-| Link to a module | `http://127.0.0.1:8765/#p=1&m=library/services` opens project 1 with that module selected. |
+| Find a module | `/` or `Ctrl` + `K`, then type. |
+| Switch view | `1` Modules, `2` History. |
+| Read a module | What it uses turns blue, the modules that use it orange. Its functions are listed with what each does: the docstring, or a one-line summary by a small model (Haiku), cached until the file changes and marked `AI`. Source files are folded away under *Source files*. |
+| Set the fence | The selected module is editable (pink). Shift-click adds modules; `+ tests` adds the tests. `Read only: explain` fences nothing and skips the plan. |
+| Instruct | Type (click a function to mention it), press *Plan* or `Ctrl` + `Enter`. Answer, press *Build*. The bar at the top shows the running agent, with Stop. |
+| Review | The run's functions appear in the panel; every run is also a version in History. *Show on graph* paints the modules it changed (green) and those that use them (yellow). *Changes, diff and revert* opens the functions, the line diff, and the revert. |
+| Link | `http://127.0.0.1:8765/#p=0&m=iris/evaluate` opens a module. |
 
-## The example projects
+## Engineering standards
 
-[`examples/`](examples/) holds four small modular projects, from easy to hard. Each has tests and a `TASKS.md` with five exercises, from single-module to cross-module:
-
-| Project | Modules | What it teaches |
-|---|---|---|
-| `01-calculator` | lexer, parser, evaluator, cli | a pipeline: each stage depends only on the one before it |
-| `02-library` | domain, storage, services, reports, cli | layers: the domain depends on nothing, and the CLI sits on top |
-| `03-spreadsheet` | cells, formula, functions, graph, engine, io, cli | an engine that composes four independent modules |
-| `04-tinygpt` | config, data, model, train, eval, cli | a PyTorch training codebase: a character-level GPT that trains on a CPU in seconds. Needs `torch`. |
-
-The cross-module tasks are where the fence pays off. Here is what happened with the fence set to `calc/evaluator` only, asking for the `^` operator, which also needs the lexer and parser:
-
-- Claude implemented and tested the evaluator part.
-- It listed the exact changes `calc/lexer` and `calc/parser` still need.
-- It did not touch them.
-
-In a separate check, asked to write a file in `calc/lexer` with the same fence, the write was blocked by the hook.
+[`docs/STANDARDS.md`](docs/STANDARDS.md) lists the rules modfence takes from git's contribution guidelines, Google's code review practices, Anthropic's Claude Code best practices and others, and for each one whether modfence does it and which test shows it. In short: plan first, a harness-enforced pass/fail check, edits blocked outside the fence, every change reviewable by function and reversible. Not yet: size warnings, test-first mode, commit messages from runs.
 
 ## How it works
 
 | Part | File | What it does |
 |---|---|---|
-| Graph | `modfence/analyze.py` | Parses every `.py` file with `ast`. A module is a directory, except where code is flat: each `.py` file at the project root (`train.py`, `model.py`), and each file in a directory with 8 or more `.py` files of its own (`nanochat/gpt.py`), is a module by itself. An edge A → B exists when a file in A imports a file in B (absolute and relative imports). Each edge keeps its receipts: the file, line, source and imported name of every import behind it. The functions of a module are its top-level functions and classes and their methods; a run's changes are named by comparing a fingerprint of each one before and after. No model draws the graph. |
-| Purposes | `modfence/purpose.py` | One line per function: the docstring's first line, else a summary from `claude -p --model haiku` with no tools, the user's settings and CLAUDE.md left out, and a two-sentence system prompt instead of Claude Code's own. The module's source is in the prompt. Measured on the examples: $0.0004 to $0.002 and about 10 s per module. Cached in `.modfence/purposes.json` by file hash. |
-| Done check | `modfence/done_check.py` | A `Stop` hook added to build runs: it runs the project's `unittest` suite, blocks the first stop if it fails, lets the second through, and records each result for the run log. |
-| Runs | `modfence/runner.py` | Starts `claude -p --output-format stream-json --include-partial-messages` in the project root. It adds a system note naming the fenced modules, their files and public names, and what they depend on and are used by. It resumes that fence's previous session. After the run it diffs the project to report changes, edits outside the fence, and the modules that import changed code. |
-| Fence | `modfence/scope_guard.py` | A `PreToolUse` hook, passed with `--settings` for that run only. It denies `Edit`, `Write`, `MultiEdit` and `NotebookEdit` on any path outside the fence. `..` tricks and symlinks are resolved first. It fails closed. |
-| Server | `modfence/server.py` | `http.server` on 127.0.0.1 only. Events stream to the page as server-sent events. The page itself is plain HTML, CSS and JS with no build step, in `modfence/web/`. Motion uses platform features only (View Transitions, `@starting-style`, scroll-driven animations, `::details-content`); older browsers get the same UI without the motion, and `prefers-reduced-motion` turns it off. |
+| Graph | `modfence/analyze.py` | Parses every `.py` file with `ast`. A module is a directory; in flat code each root `.py` file, and each file in a directory with 8 or more `.py` files of its own, is a module. An edge A → B exists when a file in A imports a file in B, and keeps the file, line and imported name of each import. Functions are top-level functions, classes, methods and UPPER constants; a run's changes are named by fingerprinting each one before and after. No model draws the graph. |
+| Purposes | `modfence/purpose.py` | The docstring's first line, else a summary from `claude -p --model haiku` with no tools and without your settings or CLAUDE.md. $0.0004 to $0.002 and about 10 s per module on the examples. Cached in `.modfence/purposes.json` by file hash. |
+| Runs | `modfence/runner.py` | Plan runs are read-only and answer with JSON (questions and the plan); build runs resume that session. Each run starts `claude -p --output-format stream-json` with a note naming the fence, its public names, and its neighbours with file:line receipts. After the run it diffs the project, names changed functions, finds the modules that use changed code, and stores the before and after of each file. |
+| Fence | `modfence/scope_guard.py` | A `PreToolUse` hook for that run only: denies `Edit`, `Write`, `MultiEdit` and `NotebookEdit` outside the fence, after resolving `..` and symlinks. Fails closed. |
+| Done check | `modfence/done_check.py` | A `Stop` hook on build runs: runs the tests, blocks the first stop on failure, lets the second through and marks the version "tests failed". |
+| Server | `modfence/server.py` | `http.server` on 127.0.0.1 only; plain HTML, CSS and JS in `modfence/web/`, no build step. Requests must carry a localhost `Host`; writes need an `X-Modfence` header, so another website cannot drive your Claude Code. |
 
-**State** lives in `<project>/.modfence/` (git-ignored automatically): session ids and run history per fence, `runs/<id>/` with the before and after copy of every file a run changed (what diff and revert read), and `purposes.json` with the function summaries. Browsing a project writes nothing but those summaries.
-
-**Security:**
-- The server only answers requests whose `Host` is `127.0.0.1` or `localhost`.
-- Every state-changing request needs an `X-Modfence` header, which a page on another site cannot send.
-- Another website therefore cannot drive your Claude Code through modfence.
-- File views are confined to the project folder.
+**State** lives in `<project>/.modfence/` (git-ignored automatically): sessions and run logs per fence, `runs/<id>/` with each version's files before and after, and `purposes.json`.
 
 ## Limits
 
 - **Python only.** JS/TS imports are not analyzed yet.
-- **Large projects get large graphs.** Splitting flat directories into files keeps training repos useful (nanochat: 26 modules) but turns big libraries into big graphs (rich: 141 modules, fastapi with its docs examples: 430). There is no collapse or filter yet; use search (`/`) and the Layers view.
-- **The hook sees the file tools, not shell commands.** A script that writes files can still change something outside the fence. modfence reports it after the run as "changed outside the fence" and offers a revert, but does not prevent it. Runs only allow `python` and read-only `git`/`ls`/`cat` commands without asking.
-- **Runs use your Claude Code settings**, including your own CLAUDE.md, so the answer follows your usual preferences. Function summaries do not.
-- **Function summaries cost a little and can be wrong.** They are written from the code by a small model, marked `AI`, and never replace a docstring. "Used by" per function counts `from x import name` only; a module imported whole (`import x` then `x.f()`) is not traced to the function.
-- **The done check knows `unittest` only** (`tests/` folder). Projects without one get no done check.
-- **Plan and build are new and not benchmarked yet.** The evaluation below measured single runs without a plan step; what the plan step costs and saves is N/A until it is measured.
-- **One run at a time per project.**
+- **The hook sees the file tools, not shell commands.** A script can still write outside the fence; modfence reports it after the run and offers a revert. Runs allow only `python` and read-only `git`/`ls`/`cat` without asking.
+- **Runs use your Claude Code settings**, including your CLAUDE.md (the plan's questions come in your chat language). Function summaries do not.
+- **"Used by" per function** counts `from x import name`; `import x` then `x.f()` is not traced to the function.
+- **Plan + build is not benchmarked yet.** One calculator run cost $0.76 against $0.51 for a fenced run without a plan; n = 1, so the comparison is N/A.
+- **One run at a time per project.** The grouping threshold (60 modules) is fixed.
 
 ## Evaluation
 
-On four cross-module features, fencing the modules a feature needs (tests included) built every feature correctly at 21% lower cost, 37% less context re-read and 27% less time than handing the whole task to Claude Code, and it was cheaper on each of the four (n = 2 each, so suggestive). [`docs/EVALUATION.md`](docs/EVALUATION.md) has that benchmark, one against plain Claude Code and Claude Code's own permission rules, and the analyzer's numbers on popular open-source repos. The scripts are in [`bench/`](bench/).
+On four cross-module features, fencing the modules a feature needs (tests included) built every feature correctly at 21% lower cost, 37% less context re-read and 27% less time than handing the whole task to Claude Code, cheaper on each of the four (n = 2 each, so suggestive). [`docs/EVALUATION.md`](docs/EVALUATION.md) has the method, the numbers, and the analyzer on popular repositories; scripts in [`bench/`](bench/).
 
 ## Tests
 
@@ -121,4 +96,4 @@ On four cross-module features, fencing the modules a feature needs (tests includ
 python -m unittest discover -s tests -t .
 ```
 
-The suite has 24 deterministic tests. No model is called: `tests/fake_claude.py` stands in for the CLI. It emits Claude Code's stream-json events and makes the file edits the prompt asks for.
+27 deterministic tests. No model is called: `tests/fake_claude.py` stands in for the CLI, emitting Claude Code's stream-json events and making the edits the prompt asks for.
