@@ -8,7 +8,7 @@ const store = { get(k) { try { return localStorage.getItem(k); } catch { return 
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || "");
 
 const S = {
-  projects: [], p: 0, graph: null, pos: {}, rows: [], view: "graph", selected: null, scope: new Set(), readOnly: false,
+  projects: [], p: 0, graph: null, full: null, focus: "", pos: {}, rows: [], view: "graph", selected: null, scope: new Set(), readOnly: false,
   tab: "over", marks: { changed: new Set(), ripple: new Set(), stats: {} }, job: null, tasks: [], claude: null, fn: {},
   cam: { x: 0, y: 0, k: 1 }, camV: { x: 0, y: 0, k: 0 }, camTarget: null, raf: 0, userCam: false,
 };
@@ -46,10 +46,10 @@ async function boot() {
 }
 
 async function loadGraph(fit) {
-  S.graph = await api(`/api/graph?${q()}`);
+  if (!S.full) $("#stats").textContent = "Reading the project…"; // a big project's first scan takes seconds
+  S.full = await api(`/api/graph?${q()}`);
   S.fn = {};
-  layout();
-  drawGraph();
+  regroup();
   renderAltView();
   updateStats();
   if (fit) fitView(false);
@@ -58,8 +58,8 @@ async function loadGraph(fit) {
   else if (S.selected) { renderHeader(); renderOverview(); renderFence(); }
 }
 
-function mod(id) { return S.graph && S.graph.modules.find((m) => m.id === id); }
-const label = (id) => (id === "." ? "(root)" : id.split("/").pop());
+function mod(id) { return S.graph && (S.graph.modules.find((m) => m.id === id) || S.full.modules.find((m) => m.id === id)); }
+const label = (id) => (id === "." ? "(root)" : id.endsWith("/") ? id.slice(0, -1).split("/").pop() + "/" : id.split("/").pop());
 const parent = (id) => (id.includes("/") ? id.slice(0, id.lastIndexOf("/")) : "");
 const shown = (id) => (id === "." ? "(root)" : id);
 const moduleOf = (p) => { // mirrors analyze.module_of
@@ -68,13 +68,64 @@ const moduleOf = (p) => { // mirrors analyze.module_of
   return d && !(own && (S.graph.split || []).includes(d)) ? d : own ? p : d || ".";
 };
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
-const mdoc = (m) => m.doc || (S.graph.ai_purposes || {})[m.id] || "";  // the author's docstring, else a cached summary
+const mdoc = (m) => m.doc || (S.full.ai_purposes || {})[m.id] || "";  // the author's docstring, else a cached summary
 const maxLines = () => Math.max(1, ...S.graph.modules.map((m) => m.lines));
 
 function updateStats() {
-  const g = S.graph, files = Object.keys(g.files).length, lines = g.modules.reduce((a, m) => a + m.lines, 0);
+  const g = S.full, files = Object.keys(g.files).length, lines = g.modules.reduce((a, m) => a + m.lines, 0);
   $("#stats").textContent = `${plural(g.modules.length, "module")} · ${plural(files, "file")} · ${lines.toLocaleString()} lines`;
 }
+
+/* ---------------- big projects: folders with many modules shown as one node ---------------- */
+const GROUP_AT = 60; // ponytail: fixed; a project with more modules than this opens folder by folder
+function viewGraph(full, focus) {
+  // Modules outside the open folder are grouped by their first differing path segment, so a 400-module project
+  // shows a few dozen nodes. A folder holding one module shows that module.
+  if (full.modules.length <= GROUP_AT) return full;
+  const f = focus ? focus.split("/") : [];
+  const keyOf = (id) => {
+    if (id === ".") return id;
+    const s = id.split("/");
+    let k = 0;
+    while (k < f.length && k < s.length && s[k] === f[k]) k++;
+    return k >= s.length ? id : s.slice(0, k + 1).join("/");
+  };
+  const groups = new Map(), idOf = {}, modules = [];
+  full.modules.forEach((m) => { const k = keyOf(m.id); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(m); });
+  groups.forEach((ms, k) => {
+    if (ms.length === 1) { idOf[ms[0].id] = ms[0].id; modules.push(ms[0]); return; }
+    const gid = k + "/";
+    ms.forEach((m) => (idOf[m.id] = gid));
+    modules.push({ id: gid, group: true, kind: ms.every((m) => m.kind === "tests") ? "tests" : "group", members: ms.map((m) => m.id),
+      files: ms.flatMap((m) => m.files), lines: ms.reduce((a, m) => a + m.lines, 0), names: [], doc: `${ms.length} modules`, mtime: 0 });
+  });
+  const edges = new Map();
+  full.edges.forEach((e) => {
+    const a = idOf[e.source], b = idOf[e.target];
+    if (a === b) return;
+    if (!edges.has(a + "\n" + b)) edges.set(a + "\n" + b, { source: a, target: b, receipts: [] });
+    edges.get(a + "\n" + b).receipts.push(...e.receipts);
+  });
+  return { ...full, modules: modules.sort((x, y) => x.id.localeCompare(y.id)), edges: [...edges.values()] };
+}
+function regroup() {
+  S.graph = viewGraph(S.full, S.focus);
+  layout();
+  drawGraph();
+  const c = $("#crumbs"), big = S.full.modules.length > GROUP_AT;
+  c.hidden = !big;
+  if (!big) return;
+  const parts = S.focus ? S.focus.split("/") : [];
+  c.innerHTML = `<button type="button" data-f="">${esc(S.full.name)}</button>` + parts.map((p, i) => `<span>/</span><button type="button" data-f="${esc(parts.slice(0, i + 1).join("/"))}">${esc(p)}</button>`).join("")
+    + `<em>${plural(S.full.modules.length, "module")}: folders are grouped; click one to open it</em>`;
+  c.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => { S.focus = b.dataset.f; regroup(); fitView(); }));
+}
+function reveal(id) { // a module hidden in a grouped folder: open the folders down to it
+  if (S.graph.modules.some((m) => m.id === id)) return;
+  S.focus = S.full.modules.some((m) => m.id.startsWith(id + "/")) ? id : parent(id);
+  regroup();
+}
+const inSet = (set, id) => set.has(id) || !!(mod(id)?.group && mod(id).members.some((x) => set.has(x)));
 
 /* ---------------- layout: layered, foundations at the bottom ---------------- */
 function layout() {
@@ -170,12 +221,13 @@ function drawGraph() {
     const { x, y } = S.pos[m.id];
     const n = el("g", { class: `node${m.kind === "tests" ? " tests" : ""}`, transform: `translate(${x},${y})`, tabindex: 0, role: "button", "data-id": m.id }, ng);
     el("rect", { class: "ring", x: -3, y: -3, width: NODE_W + 6, height: NODE_H + 6, rx: 10 }, n);
+    if (m.group) { n.classList.add("group"); el("rect", { class: "stack", x: 5, y: 5, width: NODE_W, height: NODE_H, rx: 7 }, n); }
     el("rect", { class: "card", width: NODE_W, height: NODE_H, rx: 7 }, n);
     el("rect", { class: "fill", width: NODE_W, height: NODE_H, rx: 7 }, n);
     const name = el("text", { class: "name", x: 12, y: 25 }, n);
     name.textContent = clip(label(m.id), 22);
     const meta = el("text", { class: "meta", x: 12, y: 45 }, n);
-    meta.textContent = clip(`${parent(m.id) ? parent(m.id) + "/ · " : ""}${plural(m.files.length, "file")}`, 30);
+    meta.textContent = clip(m.group ? plural(m.members.length, "module") : `${parent(m.id) ? parent(m.id) + "/ · " : ""}${plural(m.files.length, "file")}`, 30);
     el("rect", { class: "bar-bg", x: 12, y: 57, width: NODE_W - 24, height: 5, rx: 2.5 }, n);
     el("rect", { class: "bar", x: 12, y: 57, width: Math.max(3, (NODE_W - 24) * (m.lines / mx)), height: 5, rx: 2.5 }, n);
     const lines = el("text", { class: "meta", x: NODE_W - 12, y: 45, "text-anchor": "end" }, n);
@@ -222,7 +274,7 @@ function related(id) {
   S.graph.edges.forEach((e) => { if (e.source === id) dep.add(e.target); if (e.target === id) use.add(e.source); });
   return { dep, use };
 }
-function fenced(id) { return S.selected !== null && !S.readOnly && S.scope.has(id); }
+function fenced(id) { return S.selected !== null && !S.readOnly && inSet(S.scope, id); }
 function stateWords(id, rel, focus) {
   const w = [];
   if (id === S.selected) w.push("selected");
@@ -245,9 +297,10 @@ function paintSelection(hover) {
     n.classList.toggle("fenced", fenced(id));
     n.classList.toggle("dep", !!focus && rel.dep.has(id));
     n.classList.toggle("use", !!focus && rel.use.has(id));
-    n.classList.toggle("faded", !!focus && id !== focus && !rel.dep.has(id) && !rel.use.has(id) && !fenced(id) && !S.marks.changed.has(id));
-    n.classList.toggle("changed", S.marks.changed.has(id));
-    n.classList.toggle("ripple", S.marks.ripple.has(id) && !S.marks.changed.has(id));
+    const ch = inSet(S.marks.changed, id), rp = inSet(S.marks.ripple, id);
+    n.classList.toggle("faded", !!focus && id !== focus && !rel.dep.has(id) && !rel.use.has(id) && !fenced(id) && !ch);
+    n.classList.toggle("changed", ch);
+    n.classList.toggle("ripple", rp && !ch);
     const tag = $("[data-tag]", n);
     const d = diffTag(id);
     tag.setAttribute("class", `tag ${d ? "plus" : fenced(id) ? "fence" : ""}`);
@@ -262,7 +315,6 @@ function paintSelection(hover) {
     // A short pulse travels each highlighted edge in import direction. pathLength=100 makes the dash the same share of any edge.
     if (k === "dep" || k === "use") el("path", { d: e._d, class: `flow ${k}`, pathLength: 100 }, $("#edges"));
   });
-  paintAlt(focus, rel);
   renderLegend(!!focus);
 }
 let hoverT = 0;
@@ -387,6 +439,7 @@ function hideTip() { $("#tip").classList.remove("show"); }
 
 /* ---------------- selection, fence & panel ---------------- */
 function onNodeClick(id, ev) {
+  if (mod(id)?.group) { select(id); return; }
   if ((ev.shiftKey || ev.metaKey || ev.ctrlKey) && S.selected) {
     if (S.scope.has(id) && S.scope.size > 1) S.scope.delete(id); else S.scope.add(id);
     if (!S.scope.has(S.selected)) S.selected = [...S.scope][0];
@@ -396,6 +449,8 @@ function onNodeClick(id, ev) {
   select(id);
 }
 function select(id) {
+  if (id.endsWith("/")) { S.focus = id.slice(0, -1); regroup(); fitView(); return; } // a grouped folder: open it
+  reveal(id);
   const opening = !document.body.classList.contains("panel-open");
   S.selected = id;
   // A plain click starts a new fence, unless a multi-module fence is set: then the fence is kept and the module is only shown.
@@ -405,8 +460,8 @@ function select(id) {
   renderHeader(); renderOverview(); renderFence(); loadTalk(); paintSelection();
   setTab(S.tab, false);
   requestAnimationFrame(() => {
-    if (S.view === "graph") { if (opening && !S.userCam) fitView(); else revealNode(id); }
-    else { if (opening && S.view === "map") renderAltView(); revealCard(id); }
+    if (S.view !== "graph") setView("graph");
+    if (opening && !S.userCam) fitView(); else revealNode(id);
   });
 }
 function closePanel() {
@@ -414,7 +469,7 @@ function closePanel() {
   S.selected = null; S.scope.clear();
   document.body.classList.remove("panel-open");
   $("#panel").inert = true;
-  if (wasOpen) requestAnimationFrame(() => (S.view === "graph" ? !S.userCam && fitView() : S.view === "map" && renderAltView()));
+  if (wasOpen) requestAnimationFrame(() => S.view === "graph" && !S.userCam && fitView());
   paintSelection();
 }
 function afterFenceChange() { renderFence(); renderHeader(); paintSelection(); loadTalk(); }
@@ -461,7 +516,7 @@ async function moduleFns(id, describe) {
     try {
       const r = await api(`/api/describe?${q()}`, { module: id });
       S.fn[id] = r;
-      if (r.purpose_source === "ai") { (S.graph.ai_purposes ||= {})[id] = r.purpose; renderAltView(); }
+      if (r.purpose_source === "ai") { (S.full.ai_purposes ||= {})[id] = r.purpose; }
       if (r.error) toast(`Could not describe the functions: ${r.error}`, false);
     } catch (e) { toast(`Could not describe the functions: ${e.message}`, false); }
     describing.delete(id);
@@ -525,7 +580,7 @@ function renderOverview() {
 const X_ICON = '<svg viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l6 6M8 2L2 8"/></svg>';
 function renderFence() {
   if (!S.selected) return;
-  const testsMod = S.graph.modules.find((m) => m.kind === "tests");
+  const testsMod = S.full.modules.find((m) => m.kind === "tests");
   const mode = `<div class="mode" role="group" aria-label="Fence mode">
     <button type="button" data-ro="0" aria-pressed="${!S.readOnly}">Edit inside the fence</button>
     <button type="button" data-ro="1" aria-pressed="${S.readOnly}">Read only: explain</button></div>`;
@@ -554,7 +609,7 @@ async function loadTasks() {
 }
 function parseTasks(text) {
   // "## 4. Exponent operator (crosses modules: `lexer`, `parser`)" + "Target: `calc.lexer`, `calc.parser`."
-  const ids = S.graph.modules.map((m) => m.id);
+  const ids = S.full.modules.map((m) => m.id);
   return text.split(/\n(?=## )/).filter((sec) => /^## /.test(sec)).map((sec) => {
     const lines = sec.split("\n");
     const head = lines[0].replace(/^##\s*/, "");
@@ -582,7 +637,7 @@ function useTask(t) {
   if (!fillPrompt(`${t.title}\n\n${t.body}`)) return;
   S.readOnly = false;
   // An exercise changes behavior, so its tests must change too: fence the tests module with it.
-  const tests = S.graph.modules.filter((m) => m.kind === "tests").map((m) => m.id);
+  const tests = S.full.modules.filter((m) => m.kind === "tests").map((m) => m.id);
   S.scope = new Set([S.selected, ...t.modules.filter((m) => m !== S.selected), ...tests]);
   afterFenceChange();
 }
@@ -791,6 +846,7 @@ async function revert(root, run, paths, n) {
   S.marks = { changed: new Set(), ripple: new Set(), stats: {} };
   await loadGraph(false);
   toast(`Reverted ${plural(res.reverted.length, "file")}${res.skipped.length ? `, left ${res.skipped.length} alone` : ""}.`);
+  if (S.view === "history") renderHistory();
 }
 
 const fwd = (s) => String(s || "").replace(/\\/g, "/");
@@ -904,12 +960,15 @@ function showRunbar() {
 function markEditing(path) {
   const rel = shortPath(path);
   const id = moduleOf(rel);
-  document.querySelectorAll(`.node[data-id="${CSS.escape(id)}"], #alt .mcard[data-id="${CSS.escape(id)}"]`).forEach((n) => {
+  document.querySelectorAll(`.node[data-id="${CSS.escape(id)}"]`).forEach((n) => {
     n.classList.remove("changed"); void n.getBoundingClientRect(); n.classList.add("changed");
   });
 }
 async function onChanges(c) {
   await loadGraph(false);
+  markRun(c);
+}
+function markRun(c) { // paint a run's changed modules (green dots, +n −m) and the modules that use them (yellow)
   const stats = {};
   (c.files || []).forEach((f) => {
     if (!f.path.endsWith(".py")) return;
@@ -917,7 +976,7 @@ async function onChanges(c) {
     const s = (stats[id] ||= { plus: 0, minus: 0 });
     s.plus += f.plus || 0; s.minus += f.minus || 0;
   });
-  S.marks = { changed: new Set(c.modules), ripple: new Set(c.ripple), stats };
+  S.marks = { changed: new Set(c.modules || []), ripple: new Set(c.ripple || []), stats };
   paintSelection();
 }
 
@@ -960,7 +1019,7 @@ function showHelp() {
       <dt>AI</dt><dd>A one-line description written by a small model because the author wrote no docstring. Cached until the file changes.</dd>
       <dt>layers</dt><dd>Modules that import others sit above the ones they import. The bottom layer imports nothing in the project.</dd></dl>
     <h3>Keys</h3>
-    <dl><dt>/</dt><dd>Find a module</dd><dt>1 2 3 4</dt><dd>Graph, Layers, Outline, Map</dd><dt>${IS_MAC ? "⌘" : "Ctrl"} Enter</dt><dd>Run the instruction</dd><dt>Esc</dt><dd>Close the panel or this sheet</dd><dt>?</dt><dd>This help</dd></dl></div>`;
+    <dl><dt>/</dt><dd>Find a module</dd><dt>1 2</dt><dd>Modules, History</dd><dt>${IS_MAC ? "⌘" : "Ctrl"} Enter</dt><dd>Run the instruction</dd><dt>Esc</dt><dd>Close the panel or this sheet</dd><dt>?</dt><dd>This help</dd></dl></div>`;
   showSheet(true);
 }
 
@@ -999,7 +1058,7 @@ function wireSearch() {
   const close = () => { list.hidden = true; input.setAttribute("aria-expanded", "false"); };
   const draw = () => {
     const t = input.value.trim().toLowerCase();
-    hits = S.graph.modules.filter((m) => !t || m.id.toLowerCase().includes(t) || mdoc(m).toLowerCase().includes(t)).slice(0, 12);
+    hits = S.full.modules.filter((m) => !t || m.id.toLowerCase().includes(t) || mdoc(m).toLowerCase().includes(t)).slice(0, 12);
     at = Math.min(at, Math.max(0, hits.length - 1));
     list.innerHTML = hits.map((m, i) => `<li role="option" id="fo${i}" aria-selected="${i === at}" data-id="${esc(m.id)}">${esc(shown(m.id))}<span>${m.lines} ln</span></li>`).join("") || `<li aria-disabled="true">No module matches</li>`;
     list.hidden = false; input.setAttribute("aria-expanded", "true");
@@ -1024,7 +1083,7 @@ function wireResize() {
   grip.addEventListener("pointerdown", (e) => {
     grip.setPointerCapture(e.pointerId);
     const move = (ev) => setW(innerWidth - ev.clientX);
-    const up = () => { grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); if (S.view === "map") renderAltView(); };
+    const up = () => { grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); };
     grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up);
   });
   grip.addEventListener("keydown", (e) => {
@@ -1041,7 +1100,7 @@ function wire() {
   $("#panel").inert = true;
   $("#picker").onchange = async (e) => {
     S.p = Number(e.target.value); store.set("modfence.project", S.p);
-    closePanel(); S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; S.userCam = false;
+    closePanel(); S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; S.userCam = false; S.focus = "";
     const b = $("#tests"); b.classList.remove("ok", "bad"); $(".lbl", b).textContent = "Run tests";
     await loadGraph(true);
   };
@@ -1077,7 +1136,7 @@ function wire() {
     if (typing() || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === "/") { e.preventDefault(); $("#find").focus(); }
     else if (e.key === "?") { e.preventDefault(); showHelp(); }
-    else if ("1234".includes(e.key) && e.key.length === 1) setView(VIEWS[+e.key - 1].id);
+    else if ("12".includes(e.key) && e.key.length === 1) setView(VIEWS[+e.key - 1].id);
   });
 }
 
