@@ -262,7 +262,7 @@ let hoverT = 0;
 function hoverNode(id, on) {
   clearTimeout(hoverT);
   if (on) paintSelection(id);
-  else hoverT = setTimeout(() => paintSelection(), 60);
+  else hoverT = setTimeout(() => paintSelection(), 120);
 }
 function renderLegend(focus) {
   const items = [];
@@ -280,7 +280,7 @@ function springTo(target) {
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) { Object.assign(S.cam, target); S.camV = { x: 0, y: 0, k: 0 }; applyCam(); return; }
   if (S.raf) return;
   let last = performance.now();
-  const response = 0.4, stiff = (2 * Math.PI / response) ** 2, damp = (4 * Math.PI) / response;
+  const response = 0.62, stiff = (2 * Math.PI / response) ** 2, damp = (4 * Math.PI) / response;
   const step = (now) => {
     const dt = Math.min(0.032, (now - last) / 1000); last = now;
     let moving = false;
