@@ -76,6 +76,8 @@ def make_handler(app, port):
                     # ponytail: module summaries are not keyed by content; they are refreshed when the module is described again
                     g["ai_purposes"] = {k: v.get("text", "") for k, v in purpose.load(root).get("modules", {}).items()}
                     return self.send_json(g)
+                if u.path == "/api/versions":
+                    return self.send_json({"versions": runner.versions(app.project(q))})
                 if u.path == "/api/module":
                     root = app.project(q)
                     return self.send_json(purpose.module_view(root, analyze.analyze(root), (q.get("m") or [""])[0]))

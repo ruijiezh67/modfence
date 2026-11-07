@@ -83,6 +83,15 @@ class AnalyzeTest(unittest.TestCase):
         os.remove(os.path.join(d, "README.md"))
         self.assertEqual(analyze.diff(before, analyze.snapshot(d)), (["app/core/new.py"], ["app/core/values.py"], ["README.md"]))
 
+    def test_cached_parse_sees_edits(self):
+        d = project()
+        self.assertIsNone(edge(analyze.analyze(d), "app/core", "app/cli"))
+        write(os.path.join(d, "app/core/values.py"), "from app.cli.main import Cli\n", "a")
+        self.assertIsNotNone(edge(analyze.analyze(d), "app/core", "app/cli"), "a changed file is parsed again")
+        before = analyze.snapshot(d)
+        self.assertIn("app/core/values.py", analyze.snapshot_bytes(d))
+        self.assertEqual(analyze.snapshot(d), before, "a warm snapshot matches")
+
 
 class FlatProjectTest(unittest.TestCase):
     """Training repos often keep model.py, train.py at the root: each root .py file is its own module."""
@@ -234,6 +243,32 @@ class RunnerTest(unittest.TestCase):
         with self.assertRaises(LookupError):
             runner.revert_run(d, "../../etc")
 
+    def test_versions_keep_prompt_and_revert(self):
+        d = project()
+        run_job(d, ["app/cli"], "explain only")  # no files changed: not a version
+        job = run_job(d, ["app/core"], "edit app/core/values.py")
+        vs = runner.versions(d)
+        self.assertEqual(len(vs), 1)
+        self.assertEqual((vs[0]["prompt"], vs[0]["modules"]), ("edit app/core/values.py", ["app/core"]))
+        self.assertIn("app/api", vs[0]["ripple"])
+        runner.revert_run(d, vs[0]["run"])
+        self.assertEqual(runner.versions(d)[0]["reverted"], ["app/core/values.py"])
+
+    def test_test_command_picks_pytest_unittest_or_override(self):
+        d = project()
+        self.assertEqual(runner.test_command(d)[1:4], ["-m", "unittest", "discover"])
+        write(os.path.join(d, "conftest.py"), "")
+        self.assertEqual(runner.test_command(d)[1:3], ["-m", "pytest"])
+        os.environ["MODFENCE_TEST_CMD"] = "make test"
+        try:
+            self.assertEqual(runner.test_command(d), "make test")
+        finally:
+            del os.environ["MODFENCE_TEST_CMD"]
+        e = tempfile.mkdtemp(prefix="modfence-test-")
+        _dirs.append(e)
+        self.assertIsNone(runner.test_command(e))
+        self.assertIsNone(runner.run_tests(e)[0], "no tests: nothing to check, never a failure")
+
     def test_read_only_run_may_edit_nothing(self):
         d = project()
         job = runner.Job(d, ["app/core"], "edit app/core/values.py", analyze.analyze(d), FAKE, read_only=True).start()
@@ -288,7 +323,7 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(json.loads(first.stdout)["decision"], "block")
         second = subprocess.run([sys.executable, hook], input='{"stop_hook_active": true}', capture_output=True, text=True, env=env)
         self.assertEqual(second.stdout.strip(), "", "a second stop is let through")
-        rec = [json.loads(l) for l in open(os.path.join(d, ".modfence/runs/r1/checks.jsonl"))]
+        rec = [json.loads(l) for l in analyze.read_text(os.path.join(d, ".modfence/runs/r1/checks.jsonl")).splitlines()]
         self.assertEqual([(r["ok"], r["blocked"]) for r in rec], [(False, 1), (False, 0)])
 
     def test_reading_state_creates_nothing(self):

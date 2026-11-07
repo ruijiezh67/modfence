@@ -307,10 +307,14 @@ class Job:
             split = set(graph.get("split", ()))
             changed_mods = sorted({analyze.module_of(p, split) for p in changed if p.endswith(".py")})
             ripple = analyze.dependents(graph, changed_mods)
-            files = save_run(self, changed, set(added), set(deleted), set(outside))
             checks = _read_jsonl(os.path.join(run_dir(self.root, self.id), "checks.jsonl"))
-            if checks:
-                self.emit("check", ok=checks[-1]["ok"], summary=checks[-1]["summary"], blocked=sum(c["blocked"] for c in checks))
+            check = dict(ok=checks[-1]["ok"], summary=checks[-1]["summary"], blocked=sum(c["blocked"] for c in checks)) if checks else None
+            res = next((e for e in reversed(self.events) if e["kind"] == "result"), {})
+            files = save_run(self, changed, set(added), set(deleted), set(outside),
+                             dict(prompt=self.prompt, phase=self.phase, modules=changed_mods, ripple=ripple, check=check,
+                                  cost_usd=res.get("cost_usd"), turns=res.get("turns")))
+            if check:
+                self.emit("check", **check)
             self.emit("changes", added=added, modified=modified, deleted=deleted, outside_scope=outside,
                       modules=changed_mods, ripple=ripple, run=self.id, files=files)
         except Exception as e:
@@ -364,7 +368,7 @@ def _stat(before, after):
     return plus, minus
 
 
-def save_run(job, changed, added, deleted, outside):
+def save_run(job, changed, added, deleted, outside, extra=None):
     """Store the before and after bytes of every changed file, so the run can be shown as a diff and reverted."""
     d = run_dir(job.root, job.id)
     files = []
@@ -384,9 +388,23 @@ def save_run(job, changed, added, deleted, outside):
         files.append({"path": p, "status": status, "plus": plus, "minus": minus, "outside": p in outside,
                       "revertible": revertible, "funcs": funcs})
     os.makedirs(d, exist_ok=True)
-    write_text(os.path.join(d, "run.json"), json.dumps({"run": job.id, "scope": job.scope, "editable": job.editable,
-                                                        "at": job.started, "files": files}, indent=1))
+    write_text(os.path.join(d, "run.json"), json.dumps(dict(extra or {}, run=job.id, scope=job.scope, editable=job.editable,
+                                                            at=job.started, files=files), indent=1, ensure_ascii=False))
     return files
+
+
+def versions(root):
+    """Every stored run that changed files, oldest first: the project's version history."""
+    d = os.path.join(root, ".modfence", "runs")
+    out = []
+    for name in os.listdir(d) if os.path.isdir(d) else ():
+        try:
+            run = load_run(root, name)
+        except LookupError:
+            continue
+        if run.get("files"):
+            out.append(run)
+    return sorted(out, key=lambda r: r.get("at") or 0)
 
 
 def load_run(root, run_id):
@@ -436,6 +454,9 @@ def revert_run(root, run_id, paths=None):
             with open(full, "wb") as out:
                 out.write(analyze.read_bytes(os.path.join(d, "before", p)))
         reverted.append(p)
+    if reverted:  # History shows the version as reverted
+        run["reverted"] = sorted(set(run.get("reverted", [])) | set(reverted))
+        write_text(os.path.join(d, "run.json"), json.dumps(run, indent=1, ensure_ascii=False))
     return reverted, skipped
 
 
