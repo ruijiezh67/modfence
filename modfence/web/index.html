@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>modfence</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2323211d'/%3E%3Cpath d='M8 9v15M13 9v15M18 9v15M23 9v15M6 13h20M6 20h20' stroke='%23d9a441' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%23f3eee3'/%3E%3Cpath d='M9.5 10.5v15M14.5 10.5v15M19.5 10.5v15M24.5 10.5v15M7.5 14.5h19M7.5 21.5h19' stroke='%23ff48b0' stroke-width='2.6' stroke-linecap='round'/%3E%3Cpath d='M8 9v15M13 9v15M18 9v15M23 9v15M6 13h19M6 20h19' stroke='%2322201c' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -38,6 +38,7 @@
     <svg id="graph" role="group" aria-label="Modules and their imports">
       <defs>
         <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="8" height="8" class="hatch-bg"/><line x1="0" y1="0" x2="0" y2="8" class="hatch-line"/></pattern>
+        <pattern id="dots" width="6" height="6" patternUnits="userSpaceOnUse"><circle cx="3" cy="3" r="1.4" class="dot-fill"/></pattern>
         <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0 1L9 5L0 9z"/></marker>
         <marker id="ah-dep" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow dep" d="M0 1L9 5L0 9z"/></marker>
         <marker id="ah-use" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow use" d="M0 1L9 5L0 9z"/></marker>
@@ -76,9 +77,9 @@
     <div class="composer" id="composer">
       <div class="fence" id="fence"></div>
       <label class="clabel" for="prompt">Instruction</label>
-      <textarea id="prompt" rows="2" placeholder="e.g. Explain how this module works, or: add a test for an edge case"></textarea>
+      <textarea id="prompt" rows="2" placeholder="e.g. Explain how this module works, or: add a test for an edge case. Click a function above to mention it."></textarea>
       <div class="crow">
-        <span class="chint" id="chint"><kbd>Ctrl</kbd> <kbd>Enter</kbd> to run</span>
+        <span class="chint" id="chint"><kbd>Ctrl</kbd> <kbd>Enter</kbd> to send</span>
         <button class="btn quiet" id="forget" type="button" title="Forget this fence's agent session and run history">Clear runs</button>
         <button class="btn primary" id="send" type="button" disabled>Run</button>
       </div>

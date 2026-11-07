@@ -9,7 +9,7 @@ const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || "");
 
 const S = {
   projects: [], p: 0, graph: null, pos: {}, rows: [], view: "graph", selected: null, scope: new Set(), readOnly: false,
-  tab: "over", marks: { changed: new Set(), ripple: new Set(), stats: {} }, job: null, tasks: [], claude: null,
+  tab: "over", marks: { changed: new Set(), ripple: new Set(), stats: {} }, job: null, tasks: [], claude: null, fn: {},
   cam: { x: 0, y: 0, k: 1 }, camV: { x: 0, y: 0, k: 0 }, camTarget: null, raf: 0, userCam: false,
 };
 
@@ -34,14 +34,20 @@ async function boot() {
   const hp = new URLSearchParams(location.hash.slice(1));
   if (hp.get("p") && projects[+hp.get("p")]) S.p = +hp.get("p");
   $("#picker").value = S.p;
-  if (IS_MAC) $("#chint").innerHTML = "<kbd>⌘</kbd> <kbd>Enter</kbd> to run";
+  if (IS_MAC) $("#chint").innerHTML = "<kbd>⌘</kbd> <kbd>Enter</kbd> to send";
   await loadGraph(true);
   setView(hp.get("v") || store.get("modfence.view") || "graph");
-  if (hp.get("m") && mod(hp.get("m"))) { if (hp.get("tab")) S.tab = hp.get("tab"); select(hp.get("m")); }
+  if (hp.get("m") && mod(hp.get("m"))) {
+    if (hp.get("tab")) S.tab = hp.get("tab");
+    select(hp.get("m"));
+    const f = (hp.get("f") || "").split(/[+ ]/).filter(mod); // #...&f=a+b: open with that fence (and its run log)
+    if (f.length) { S.scope = new Set([hp.get("m"), ...f]); afterFenceChange(); }
+  }
 }
 
 async function loadGraph(fit) {
   S.graph = await api(`/api/graph?${q()}`);
+  S.fn = {};
   layout();
   drawGraph();
   renderAltView();
@@ -62,6 +68,7 @@ const moduleOf = (p) => { // mirrors analyze.module_of
   return d && !(own && (S.graph.split || []).includes(d)) ? d : own ? p : d || ".";
 };
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+const mdoc = (m) => m.doc || (S.graph.ai_purposes || {})[m.id] || "";  // the author's docstring, else a cached summary
 const maxLines = () => Math.max(1, ...S.graph.modules.map((m) => m.lines));
 
 function updateStats() {
@@ -157,7 +164,7 @@ function drawGraph() {
     hit.addEventListener("pointerenter", (ev) => showEdgeTip(ev, e));
     hit.addEventListener("pointermove", moveTip);
     hit.addEventListener("pointerleave", hideTip);
-    hit.addEventListener("click", () => { const r = e.receipts[0]; openFile(r.file, e.receipts.filter((x) => x.file === r.file).map((x) => x.line)); });
+    hit.addEventListener("click", () => select(e.target));
   });
   g.modules.forEach((m) => {
     const { x, y } = S.pos[m.id];
@@ -220,11 +227,11 @@ function stateWords(id, rel, focus) {
   const w = [];
   if (id === S.selected) w.push("selected");
   if (fenced(id)) w.push("editable");
-  if (focus && rel.dep.has(id)) w.push(`${shown(focus)} depends on it`);
+  if (focus && rel.dep.has(id)) w.push(`${shown(focus)} uses it`);
   if (focus && rel.use.has(id)) w.push(`uses ${shown(focus)}`);
   const st = S.marks.stats[id];
   if (S.marks.changed.has(id)) w.push(st ? `changed, ${st.plus} added and ${st.minus} removed lines` : "changed");
-  else if (S.marks.ripple.has(id)) w.push("imports changed code");
+  else if (S.marks.ripple.has(id)) w.push("uses changed code");
   return w;
 }
 function diffTag(id) { const st = S.marks.stats[id]; return st ? `+${st.plus} −${st.minus}` : ""; }
@@ -266,10 +273,10 @@ function hoverNode(id, on) {
 }
 function renderLegend(focus) {
   const items = [];
-  if (focus) items.push(["var(--select)", "", "selected"], ["var(--dep)", "", "depends on"], ["var(--use)", "", "used by"]);
+  if (focus) items.push(["var(--select)", "", "selected"], ["var(--dep)", "", "uses"], ["var(--use)", "", "used by"]);
   if (S.selected && !S.readOnly) items.push(["var(--fence)", "hatch", "editable (in the fence)"]);
   if (S.marks.changed.size) items.push(["var(--ok)", "", "changed by the last run"]);
-  if (S.marks.ripple.size) items.push(["var(--warn)", "", "imports changed code"]);
+  if (S.marks.ripple.size) items.push(["var(--warn)", "", "uses changed code"]);
   $("#legend").innerHTML = items.map(([c, cls, t]) => `<span><i class="${cls}" style="border-color:${c}"></i>${esc(t)}</span>`).join("");
 }
 
@@ -366,11 +373,13 @@ function wireCanvas() {
 }
 
 /* ---------------- edge tooltip (keyboard users get the same receipts in the panel) ---------------- */
+// What one module takes from another, by name: the functions and classes behind an import arrow.
+const takes = (e) => [...new Set(e.receipts.map((r) => r.name).filter(Boolean))];
 function showEdgeTip(ev, e) {
-  const t = $("#tip"), rs = e.receipts.slice(0, 6);
-  t.innerHTML = `<div class="h">${esc(shown(e.source))} imports ${esc(shown(e.target))} · ${plural(e.receipts.length, "import")}</div>`
-    + rs.map((r) => `<code>${esc(r.file)}:${r.line}  ${esc(r.code)}</code>`).join("")
-    + (e.receipts.length > rs.length ? `<code>… ${e.receipts.length - rs.length} more</code>` : "");
+  const t = $("#tip"), names = takes(e);
+  t.innerHTML = `<div class="h">${esc(shown(e.source))} uses ${esc(shown(e.target))}</div>`
+    + (names.length ? `<div class="tn">${names.slice(0, 12).map((n) => `<b class="mono">${esc(n)}</b>`).join(" ")}${names.length > 12 ? ` +${names.length - 12}` : ""}</div>` : `<div class="tn">the whole module</div>`)
+    + `<div class="tk">Click to open ${esc(shown(e.target))}</div>`;
   t.classList.add("show"); moveTip(ev);
 }
 function moveTip(ev) { const t = $("#tip"); t.style.left = Math.min(ev.clientX + 14, innerWidth - t.offsetWidth - 10) + "px"; t.style.top = Math.min(ev.clientY + 16, innerHeight - t.offsetHeight - 10) + "px"; }
@@ -432,15 +441,64 @@ function renderHeader() {
 }
 
 function relRows(ids, other, dir) {
-  if (!ids.length) return `<p class="none">${dir === "dep" ? "Imports nothing else in this project." : "No other module imports it."}</p>`;
-  const color = dir === "dep" ? "var(--dep)" : "var(--use)";
+  if (!ids.length) return `<p class="none">${dir === "dep" ? "Uses nothing else in this project." : "No other module uses it."}</p>`;
   return `<div class="rows">${ids.map((id) => {
     const e = S.graph.edges.find((x) => (dir === "dep" ? x.source === other && x.target === id : x.source === id && x.target === other));
-    const rs = e ? e.receipts : [];
-    return `<details class="rel"><summary><span class="row"><span class="sw" style="background:${color}"></span><span class="k">${esc(shown(id))}</span><span class="d"></span><span class="n">${plural(rs.length, "import")}</span></span></summary>
-      <div class="receipts">${rs.map((r) => `<button data-file="${esc(r.file)}" data-line="${r.line}"><b>${esc(r.file)}:${r.line}</b>  ${esc(r.code)}</button>`).join("")}
-      <button data-go="${esc(id)}">Open ${esc(shown(id))} →</button></div></details>`;
+    const names = e ? takes(e) : [];
+    return `<button class="row rel" data-go="${esc(id)}"><span class="sw ${dir}"></span><span class="k">${esc(shown(id))}</span>
+      <span class="d mono">${names.length ? esc(clip(names.join(", "), 90)) : "the whole module"}</span></button>`;
   }).join("")}</div>`;
+}
+
+/* The module as functions: the finest grain modfence shows. Purposes are the author's docstrings, else a cached
+   one-sentence summary that the server asks a small model for the first time a module is opened. */
+const describing = new Set();
+async function moduleFns(id, describe) {
+  if (!S.fn[id]) { try { S.fn[id] = await api(`/api/module?${q("&m=" + encodeURIComponent(id))}`); } catch { return null; } }
+  const v = S.fn[id];
+  if (describe && S.claude && !describing.has(id) && (v.undescribed || !v.purpose)) {
+    describing.add(id); paintFns(id);
+    try {
+      const r = await api(`/api/describe?${q()}`, { module: id });
+      S.fn[id] = r;
+      if (r.purpose_source === "ai") { (S.graph.ai_purposes ||= {})[id] = r.purpose; renderAltView(); }
+      if (r.error) toast(`Could not describe the functions: ${r.error}`, false);
+    } catch (e) { toast(`Could not describe the functions: ${e.message}`, false); }
+    describing.delete(id);
+  }
+  return S.fn[id];
+}
+const AI_TAG = '<i class="ai" title="Written by a small model from the code; the author wrote no docstring">AI</i>';
+function fnRows(v) {
+  const byFile = {};
+  v.functions.forEach((f) => (byFile[f.file] ||= []).push(f));
+  const busy = describing.has(v.module);
+  return Object.entries(byFile).map(([file, fs]) => `<div class="fgroup"><div class="fhead mono">${esc(file.split("/").pop())}<span>${plural(fs.length, "unit")}</span></div>
+    ${fs.map((f) => {
+      const short = f.kind === "method" ? f.name.split(".").pop() : f.name;
+      const call = f.kind === "def" || f.kind === "method";
+      const ref = `\`${f.name}${call ? "()" : ""}\` in ${f.file}`;
+      const desc = f.purpose ? esc(f.purpose) + (f.source === "ai" ? " " + AI_TAG : "") : busy ? '<span class="wait">Describing…</span>' : '<span class="wait">No description</span>';
+      return `<button type="button" class="fn ${f.kind}${short.startsWith("_") ? " private" : ""}" data-ref="${esc(ref)}" title="Insert into the instruction">
+        <span class="fname mono">${f.kind === "class" || f.kind === "const" ? `<em>${f.kind}</em> ` : ""}${esc(short)}${call ? `<span class="args">(${esc(f.args)})</span>` : ""}</span>
+        <span class="fdesc">${desc}</span>
+        ${f.used_by.length ? `<span class="fuse mono" title="Imported by ${esc(f.used_by.map(shown).join(", "))}">${f.used_by.length} ↗</span>` : ""}</button>`;
+    }).join("")}</div>`).join("") || `<p class="none">No functions or classes.</p>`;
+}
+function paintFns(id) {
+  const box = $("#fns"), v = S.fn[id];
+  if (!box || S.selected !== id || !v) return;
+  box.innerHTML = fnRows(v);
+  box.querySelectorAll("[data-ref]").forEach((b) => (b.onclick = () => insertRef(b.dataset.ref)));
+  const u = v.functions.filter((f) => !f.purpose).length;
+  $("#fncount").textContent = `${plural(v.functions.length, "unit")}${u && !describing.has(id) ? `, ${u} undescribed` : ""}`;
+  if (v.purpose && !mod(id).doc) $("#mdoc").innerHTML = esc(v.purpose) + " " + AI_TAG;
+}
+function insertRef(text) {
+  const ta = $("#prompt"), s = ta.selectionStart ?? ta.value.length;
+  const pad = s && !/\s$/.test(ta.value.slice(0, s)) ? " " : "";
+  ta.setRangeText(pad + text + " ", s, ta.selectionEnd ?? s, "end");
+  ta.focus(); autosize();
 }
 
 function renderOverview() {
@@ -448,18 +506,20 @@ function renderOverview() {
   const { dep, use } = related(m.id);
   const tasks = S.tasks.filter((t) => t.modules.includes(m.id));
   $("#v-over").innerHTML = `
-    <div class="sect"><h3>Depends on <small>what ${esc(label(m.id))} imports</small></h3>${relRows([...dep], m.id, "dep")}</div>
-    <div class="sect"><h3>Used by <small>what imports ${esc(label(m.id))}</small></h3>${relRows([...use], m.id, "use")}</div>
     ${tasks.length ? `<div class="sect"><h3>Exercises <small>from TASKS.md</small></h3><div class="rows">${tasks.map((t, i) => `<button class="task" data-task="${i}"><b>${esc(t.title)}</b><span class="lv">${esc(t.level)}</span><p>${esc(clip(t.summary, 170))}</p></button>`).join("")}</div></div>` : ""}
-    <div class="sect"><h3>Files</h3><div class="rows">${m.files.map((f) => {
+    <div class="sect"><h3>Functions <small id="fncount"></small></h3><div id="fns"><p class="none">Loading…</p></div></div>
+    <div class="sect"><h3>Uses <small>what ${esc(label(m.id))} takes from other modules</small></h3>${relRows([...dep], m.id, "dep")}</div>
+    <div class="sect"><h3>Used by <small>who takes what from ${esc(label(m.id))}</small></h3>${relRows([...use], m.id, "use")}</div>
+    <details class="src"><summary>Source files</summary><div class="rows">${m.files.map((f) => {
       const fi = S.graph.files[f];
-      return `<button class="row" data-file="${esc(f)}"><span class="k">${esc(f.split("/").pop())}</span><span class="d">${esc(fi.error || fi.doc)}</span><span class="n">${fi.lines}</span></button>`;
-    }).join("")}</div></div>
-    ${m.names.length ? `<div class="sect"><h3>Public names</h3><div class="names">${m.names.slice(0, 60).map((n) => `<span><em>${n.kind}</em> ${esc(n.name)}</span>`).join("")}</div></div>` : ""}`;
+      return `<button class="row" data-file="${esc(f)}"><span class="k">${esc(f.split("/").pop())}</span><span class="d">${esc(fi.error || "")}</span><span class="n">${fi.lines} ln</span></button>`;
+    }).join("")}</div></details>`;
   const v = $("#v-over");
   v.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => select(b.dataset.go)));
-  v.querySelectorAll("[data-file]").forEach((b) => (b.onclick = () => openFile(b.dataset.file, b.dataset.line ? [+b.dataset.line] : [])));
+  v.querySelectorAll("[data-file]").forEach((b) => (b.onclick = () => openFile(b.dataset.file)));
   v.querySelectorAll("[data-task]").forEach((b) => (b.onclick = () => useTask(tasks[+b.dataset.task])));
+  const id = m.id;
+  moduleFns(id).then(() => { paintFns(id); return moduleFns(id, true); }).then(() => paintFns(id));
 }
 
 const X_ICON = '<svg viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l6 6M8 2L2 8"/></svg>';
@@ -538,7 +598,9 @@ async function loadTalk() {
   try { runs = (await api(`/api/history?${q("&scope=" + encodeURIComponent(key))}`)).runs; } catch { /* none */ }
   if (key !== scopeKey()) return;
   v.innerHTML = "";
-  runs.forEach((r) => { const view = newRun(r.prompt, r.scope, r.at, r.read_only); r.events.forEach((e) => view.add(e, true)); view.flush(); });
+  runs.forEach((r) => { const view = newRun(r.prompt, r.scope, r.at, r.read_only, r.phase); r.events.forEach((e) => view.add(e, true)); view.flush(); });
+  const plans = v.querySelectorAll(".plan [data-build]"); // only the newest run's plan can still be built
+  plans.forEach((b, i) => (b.disabled = i < plans.length - 1 || v.lastElementChild !== b.closest(".run")));
   $("#tcount").textContent = runs.length ? String(runs.length) : "";
   if (S.job && !S.job.done && S.job.key === key) S.job.view = attachLive(S.job);
   if (!v.children.length) renderStarters();
@@ -549,9 +611,9 @@ function renderStarters() {
   const starters = [
     ["Read only", `Explain what ${name} does, how data flows through it, and which file I should read first.`, true],
     ["Read only", `Find one bug or unhandled edge case in ${name}. Point to the exact line and explain why, but do not fix it.`, true],
-    ["Edit", `Add one test for ${name} that covers a case the current tests miss, and run the tests.`, false],
+    ["Plan, then build", `Add one test for ${name} that covers a case the current tests miss, and run the tests.`, false],
   ];
-  $("#v-talk").innerHTML = `<p class="none">No runs in this fence yet. A run is one instruction: the agent reads the project, edits only inside the fence, and you review every change it made.</p>
+  $("#v-talk").innerHTML = `<p class="none">No runs in this fence yet. An edit starts with a plan: the agent reads the project, asks what it needs to know and lists the functions it will touch. You answer, press Build, and review every function it changed.</p>
     <div class="starters">${starters.map(([k, t], i) => `<button type="button" data-st="${i}"><b>${k}</b>${esc(t)}</button>`).join("")}</div>`;
   $("#v-talk").querySelectorAll("[data-st]").forEach((b) => (b.onclick = () => {
     const [, text, ro] = starters[+b.dataset.st];
@@ -559,7 +621,7 @@ function renderStarters() {
   }));
 }
 function attachLive(job) {
-  const view = newRun(job.prompt, job.scope, job.at, job.readOnly);
+  const view = newRun(job.prompt, job.scope, job.at, job.readOnly, job.phase);
   job.events.forEach((e) => view.add(e, true));
   view.flush();
   return view;
@@ -567,11 +629,12 @@ function attachLive(job) {
 function scrollTalk() { const b = $("#pbody"); requestAnimationFrame(() => (b.scrollTop = b.scrollHeight)); }
 const hhmm = (t) => (t ? new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now");
 
-function newRun(prompt, scope, at, readOnly) {
+function newRun(prompt, scope, at, readOnly, phase) {
   $("#v-talk .starters")?.remove(); $("#v-talk > p.none")?.remove();
   const root = document.createElement("article");
-  root.className = "run";
-  root.innerHTML = `<div class="rhead"><span class="mono">${hhmm(at)}</span><span>${readOnly ? "read only" : "can edit"} <span class="mono">${esc(scope.map(shown).join(", "))}</span></span><span class="st live">Running</span></div>
+  root.className = `run${phase ? " " + phase : ""}`;
+  const what = phase === "plan" ? "planning, read only" : phase === "build" ? "building, can edit" : readOnly ? "read only" : "can edit";
+  root.innerHTML = `<div class="rhead"><span class="mono">${hhmm(at)}</span><span>${what} <span class="mono">${esc(scope.map(shown).join(", "))}</span></span><span class="st live">${phase === "plan" ? "Planning" : "Running"}</span></div>
     <p class="instr">${esc(prompt)}</p><div class="rbody"></div>`;
   $("#v-talk").appendChild(root);
   const body = $(".rbody", root), st = $(".rhead .st", root);
@@ -612,15 +675,22 @@ function newRun(prompt, scope, at, readOnly) {
         const d = document.createElement("div"); d.className = "error"; d.textContent = e.text; body.appendChild(d);
       } else if (e.kind === "result") {
         view.result = e;
+      } else if (e.kind === "plan") {
+        if (textEl) { renderText(); textEl = null; }
+        stepsEl = null;
+        renderPlan(body, e.plan, prompt, scope);
+      } else if (e.kind === "check") {
+        view.check = e;
       } else if (e.kind === "changes") {
         view.changes = e;
       } else if (e.kind === "done") {
         if (textEl) { renderText(); textEl = null; }
         body.querySelectorAll(".step .st").forEach((x) => { if (x.textContent === "…") x.textContent = "stopped"; });
-        const r = view.result;
-        st.className = `st ${r && r.ok ? "ok" : "bad"}`;
-        st.textContent = r ? (r.ok ? `Done${r.duration_s ? ` · ${r.duration_s}s` : ""}` : "Stopped with an error") : "Stopped";
-        renderChanges(root, view.changes, r);
+        const r = view.result, quiet = phase === "plan" && !(view.changes && view.changes.files && view.changes.files.length);
+        st.className = `st ${r && r.ok ? (view.check && !view.check.ok ? "bad" : "ok") : "bad"}`;
+        st.textContent = r ? (r.ok ? `${phase === "plan" ? "Planned" : view.check && !view.check.ok ? "Done, check failed" : "Done"}${r.duration_s ? ` · ${r.duration_s}s` : ""}` : "Stopped with an error") : "Stopped";
+        if (quiet) { const f = document.createElement("div"); f.className = "rfoot"; f.innerHTML = r ? `<span class="meta">${r.turns ? plural(r.turns, "turn") : ""}${r.cost_usd != null ? ` · $${r.cost_usd.toFixed(3)}` : ""}</span>` : ""; root.appendChild(f); }
+        else renderChanges(root, view.changes, r, view.check, !replay);
       }
       if (!replay) scrollTalk();
     },
@@ -630,21 +700,28 @@ function newRun(prompt, scope, at, readOnly) {
   return view;
 }
 
-function renderChanges(root, c, r) {
+/* A run's changes, read as functions: what was added, changed or removed, and what each now does. The line diff
+   is one click further, for whoever wants it. */
+const SYM = { added: "+", changed: "~", removed: "−" };
+function renderChanges(root, c, r, check, live) {
   const files = c && c.files ? c.files : c ? [...c.added, ...c.modified, ...c.deleted].map((p) => ({ path: p, status: "modified", plus: null, minus: null, outside: c.outside_scope.includes(p), revertible: false })) : [];
   const box = document.createElement("div");
   box.className = "changes";
   const outside = files.filter((f) => f.outside);
   const rev = files.some((f) => f.revertible) && c && c.run;
+  const units = (f) => f.funcs == null ? (f.path.endsWith(".py") && f.status !== "deleted" ? `<p class="none">Could not read its functions.</p>` : "")
+    : f.funcs.map((u) => `<div class="cf ${u.status}"><span class="sym" aria-label="${u.status}">${SYM[u.status]}</span><span class="mono nm">${esc(u.name)}${u.kind === "def" || u.kind === "method" ? "()" : ""}</span><span class="fdesc" data-unit="${esc(f.path + "::" + u.name)}"></span></div>`).join("");
   box.innerHTML = (outside.length ? `<div class="banner bad">${plural(outside.length, "file")} changed outside the fence: <span class="mono">${esc(outside.map((f) => f.path).join(", "))}</span>${rev ? `<button class="btn" type="button" data-rev-out>Revert those</button>` : ""}</div>` : "")
-    + (files.length ? `<table><thead><tr><th>Changed file</th><th>Lines</th><th></th></tr></thead><tbody>${files.map((f, i) => `
-      <tr><td class="f" title="${esc(f.path)}">${esc(f.path)}${f.outside ? '<span class="out">outside fence</span>' : ""}${f.status !== "modified" ? ` <span class="out" style="color:var(--text-3)">${f.status}</span>` : ""}</td>
-      <td class="s">${f.plus == null ? "N/A" : `<span class="plus">+${f.plus}</span> <span class="minus">−${f.minus}</span>`}</td>
-      <td class="a">${c.run ? `<button class="btn" type="button" data-diff="${i}" aria-expanded="false">Diff</button>` : ""}</td></tr>`).join("")}</tbody></table>`
+    + (files.length ? files.map((f, i) => `<div class="cfile${f.outside ? " out" : ""}">
+        <div class="cfh"><span class="mono p" title="${esc(f.path)}">${esc(f.path)}</span>${f.outside ? '<span class="tagout">outside fence</span>' : ""}${f.status !== "modified" ? `<span class="st">${f.status}</span>` : ""}
+          <span class="s mono">${f.plus == null ? "N/A" : `<span class="plus">+${f.plus}</span> <span class="minus">−${f.minus}</span>`}</span>
+          ${c.run ? `<button class="btn quiet" type="button" data-diff="${i}" aria-expanded="false" title="Show the line diff">Source</button>` : ""}</div>
+        ${units(f)}</div>`).join("")
       : `<p class="none" style="padding:8px 10px">No files changed.</p>`);
   const foot = document.createElement("div");
   foot.className = "rfoot";
-  foot.innerHTML = (c && c.ripple.length ? `<div class="ripple">Imports the changed code: ${c.ripple.map((m) => `<button type="button" data-go="${esc(m)}">${esc(shown(m))}</button>`).join("")} run the tests to check them.</div>` : "")
+  foot.innerHTML = (check ? `<div class="chk ${check.ok ? "ok" : "bad"}">${check.ok ? "Done check passed" : "Done check failed"}: ${esc(check.summary || "project tests")}${check.blocked ? `. The agent was sent back ${plural(check.blocked, "time")}.` : "."}</div>` : "")
+    + (c && c.ripple.length ? `<div class="ripple">Uses the changed code: ${c.ripple.map((m) => `<button type="button" data-go="${esc(m)}">${esc(shown(m))}</button>`).join("")} run the tests to check them.</div>` : "")
     + (files.length ? `<button class="btn" type="button" data-tests>Run tests</button>` : "")
     + (rev ? `<button class="btn" type="button" data-rev>Revert this run</button>` : "")
     + (r ? `<span class="meta">${r.turns ? plural(r.turns, "turn") : ""}${r.cost_usd != null ? ` · $${r.cost_usd.toFixed(3)}` : ""}</span>` : "");
@@ -655,20 +732,51 @@ function renderChanges(root, c, r) {
   $("[data-tests]", foot)?.addEventListener("click", runTests);
   $("[data-rev]", foot)?.addEventListener("click", () => revert(root, c.run, null, files.length));
   $("[data-rev-out]", box)?.addEventListener("click", () => revert(root, c.run, outside.map((f) => f.path), outside.length));
+  // What the changed functions do now. A live run asks for summaries of the new code; a replay shows what is cached.
+  const mods = [...new Set(files.filter((f) => f.funcs && f.funcs.length && f.status !== "deleted").map((f) => moduleOf(f.path)))].filter(mod);
+  mods.forEach((id) => moduleFns(id, live).then((v) => v && v.functions.forEach((u) => {
+    const cell = box.querySelector(`[data-unit="${CSS.escape(u.file + "::" + u.name)}"]`);
+    if (cell && u.purpose) cell.innerHTML = esc(u.purpose) + (u.source === "ai" ? " " + AI_TAG : "");
+  })));
 }
 async function toggleDiff(btn, run, path) {
-  const tr = btn.closest("tr");
-  if (tr.nextElementSibling && tr.nextElementSibling.classList.contains("diffrow")) {
-    tr.nextElementSibling.remove(); btn.setAttribute("aria-expanded", "false"); btn.textContent = "Diff"; return;
-  }
+  const box = btn.closest(".cfile"), open = $("pre.diff", box);
+  if (open) { open.remove(); btn.setAttribute("aria-expanded", "false"); btn.textContent = "Source"; return; }
   let diff;
   try { ({ diff } = await api(`/api/diff?${q(`&run=${encodeURIComponent(run)}&path=${encodeURIComponent(path)}`)}`)); }
   catch (e) { toast(`Could not load the diff: ${e.message}`, false); return; }
-  const row = document.createElement("tr");
-  row.className = "diffrow";
-  row.innerHTML = `<td colspan="3"><pre class="diff">${diff.split("\n").map((l) => `<span class="${l.startsWith("@@") ? "hunk" : l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : ""}">${esc(l) || " "}</span>`).join("")}</pre></td>`;
-  tr.after(row);
-  btn.setAttribute("aria-expanded", "true"); btn.textContent = "Hide";
+  const pre = document.createElement("pre");
+  pre.className = "diff";
+  pre.innerHTML = diff.split("\n").map((l) => `<span class="${l.startsWith("@@") ? "hunk" : l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : ""}">${esc(l) || " "}</span>`).join("");
+  box.appendChild(pre);
+  btn.setAttribute("aria-expanded", "true"); btn.textContent = "Hide source";
+}
+
+/* The plan card: a planning run's questions (recommended answer preselected), the functions it means to touch, and
+   how we will know it works. Build resumes the same session, so nothing the planner read is read again. */
+function renderPlan(body, p, prompt, scope) {
+  const card = document.createElement("div");
+  card.className = "plan";
+  const plan = p.plan || {}, fns = Array.isArray(plan.functions) ? plan.functions : [];
+  const pick = p.questions.map((x) => (Number.isInteger(x.recommended) && x.options[x.recommended] !== undefined ? x.recommended : 0));
+  card.innerHTML = `<div class="ph">Plan</div>
+    <p class="goal">${esc(plan.goal || "")}</p>
+    ${p.questions.length ? `<ol class="pq">${p.questions.map((x, qi) => `<li><b>${esc(x.q)}</b><div class="opts" role="radiogroup" aria-label="${esc(x.q)}">${x.options.map((o, oi) => `<button type="button" role="radio" data-q="${qi}" data-o="${oi}" aria-checked="${oi === pick[qi]}">${esc(o)}${oi === x.recommended ? '<small>recommended</small>' : ""}</button>`).join("")}</div></li>`).join("")}</ol>` : `<p class="none">No open questions.</p>`}
+    ${fns.length ? `<div class="pf">${fns.map((f) => `<div class="cf ${f.change === "add" ? "added" : f.change === "remove" ? "removed" : "changed"}"><span class="sym">${SYM[f.change === "add" ? "added" : f.change === "remove" ? "removed" : "changed"]}</span><span class="mono nm">${esc(f.name || "")}</span><span class="fdesc">${esc(f.why || "")} <span class="mono fl">${esc(String(f.file || "").split("/").pop())}</span></span></div>`).join("")}</div>` : ""}
+    <p class="pd"><b>Done when:</b> ${esc(plan.done || "N/A")}. <span class="sub">Before the agent may finish, the project's tests run; if they fail it is sent back once.</span></p>
+    <div class="pa"><button class="btn primary" type="button" data-build>Build</button><span class="sub">Or write a different instruction below.</span></div>`;
+  body.appendChild(card);
+  card.querySelectorAll("[role=radio]").forEach((b) => (b.onclick = () => {
+    pick[+b.dataset.q] = +b.dataset.o;
+    card.querySelectorAll(`[data-q="${b.dataset.q}"]`).forEach((x) => x.setAttribute("aria-checked", String(x === b)));
+  }));
+  $("[data-build]", card).onclick = () => {
+    if (S.job && !S.job.done) { toast("Wait for the current run to finish.", false); return; }
+    const answers = p.questions.map((x, qi) => `- ${x.q} ${x.options[pick[qi]]}`).join("\n");
+    const text = `Build the plan we agreed on.\nRequest: ${prompt}${answers ? `\nAnswers:\n${answers}` : ""}\nDone when: ${plan.done || "the tests pass"}`;
+    document.querySelectorAll(".plan [data-build]").forEach((x) => (x.disabled = true));
+    startRun(text, scope, false, "build");
+  };
 }
 async function revert(root, run, paths, n) {
   if (S.job && !S.job.done) { toast("Wait for the current run to finish.", false); return; }
@@ -732,26 +840,31 @@ function syncSend() {
   const running = S.job && !S.job.done;
   const b = $("#send");
   b.classList.toggle("stop", !!running);
-  b.textContent = running ? "Stop" : S.readOnly ? "Explain" : "Run";
+  b.textContent = running ? "Stop" : S.readOnly ? "Explain" : "Plan";
   b.disabled = !running && (!$("#prompt").value.trim() || !S.claude);
 }
 
+// Fence coding: an edit starts as a read-only plan you answer and approve; Build then edits inside the fence.
 async function send() {
   if (S.job && !S.job.done) { await api("/api/cancel", { job: S.job.id }).catch(() => {}); return; }
   const prompt = $("#prompt").value.trim();
   if (!prompt || !S.scope.size || !S.claude) return;
-  const scope = [...S.scope], readOnly = S.readOnly;
+  if (await startRun(prompt, [...S.scope], S.readOnly, S.readOnly ? null : "plan")) { $("#prompt").value = ""; autosize(); }
+}
+async function startRun(prompt, scope, readOnly, phase) {
   let res;
-  try { res = await api(`/api/ask?${q()}`, { prompt, scope, read_only: readOnly }); }
-  catch (e) { toast(e.message, false); return; }
-  $("#prompt").value = ""; autosize();
-  S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; paintSelection();
-  const job = { id: res.job, prompt, scope, readOnly, key: scopeKey(), events: [], done: false, at: Date.now() / 1000 };
+  try { res = await api(`/api/ask?${q()}`, { prompt, scope, read_only: readOnly, phase }); }
+  catch (e) { toast(e.message, false); return false; }
+  if (phase !== "plan") { S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; paintSelection(); }
+  const key = [...scope].sort().join("+");
+  if (key !== scopeKey()) { S.scope = new Set(scope); afterFenceChange(); }
+  const job = { id: res.job, prompt, scope, readOnly, phase, key, events: [], done: false, at: Date.now() / 1000 };
   S.job = job;
   setTab("talk");
-  job.view = newRun(prompt, scope, job.at, readOnly);
+  job.view = newRun(prompt, scope, job.at, readOnly, phase);
   syncSend(); showRunbar();
   listen(job);
+  return true;
 }
 function listen(job) {
   const es = new EventSource(`/api/events?job=${job.id}&from=${job.events.length}`);
@@ -766,7 +879,8 @@ function listen(job) {
       job.done = true; es.close(); syncSend(); showRunbar();
       if (job.key === scopeKey()) $("#tcount").textContent = String(Number($("#tcount").textContent || 0) + 1);
       const r = job.events.find((x) => x.kind === "result");
-      toast(r && r.ok ? "Run finished. Review the changes in the Runs tab." : "Run stopped.", !!(r && r.ok));
+      const planned = job.events.some((x) => x.kind === "plan");
+      toast(!(r && r.ok) ? "Run stopped." : planned ? "Plan ready. Answer the questions, then Build." : job.phase === "plan" ? "The planner did not return a plan; read its reply." : "Run finished. Review the changed functions in the Runs tab.", !!(r && r.ok));
     }
   };
   es.onerror = () => { es.close(); if (!job.done) setTimeout(() => listen(job), 800); };
@@ -780,7 +894,7 @@ function showRunbar() {
   if (!on) return;
   const draw = () => {
     const secs = Math.round(Date.now() / 1000 - job.at);
-    bar.innerHTML = `<span class="dot" aria-hidden="true"></span><span>Agent running · ${job.readOnly ? "read only" : "can edit"} <span class="mono">${esc(job.scope.map(shown).join(", "))}</span> · ${secs}s</span><button class="btn" type="button" id="rb-open">Show</button><button class="btn" type="button" id="rb-stop">Stop</button>`;
+    bar.innerHTML = `<span class="dot" aria-hidden="true"></span><span>Agent ${job.phase === "plan" ? "planning · read only" : job.readOnly ? "running · read only" : "building · can edit"} <span class="mono">${esc(job.scope.map(shown).join(", "))}</span> · ${secs}s</span><button class="btn" type="button" id="rb-open">Show</button><button class="btn" type="button" id="rb-stop">Stop</button>`;
     $("#rb-open").onclick = () => { select(job.scope[0]); S.scope = new Set(job.scope); afterFenceChange(); setTab("talk"); };
     $("#rb-stop").onclick = () => api("/api/cancel", { job: job.id }).catch(() => {});
   };
@@ -830,17 +944,20 @@ function showText(title, text) { $("#stitle").textContent = title; $("#scode").i
 function showHelp() {
   $("#stitle").textContent = "How modfence works";
   $("#scode").innerHTML = `<div class="help">
-    <p>modfence is for learning a codebase and practicing coding with an AI agent without losing track of what it changed. The agent is your own Claude Code; modfence decides what it may touch and shows you everything it did.</p>
-    <h3>A run in four steps</h3>
-    <ol><li><b>Pick a module.</b> Click it in any view, or press <kbd>/</kbd> and type its name.</li>
-      <li><b>Set the fence.</b> The selected module is editable. <kbd>Shift</kbd>-click adds more. Switch to <i>Read only</i> when you want explanations and hints, with no edits at all.</li>
-      <li><b>Give one instruction.</b> The agent reads the whole project, but a hook blocks every edit outside the fence.</li>
-      <li><b>Review.</b> Each run lists the changed files with added and removed lines. Open the diff, run the tests, or revert the run.</li></ol>
-    <h3>Words on the screen</h3>
-    <dl><dt>fence</dt><dd>The modules the agent may edit in the next run (teal, hatched).</dd>
-      <dt>depends on</dt><dd>Modules this one imports (blue). Hover an arrow to see the exact import lines.</dd>
-      <dt>used by</dt><dd>Modules that import this one (violet). Changing its public names can break them.</dd>
-      <dt>imports changed code</dt><dd>After a run: modules that depend on what changed (amber). Run the tests.</dd>
+    <p>modfence is for fence coding: working with an AI agent on a codebase you read as modules and functions, not lines. The agent is your own Claude Code; modfence decides what it may touch and shows you, function by function, what it did.</p>
+    <h3>An edit in five steps</h3>
+    <ol><li><b>Pick a module.</b> Click it in any view, or press <kbd>/</kbd> and type its name. Its functions are listed with what each one does.</li>
+      <li><b>Set the fence.</b> The selected module is editable. <kbd>Shift</kbd>-click adds more. Switch to <i>Read only</i> for explanations, with no edits at all.</li>
+      <li><b>Say what you want.</b> Click a function to mention it. Press <i>Plan</i>: the agent reads the project, asks what it needs to decide, and lists the functions it will touch.</li>
+      <li><b>Answer and build.</b> Pick the answers (its recommendation is preselected) and press <i>Build</i>. A hook blocks every edit outside the fence; before the agent may finish, the project's tests run, and if they fail it is sent back once.</li>
+      <li><b>Review.</b> Each run lists the functions added, changed and removed, and what they now do. The line diff is behind <i>Source</i>. Run the tests or revert the run.</li></ol>
+    <h3>Inks on the screen</h3>
+    <dl><dt>fence</dt><dd>The modules the agent may edit (pink, hatched).</dd>
+      <dt>uses</dt><dd>Modules this one takes functions from (blue). Hover an arrow to see which names.</dd>
+      <dt>used by</dt><dd>Modules that take functions from this one (orange). Changing those functions can break them.</dd>
+      <dt>changed</dt><dd>Changed by the last run (green dots).</dd>
+      <dt>uses changed code</dt><dd>After a run: modules that use what changed (yellow, dashed). Run the tests.</dd>
+      <dt>AI</dt><dd>A one-line description written by a small model because the author wrote no docstring. Cached until the file changes.</dd>
       <dt>layers</dt><dd>Modules that import others sit above the ones they import. The bottom layer imports nothing in the project.</dd></dl>
     <h3>Keys</h3>
     <dl><dt>/</dt><dd>Find a module</dd><dt>1 2 3 4</dt><dd>Graph, Layers, Outline, Map</dd><dt>${IS_MAC ? "⌘" : "Ctrl"} Enter</dt><dd>Run the instruction</dd><dt>Esc</dt><dd>Close the panel or this sheet</dd><dt>?</dt><dd>This help</dd></dl></div>`;
@@ -882,7 +999,7 @@ function wireSearch() {
   const close = () => { list.hidden = true; input.setAttribute("aria-expanded", "false"); };
   const draw = () => {
     const t = input.value.trim().toLowerCase();
-    hits = S.graph.modules.filter((m) => !t || m.id.toLowerCase().includes(t) || (m.doc || "").toLowerCase().includes(t)).slice(0, 12);
+    hits = S.graph.modules.filter((m) => !t || m.id.toLowerCase().includes(t) || mdoc(m).toLowerCase().includes(t)).slice(0, 12);
     at = Math.min(at, Math.max(0, hits.length - 1));
     list.innerHTML = hits.map((m, i) => `<li role="option" id="fo${i}" aria-selected="${i === at}" data-id="${esc(m.id)}">${esc(shown(m.id))}<span>${m.lines} ln</span></li>`).join("") || `<li aria-disabled="true">No module matches</li>`;
     list.hidden = false; input.setAttribute("aria-expanded", "true");

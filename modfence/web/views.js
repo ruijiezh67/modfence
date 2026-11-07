@@ -62,12 +62,12 @@ function rowName(row, ri, rows) {
 }
 function counts(id) {
   const { dep, use } = related(id);
-  return `<span title="depends on ${dep.size}"><i class="sw dep"></i>${dep.size}</span><span title="used by ${use.size}"><i class="sw use"></i>${use.size}</span>`;
+  return `<span title="uses ${dep.size}"><i class="sw dep"></i>${dep.size}</span><span title="used by ${use.size}"><i class="sw use"></i>${use.size}</span>`;
 }
 function cardBody(m) {
   const pre = parent(m.id);
   return `<div class="ct"><b class="mono">${esc(label(m.id))}</b>${pre ? `<span class="pre mono">${esc(pre)}/</span>` : ""}<span class="badge mono" data-badge></span></div>
-    <div class="cd">${esc(m.doc || "No docstring")}</div>
+    <div class="cd">${esc(mdoc(m) || "Not described yet")}</div>
     <div class="cm mono"><span>${plural(m.files.length, "file")}</span><span>${m.lines} ln</span>${counts(m.id)}</div>`;
 }
 const cardAttrs = (id, cls) => `class="mcard ${cls}${mod(id).kind === "tests" ? " tests" : ""}" tabindex="0" role="button" data-id="${esc(id)}" style="view-transition-name:${vtName(id)}"`;
@@ -83,7 +83,6 @@ function wireCards(box) {
     c.addEventListener("blur", () => hoverNode(id, false));
   });
   box.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", (ev) => { ev.stopPropagation(); select(b.dataset.go); }));
-  box.querySelectorAll("[data-file]").forEach((b) => b.addEventListener("click", (ev) => { ev.stopPropagation(); openFile(b.dataset.file); }));
   box.querySelector("[data-maptests]")?.addEventListener("click", () => { S.mapTests = !S.mapTests; store.set("modfence.maptests", S.mapTests ? "1" : ""); transition(renderAltView); });
   box.onclick = (ev) => { if (!ev.target.closest(".mcard,button") && S.selected) closePanel(); };
 }
@@ -128,7 +127,7 @@ function layersHTML() {
       <div class="blab"><b>${esc(rowName(row, ri, rows))}</b><span class="mono">${row.length}</span></div>
       <div class="tiles">${row.map((id) => `<div ${cardAttrs(id, "tile")}>${cardBody(mod(id))}</div>`).join("")}</div>
     </section>`).join("")}
-    <p class="foot">Each layer imports only from layers below it. Hover a module: blue modules are what it depends on, violet modules use it.</p></div>`;
+    <p class="foot">Each layer uses only layers below it. Hover a module to see what it uses and who uses it.</p></div>`;
 }
 
 /* ---------- Outline: the project as a document ---------- */
@@ -140,14 +139,14 @@ function outlineHTML() {
     const m = mod(id), { dep, use } = related(id);
     const flist = m.files.map((f) => {
       const fi = g.files[f], names = fi.names.slice(0, 8).map((n) => `<code>${esc(n.name)}</code>`).join(" ");
-      return `<li><button class="fl mono" data-file="${esc(f)}">${esc(f.split("/").pop())}</button><span>${esc(fi.error || fi.doc || "")}</span>${names ? `<div class="nm">${names}</div>` : ""}</li>`;
+      return `<li><span class="fl mono">${esc(f.split("/").pop())}</span><span>${esc(fi.error || fi.doc || "")}</span>${names ? `<div class="nm">${names}</div>` : ""}</li>`;
     }).join("");
     return `<section ${cardAttrs(id, "msec")}>
       <div class="sh"><h2 class="mono">${esc(shown(id))}</h2><span class="badge mono" data-badge></span><span class="st mono">${plural(m.files.length, "file")} · ${m.lines} ln</span></div>
-      <p class="sd">${esc(m.doc || "No docstring.")}</p>
-      <div class="rel"><span class="k">Depends on</span>${chips([...dep], "dep")}</div>
+      <p class="sd">${esc(mdoc(m) || "Not described yet.")}</p>
+      <div class="rel"><span class="k">Uses</span>${chips([...dep], "dep")}</div>
       <div class="rel"><span class="k">Used by</span>${chips([...use], "use")}</div>
-      <details><summary>${plural(m.files.length, "file")} and public names</summary><ul>${flist}</ul></details>
+      <details><summary>${plural(m.files.length, "file")} and their public names</summary><ul>${flist}</ul></details>
     </section>`;
   };
   return `<article class="doc">
@@ -188,7 +187,7 @@ function renderMap(box) {
       const m = mod(r.id), small = r.w < 140 || r.h < 80, tiny = r.w < 70 || r.h < 40;
       return `<div ${cardAttrs(r.id, `cell${small ? " small" : ""}${tiny ? " tiny" : ""}`)} title="${esc(shown(r.id))} · ${m.lines} lines" data-pos="${r.x},${r.y},${r.w},${r.h}">
         <div class="ct"><b class="mono">${esc(label(r.id))}</b><span class="badge mono" data-badge></span></div><div class="cm mono"><span>${m.lines} ln</span></div>
-        ${small ? "" : `<div class="cd">${esc(m.doc || "")}</div>`}</div>`;
+        ${small ? "" : `<div class="cd">${esc(mdoc(m))}</div>`}</div>`;
     }).join("")}</div>`;
   box.querySelectorAll(".cell").forEach((c) => { const [x, y, w, h] = c.dataset.pos.split(",").map(Number); Object.assign(c.style, { left: x + "px", top: y + "px", width: w + "px", height: h + "px" }); });
 }
