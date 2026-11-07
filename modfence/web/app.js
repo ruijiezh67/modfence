@@ -763,7 +763,7 @@ function renderPlan(body, p, prompt, scope) {
     <p class="goal">${esc(plan.goal || "")}</p>
     ${p.questions.length ? `<ol class="pq">${p.questions.map((x, qi) => `<li><b>${esc(x.q)}</b><div class="opts" role="radiogroup" aria-label="${esc(x.q)}">${x.options.map((o, oi) => `<button type="button" role="radio" data-q="${qi}" data-o="${oi}" aria-checked="${oi === pick[qi]}">${esc(o)}${oi === x.recommended ? '<small>recommended</small>' : ""}</button>`).join("")}</div></li>`).join("")}</ol>` : `<p class="none">No open questions.</p>`}
     ${fns.length ? `<div class="pf">${fns.map((f) => `<div class="cf ${f.change === "add" ? "added" : f.change === "remove" ? "removed" : "changed"}"><span class="sym">${SYM[f.change === "add" ? "added" : f.change === "remove" ? "removed" : "changed"]}</span><span class="mono nm">${esc(f.name || "")}</span><span class="fdesc">${esc(f.why || "")} <span class="mono fl">${esc(String(f.file || "").split("/").pop())}</span></span></div>`).join("")}</div>` : ""}
-    <p class="pd"><b>Done when:</b> ${esc(plan.done || "N/A")}. <span class="sub">Before the agent may finish, the project's tests run; if they fail it is sent back once.</span></p>
+    <p class="pd"><b>Done when:</b> ${esc(String(plan.done || "N/A").replace(/[.。]s*$/, ""))}. <span class="sub">Before the agent may finish, the project's tests run; if they fail it is sent back once.</span></p>
     <div class="pa"><button class="btn primary" type="button" data-build>Build</button><span class="sub">Or write a different instruction below.</span></div>`;
   body.appendChild(card);
   card.querySelectorAll("[role=radio]").forEach((b) => (b.onclick = () => {
