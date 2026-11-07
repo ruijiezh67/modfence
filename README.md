@@ -1,4 +1,4 @@
-# modfence
+<h1 align="center"><img src="docs/banner.svg" alt="modfence" width="720"></h1>
 
 **Vibe code one module at a time. Fence what the AI agent may edit, agree on a plan, and get every run back as a version you can read by function and undo.**
 

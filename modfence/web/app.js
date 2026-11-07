@@ -34,6 +34,7 @@ async function boot() {
   const hp = new URLSearchParams(location.hash.slice(1));
   if (hp.get("p") && projects[+hp.get("p")]) S.p = +hp.get("p");
   $("#picker").value = S.p;
+  $("#picker").hidden = projects.length < 2; // one project (the usual case): nothing to pick
   if (IS_MAC) $("#chint").innerHTML = "<kbd>⌘</kbd> <kbd>Enter</kbd> to send";
   await loadGraph(true);
   setView(hp.get("v") || store.get("modfence.view") || "graph");
