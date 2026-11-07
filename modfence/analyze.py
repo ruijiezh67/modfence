@@ -69,11 +69,25 @@ def _resolve(parts, files):
     return None
 
 
+_BODIES = ("body", "orelse", "finalbody", "handlers", "cases")
+
+
+def _statements(tree):
+    """Every statement, at any depth (inside functions, if, try, with, match ...). Imports are statements, so
+    skipping expressions finds the same imports as ast.walk at a fraction of the cost."""
+    stack = [tree]
+    while stack:
+        node = stack.pop()
+        yield node
+        for field in reversed(_BODIES):  # reversed pushes keep source order when popped
+            stack.extend(reversed(getattr(node, field, None) or ()))
+
+
 def imports_of(path, tree, files):
     """[(target_file, line, source_text)] for imports that resolve to files in this project."""
     here = path.split("/")[:-1]
     found = []
-    for node in ast.walk(tree):
+    for node in _statements(tree):
         targets = []
         if isinstance(node, ast.Import):
             targets = [a.name.split(".") for a in node.names]
