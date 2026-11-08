@@ -8,7 +8,7 @@ const store = { get(k) { try { return localStorage.getItem(k); } catch { return 
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || "");
 
 const S = {
-  projects: [], p: 0, graph: null, full: null, focus: "", pos: {}, rows: [], view: "graph", selected: null, scope: new Set(), readOnly: false,
+  projects: [], p: 0, graph: null, full: null, focus: "", level: null, roles: null, role: null, calls: null, pos: {}, rows: [], view: "graph", selected: null, scope: new Set(), readOnly: false,
   tab: "over", marks: { changed: new Set(), ripple: new Set(), stats: {} }, job: null, tasks: [], claude: null, fn: {},
   cam: { x: 0, y: 0, k: 1 }, camV: { x: 0, y: 0, k: 0 }, camTarget: null, raf: 0, userCam: false,
 };
@@ -50,7 +50,10 @@ async function loadGraph(fit) {
   if (!S.full) $("#stats").textContent = "Reading the project…"; // a big project's first scan takes seconds
   S.full = await api(`/api/graph?${q()}`);
   S.fn = {};
+  try { S.roles = await api(`/api/roles?${q()}`); } catch { S.roles = null; }
+  if (!S.level) S.level = S.roles && S.roles.roles.length ? "roles" : "modules";
   regroup();
+  if (S.roles && S.roles.status === "none" && S.full.modules.length > ROLE_AT && S.claude && !S.proposed) { S.proposed = true; proposeRoles(); }
   renderAltView();
   updateStats();
   if (fit) fitView(false);
@@ -110,23 +113,176 @@ function viewGraph(full, focus) {
   return { ...full, modules: modules.sort((x, y) => x.id.localeCompare(y.id)), edges: [...edges.values()] };
 }
 function regroup() {
-  S.graph = viewGraph(S.full, S.focus);
+  if (!(S.roles && S.roles.roles.length) && S.level !== "modules") S.level = "modules";
+  if (S.level === "funcs" && !S.calls) S.level = "parts";
+  S.hiddenLinks = 0;
+  S.graph = S.level === "roles" ? roleGraph() : S.level === "parts" ? partGraph(S.role) : S.level === "funcs" ? funcGraph() : viewGraph(S.full, S.focus);
+  document.body.dataset.level = S.level;
   layout();
   drawGraph();
-  const c = $("#crumbs"), big = S.full.modules.length > GROUP_AT;
-  c.hidden = !big;
-  if (!big) return;
-  const parts = S.focus ? S.focus.split("/") : [];
-  c.innerHTML = `<button type="button" data-f="">${esc(S.full.name)}</button>` + parts.map((p, i) => `<span>/</span><button type="button" data-f="${esc(parts.slice(0, i + 1).join("/"))}">${esc(p)}</button>`).join("")
-    + `<em>${plural(S.full.modules.length, "module")}: folders are grouped; click one to open it</em>`;
-  c.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => { S.focus = b.dataset.f; regroup(); fitView(); }));
+  renderCrumbs();
 }
+/* ---------------- levels: 1 roles → 2 parts of a role → 3 functions and classes ---------------- */
+// Roles are what the system does (observer, segmenter ...), proposed by modfence and confirmed or renamed by you.
+// A role's parts are the modules its files live in; the lowest level is a graph of functions and classes, across files.
+const ROLE_AT = 12; // ponytail: below this many modules the module graph already reads as roles, so none are proposed
+const rname = (rid) => (S.roles?.roles.find((r) => r.id === rid) || {}).name || rid;
+function fileRoles() {
+  const out = {};
+  (S.roles?.roles || []).forEach((r) => r.files.forEach((f) => (out[f] = r.id)));
+  (S.roles?.unassigned || []).forEach((f) => (out[f] = "?"));
+  return out;
+}
+function aggregate(nodeOf) { // edges between view nodes from the file-level import receipts
+  const edges = new Map();
+  S.full.edges.forEach((e) => e.receipts.forEach((r) => {
+    const a = nodeOf(r.file), b = nodeOf(r.target_file);
+    if (!a || !b || a === b) return;
+    const k = a + "\n" + b;
+    if (!edges.has(k)) edges.set(k, { source: a, target: b, receipts: [] });
+    edges.get(k).receipts.push(r);
+  }));
+  return [...edges.values()];
+}
+const KEEP_LINKS = 3; // ponytail: roles import each other freely; the 3 strongest links per node keep the picture readable
+function prune(edges) {
+  const by = new Map();
+  edges.forEach((e) => { if (!by.has(e.source)) by.set(e.source, []); by.get(e.source).push(e); });
+  const kept = [...by.values()].flatMap((l) => l.sort((a, b) => b.receipts.length - a.receipts.length).slice(0, KEEP_LINKS));
+  S.hiddenLinks = edges.length - kept.length;
+  return kept;
+}
+function roleNode(r, kind = "group") {
+  const lines = r.files.reduce((a, f) => a + (S.full.files[f]?.lines || 0), 0);
+  return { id: "role:" + r.id, role: r.id, kind: r.name === "shared" ? "tests" : kind, label: r.name, meta: plural(r.files.length, "file"),
+    files: r.files, lines, names: [], doc: r.purpose || "", members: [...new Set(r.files.map((f) => S.full.files[f].module))] };
+}
+function roleGraph() {
+  const fr = fileRoles(), rs = [...S.roles.roles];
+  if (S.roles.unassigned.length) rs.push({ id: "?", name: "not placed yet", purpose: "New files: place them in a role.", files: S.roles.unassigned });
+  return { ...S.full, modules: rs.filter((r) => r.files.length).map((r) => roleNode(r)), edges: prune(aggregate((f) => fr[f] && "role:" + fr[f])) };
+}
+function partGraph(rid) {
+  const fr = fileRoles(), mine = new Set(Object.keys(fr).filter((f) => fr[f] === rid));
+  // a part is a folder of the role's files: few enough to read, and each opens as one function graph
+  const dir = (f) => (f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : ".");
+  const parts = new Map();
+  mine.forEach((f) => { const d = "dir:" + dir(f); if (!parts.has(d)) parts.set(d, []); parts.get(d).push(f); });
+  const nodes = [...parts].map(([d, fs]) => ({ id: d, kind: "module", label: d.slice(4).split("/").slice(-2).join("/") + "/", meta: plural(fs.length, "file"),
+    files: fs.sort(), names: [], doc: fs.map((f) => S.full.files[f].doc).find(Boolean) || "", lines: fs.reduce((a, f) => a + S.full.files[f].lines, 0) }));
+  const edges = prune(aggregate((f) => (mine.has(f) ? "dir:" + dir(f) : fr[f] && "role:" + fr[f]))
+    .filter((e) => e.source.startsWith("dir:") || e.target.startsWith("dir:"))); // links among other roles are not this role's story
+  const near = new Set(edges.flatMap((e) => [e.source, e.target]).filter((id) => id.startsWith("role:")));
+  near.forEach((id) => { const r = S.roles.roles.find((x) => "role:" + x.id === id); if (r) nodes.push({ ...roleNode(r, "edge"), meta: "other role" }); });
+  return { ...S.full, modules: nodes, edges };
+}
+function funcGraph() {
+  const c = S.calls, fr = fileRoles();
+  const nodes = c.nodes.map((n) => ({ id: n.id, kind: "fn", label: n.name + (n.kind === "class" ? "" : "()"), meta: `${n.file.split("/").pop()}:${n.line}`,
+    files: [n.file], lines: n.lines, names: [], doc: n.doc }));
+  const edges = c.edges.map((e) => ({ source: e.source, target: e.target, receipts: Array.from({ length: Math.min(e.count, 8) }, () => ({ file: e.source.split("::")[0], line: 0, code: e.kind, name: e.target.split("::")[1] })) }));
+  // functions that call nothing here and nobody here calls are listed by count only: the picture is how they work together
+  const linked = new Set([...c.edges.flatMap((e) => [e.source, e.target]), ...c.boundary.map((b) => b.source)]);
+  if (linked.size) { S.lonely = nodes.length - nodes.filter((n) => linked.has(n.id)).length; nodes.splice(0, nodes.length, ...nodes.filter((n) => linked.has(n.id))); } else S.lonely = 0;
+  const out = new Map();
+  c.boundary.forEach((b) => {
+    const rid = fr[b.file], id = rid ? "role:" + rid : "file:" + b.file;
+    if (!out.has(id)) nodes.push(rid ? { ...roleNode(S.roles.roles.find((r) => r.id === rid) || { id: rid, name: rid, files: [] }, "edge"), meta: rid === S.role ? "same role, other folder" : "other role" } : { id, kind: "edge", label: b.file.split("/").pop(), meta: "other file", files: [b.file], lines: 0, names: [], doc: "" });
+    out.set(id, 1);
+    edges.push({ source: b.source, target: id, receipts: [{ file: b.source.split("::")[0], line: 0, code: b.kind, name: null }] });
+  });
+  return { ...S.full, modules: nodes, edges };
+}
+async function openFuncs(files, title) {
+  S.level = "funcs"; S.callTitle = title;
+  try { S.calls = await api(`/api/calls?${q()}`, { files }); } catch (e) { toast(e.message, false); return; }
+  regroup(); fitView();
+}
+function openRole(rid) {
+  if (rid === "?" || !S.roles) { S.level = "parts"; S.role = rid; regroup(); fitView(); return; }
+  const r = S.roles.roles.find((x) => x.id === rid);
+  S.role = rid;
+  const parts = new Set(r.files.map((f) => f.slice(0, f.lastIndexOf("/") + 1)));
+  if (parts.size <= 3) { openFuncs(r.files, r.name); return; } // few parts: go straight to how its functions work together
+  S.level = "parts"; regroup(); fitView();
+}
+async function rolesDo(action, body, okText) {
+  try { S.roles = await api(`/api/roles/${action}?${q()}`, body || {}); }
+  catch (e) { toast(e.message, false); return false; }
+  if (okText) toast(okText);
+  regroup();
+  return true;
+}
+async function proposeRoles() {
+  $("#crumbs").hidden = false;
+  $("#crumbs").innerHTML = `<em>Grouping the project into roles: folders and file names first, then one small-model call names them…</em>`;
+  if (await rolesDo("propose", {}, null)) { S.level = "roles"; regroup(); fitView(); toast(`Roles proposed (${S.roles.how}${S.roles.cost_usd != null ? `, $${S.roles.cost_usd.toFixed(3)}` : ""}). Rename, move files, then confirm.`); }
+}
+function renameRole(rid) {
+  const r = S.roles.roles.find((x) => x.id === rid);
+  const name = prompt(`Rename the role "${r.name}" (at most 3 words, 24 characters).\n\n${r.purpose || ""}`, r.name);
+  if (name != null && name.trim() !== r.name) rolesDo("rename", { id: rid, name }, "Renamed. Files, fences and history keep it.");
+}
+function roleFiles(rid) { // a sheet: every file of the role, each with a role picker to move it
+  const fr = fileRoles(), files = Object.keys(fr).filter((f) => fr[f] === rid).sort();
+  const opts = (cur) => S.roles.roles.map((r) => `<option value="${esc(r.id)}"${r.id === cur ? " selected" : ""}>${esc(r.name)}</option>`).join("");
+  $("#stitle").textContent = `${rid === "?" ? "Files not placed yet" : rname(rid)}: ${plural(files.length, "file")}`;
+  $("#scode").innerHTML = `<p class="sub">Move a file by picking another role. ${rid === "?" ? "" : `<button class="btn quiet" type="button" data-newrole>New role…</button>`}</p>
+    <ul class="rfiles">${files.map((f) => `<li><span class="mono">${esc(f)}</span><span class="d">${esc(S.full.files[f].doc || "")}</span><select data-f="${esc(f)}" aria-label="Role of ${esc(f)}">${rid === "?" ? `<option selected disabled>choose…</option>` : ""}${opts(rid)}</select></li>`).join("")}</ul>`;
+  $("#scode").querySelectorAll("select[data-f]").forEach((s) => (s.onchange = async () => { if (await rolesDo("move", { path: s.dataset.f, id: s.value }, `Moved to ${rname(s.value)}.`)) s.closest("li").remove(); }));
+  $("[data-newrole]", $("#scode"))?.addEventListener("click", () => { const n = prompt("Name of the new role (at most 3 words):"); if (n) rolesDo("add", { name: n }, "Role added; move files into it.").then(() => roleFiles(rid)); });
+  showSheet(true);
+}
+function fenceRole(rid) {
+  const r = S.roles.roles.find((x) => x.id === rid);
+  const first = S.full.files[r.files[0]].module;
+  select(first);
+  S.scope = new Set(r.files); S.fenceRole = rid;
+  afterFenceChange();
+  toast(`The agent may edit the ${plural(r.files.length, "file")} of ${r.name}.`);
+}
+function renderCrumbs() {
+  const c = $("#crumbs"), big = S.full.modules.length > GROUP_AT, has = S.roles && S.roles.roles.length;
+  const step = (n, text, attrs, cur) => `<button type="button" ${attrs}${cur ? ' aria-current="true"' : ""}><b>${n}</b> ${esc(text)}</button>`;
+  let h = "";
+  if (S.level === "modules") {
+    if (!big && !has && S.full.modules.length <= ROLE_AT) { c.hidden = true; return; }
+    const parts = S.focus ? S.focus.split("/") : [];
+    h = (has ? step(1, "Roles", 'data-lv="roles"') + `<span>/</span>` : "") + `<button type="button" data-f="" aria-current="${!S.focus}">${esc(S.full.name)}</button>`
+      + parts.map((p, i) => `<span>/</span><button type="button" data-f="${esc(parts.slice(0, i + 1).join("/"))}">${esc(p)}</button>`).join("")
+      + (big ? `<em>${plural(S.full.modules.length, "module")}: folders are grouped; click one to open it</em>` : "")
+      + (!has && S.claude ? `<button type="button" class="act" data-propose>Group into roles</button>` : "");
+  } else {
+    const r = S.roles.roles.find((x) => x.id === S.role);
+    h = step(1, "Roles", 'data-lv="roles"', S.level === "roles");
+    if (S.level !== "roles") h += `<span>/</span>` + step(2, S.role === "?" ? "not placed yet" : rname(S.role), `data-role="${esc(S.role)}"`, S.level === "parts");
+    if (S.level === "funcs") h += `<span>/</span>` + step(3, S.callTitle, "", true);
+    if (S.level !== "funcs" && S.hiddenLinks) h += `<em>Strongest ${KEEP_LINKS} links per box shown (${S.hiddenLinks} weaker hidden).</em>`;
+    if (S.level === "roles") h += `<em>${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}: ${esc(S.roles.how || "")}. Click a role to open it.</em>`
+      + (S.roles.status !== "confirmed" ? `<button type="button" class="act" data-confirm>Confirm roles</button>` : "") + `<button type="button" class="act q" data-propose>Propose again</button><button type="button" class="act q" data-lv="modules">All modules</button>`;
+    if (S.level === "parts" && r) h += `<em>${esc(r.purpose || "")} Click a folder to see how its functions work together.</em>`;
+    if (r && S.level !== "roles") h += `<button type="button" class="act q" data-rename>Rename</button><button type="button" class="act q" data-files>Files</button><button type="button" class="act" data-fence>Fence this role</button>`;
+    if (S.role === "?" && S.level !== "roles") h += `<button type="button" class="act" data-files>Place files</button>`;
+    if (S.level === "funcs") h += `<em>${S.lonely ? `${plural(S.lonely, "function")} with no links here not drawn. ` : ""}Static and approximate: ${S.calls.resolved} of ${S.calls.calls} calls traced. Click a function to mention it; shift-click to fence it alone.</em>`;
+  }
+  c.hidden = false;
+  c.innerHTML = h;
+  c.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => { S.focus = b.dataset.f; regroup(); fitView(); }));
+  c.querySelectorAll("[data-lv]").forEach((b) => (b.onclick = () => { S.level = b.dataset.lv; regroup(); fitView(); }));
+  c.querySelectorAll("[data-role]").forEach((b) => (b.onclick = () => openRole(b.dataset.role)));
+  $("[data-propose]", c)?.addEventListener("click", () => (!has || confirm("Propose roles again? Your renames and moves are replaced.")) && proposeRoles());
+  $("[data-confirm]", c)?.addEventListener("click", () => rolesDo("confirm", {}, "Roles confirmed. Rename or move files any time."));
+  $("[data-rename]", c)?.addEventListener("click", () => renameRole(S.role));
+  $("[data-files]", c)?.addEventListener("click", () => roleFiles(S.role));
+  $("[data-fence]", c)?.addEventListener("click", () => fenceRole(S.role));
+}
+
 function reveal(id) { // a module hidden in a grouped folder: open the folders down to it
   if (S.graph.modules.some((m) => m.id === id)) return;
   S.focus = S.full.modules.some((m) => m.id.startsWith(id + "/")) ? id : parent(id);
   regroup();
 }
-const inSet = (set, id) => set.has(id) || !!(mod(id)?.group && mod(id).members.some((x) => set.has(x)));
+const inSet = (set, id) => set.has(id) || !!(mod(id)?.members && mod(id).members.some((x) => set.has(x)));
 
 /* ---------------- layout: layered, foundations at the bottom ---------------- */
 function layout() {
@@ -162,6 +318,8 @@ function layout() {
       rows[ri].sort((a, b) => bc(a) - bc(b) || a.localeCompare(b));
     }
   }
+  const WRAP = 10; // ponytail: a wide rank wraps onto extra rows, so a 40-function rank stays on screen
+  rows = rows.flatMap((row) => Array.from({ length: Math.ceil(row.length / WRAP) }, (_, i) => row.slice(i * WRAP, (i + 1) * WRAP)));
   S.rows = rows.map((row) => row.slice());
   S.pos = {};
   rows.forEach((row, ri) => row.forEach((id, k) => {
@@ -226,9 +384,9 @@ function drawGraph() {
     el("rect", { class: "card", width: NODE_W, height: NODE_H, rx: 7 }, n);
     el("rect", { class: "fill", width: NODE_W, height: NODE_H, rx: 7 }, n);
     const name = el("text", { class: "name", x: 12, y: 25 }, n);
-    name.textContent = clip(label(m.id), 22);
+    name.textContent = clip(m.label || label(m.id), 22);
     const meta = el("text", { class: "meta", x: 12, y: 45 }, n);
-    meta.textContent = clip(m.group ? plural(m.members.length, "module") : `${parent(m.id) ? parent(m.id) + "/ · " : ""}${plural(m.files.length, "file")}`, 30);
+    meta.textContent = clip(m.meta ? m.meta : m.group ? plural(m.members.length, "module") : `${parent(m.id) ? parent(m.id) + "/ · " : ""}${plural(m.files.length, "file")}`, 30);
     el("rect", { class: "bar-bg", x: 12, y: 57, width: NODE_W - 24, height: 5, rx: 2.5 }, n);
     el("rect", { class: "bar", x: 12, y: 57, width: Math.max(3, (NODE_W - 24) * (m.lines / mx)), height: 5, rx: 2.5 }, n);
     const lines = el("text", { class: "meta", x: NODE_W - 12, y: 45, "text-anchor": "end" }, n);
@@ -237,6 +395,8 @@ function drawGraph() {
     if (m.files.some((f) => S.graph.files[f].error)) n.classList.add("error");
     n.addEventListener("pointerdown", (ev) => ev.stopPropagation());
     n.addEventListener("click", (ev) => onNodeClick(m.id, ev));
+    if (m.kind === "fn" || m.kind === "edge") n.classList.add(m.kind);
+    if (m.doc) el("title", {}, n).textContent = m.doc;
     n.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onNodeClick(m.id, ev); } });
     n.addEventListener("pointerenter", () => hoverNode(m.id, true));
     n.addEventListener("pointerleave", () => hoverNode(m.id, false));
@@ -366,12 +526,13 @@ function bounds() {
 }
 function viewport() { const c = $("#canvas").getBoundingClientRect(); return { w: c.width || innerWidth, h: c.height || innerHeight, bottom: 52 }; }
 function fitView(animate = true) {
-  const b = bounds(), v = viewport();
-  const k = Math.min(1.2, Math.max(0.35, Math.min((v.w - 40) / (b.x1 - b.x0), (v.h - v.bottom - 20) / (b.y1 - b.y0))));
-  const t = { k, x: v.w / 2 - ((b.x0 + b.x1) / 2) * k, y: 16 + (v.h - v.bottom - 16) / 2 - ((b.y0 + b.y1) / 2) * k };
+  const b = bounds(), v = viewport(), top = $("#crumbs").hidden ? 16 : $("#crumbs").offsetHeight + 24; // below the path bar
+  const k = Math.min(1.2, Math.max(0.35, Math.min((v.w - 40) / (b.x1 - b.x0), (v.h - v.bottom - top - 4) / (b.y1 - b.y0))));
+  const t = { k, x: v.w / 2 - ((b.x0 + b.x1) / 2) * k, y: top + (v.h - v.bottom - top) / 2 - ((b.y0 + b.y1) / 2) * k };
   if (animate) springTo(t); else { stopSpring(); Object.assign(S.cam, t); applyCam(); }
 }
 function revealNode(id) {
+  if (!S.pos[id]) return; // not drawn at this level (a function view, say)
   const p = S.pos[id], v = viewport(), k = S.cam.k;
   const sx = S.cam.x + p.x * k, sy = S.cam.y + p.y * k, w = NODE_W * k, h = NODE_H * k;
   let dx = 0, dy = 0;
@@ -440,6 +601,16 @@ function hideTip() { $("#tip").classList.remove("show"); }
 
 /* ---------------- selection, fence & panel ---------------- */
 function onNodeClick(id, ev) {
+  if (id.startsWith("role:")) { openRole(id.slice(5)); return; }
+  if (id.startsWith("file:")) return;
+  if (id.startsWith("dir:")) { openFuncs(mod(id).files, mod(id).label); return; }
+  if (S.level === "funcs") { // mention the function in the instruction; shift-click fences it alone (file kept, others flagged)
+    const [file, name] = id.split("::"), m = S.full.files[file].module;
+    if (ev.shiftKey || ev.metaKey || ev.ctrlKey) { if (S.selected !== m) select(m); S.scope = new Set([id]); afterFenceChange(); toast(`Fenced ${name}(): its file may change, other functions in it are flagged.`); return; }
+    if (S.selected !== m) select(m);
+    insertRef(`\`${name}()\` in ${file}`);
+    return;
+  }
   if (mod(id)?.group) { select(id); return; }
   if ((ev.shiftKey || ev.metaKey || ev.ctrlKey) && S.selected) {
     if (S.scope.has(id) && S.scope.size > 1) S.scope.delete(id); else S.scope.add(id);
@@ -451,7 +622,12 @@ function onNodeClick(id, ev) {
 }
 function select(id) {
   if (id.endsWith("/")) { S.focus = id.slice(0, -1); regroup(); fitView(); return; } // a grouped folder: open it
-  reveal(id);
+  S.fenceRole = null;
+  if (S.level === "roles" || (S.level === "parts" && !S.graph.modules.some((m) => m.id === id))) { // show the module among its role's parts
+    const fr = fileRoles(), f = (S.full.modules.find((m) => m.id === id) || { files: [] }).files.find((x) => fr[x]);
+    if (f) { S.level = "parts"; S.role = fr[f]; regroup(); } else { S.level = "modules"; regroup(); }
+  }
+  if (S.level === "modules") reveal(id);
   const opening = !document.body.classList.contains("panel-open");
   S.selected = id;
   // A plain click starts a new fence, unless a multi-module fence is set: then the fence is kept and the module is only shown.
@@ -589,7 +765,9 @@ function renderFence() {
   if (S.readOnly) {
     line = `<div class="fline ro"><span class="lab">Read only.</span> The agent explains ${[...S.scope].map((id) => `<span class="mono">${esc(shown(id))}</span>`).join(", ")} and can edit nothing. <span class="reads">It reads the whole project.</span></div>`;
   } else {
-    const chips = [...S.scope].map((id) => `<span class="fchip">${esc(shown(id))}${S.scope.size > 1 ? `<button type="button" data-rm="${esc(id)}" aria-label="Remove ${esc(shown(id))} from the fence">${X_ICON}</button>` : ""}</span>`).join("");
+    const chipName = (id) => (id.includes("::") ? id.split("::")[1] + "()" : shown(id));
+    const chips = S.fenceRole && S.scope.size > 3 ? `<span class="fchip">role ${esc(rname(S.fenceRole))} (${plural(S.scope.size, "file")})</span>`
+      : [...S.scope].map((id) => `<span class="fchip">${esc(chipName(id))}${S.scope.size > 1 ? `<button type="button" data-rm="${esc(id)}" aria-label="Remove ${esc(shown(id))} from the fence">${X_ICON}</button>` : ""}</span>`).join("");
     const add = testsMod && !S.scope.has(testsMod.id) ? `<button type="button" class="fadd" data-add="${esc(testsMod.id)}">+ ${esc(testsMod.id)}</button>` : "";
     line = `<div class="fline"><span class="lab">Can edit:</span>${chips}${add} <span class="reads">Reads everything. Shift-click a module to add it.</span></div>`;
   }
@@ -1101,7 +1279,7 @@ function wire() {
   $("#panel").inert = true;
   $("#picker").onchange = async (e) => {
     S.p = Number(e.target.value); store.set("modfence.project", S.p);
-    closePanel(); S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; S.userCam = false; S.focus = "";
+    closePanel(); S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; S.userCam = false; S.focus = ""; S.level = null; S.role = null; S.calls = null; S.proposed = false;
     const b = $("#tests"); b.classList.remove("ok", "bad"); $(".lbl", b).textContent = "Run tests";
     await loadGraph(true);
   };

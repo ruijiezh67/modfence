@@ -193,10 +193,19 @@ body.panel-open .canvas, body.panel-open .alt { right: var(--panel-w); }
 .crumbs { position: absolute; left: 16px; top: 12px; z-index: 5; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; max-width: calc(100% - 32px); font: 12.5px var(--mono); }
 .crumbs[hidden] { display: none; }
 .crumbs button { all: unset; cursor: pointer; padding: 2px 6px; border: 1.5px solid var(--line-2); border-radius: var(--r); background: var(--surface); }
-.crumbs button:last-of-type { border-color: var(--ink); box-shadow: 2px 2px 0 var(--fence); }
 .crumbs button:hover { border-color: var(--text-3); }
 .crumbs button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .crumbs span { color: var(--text-3); }
+.crumbs button b { font-weight: 700; color: var(--fence-ink); margin-right: 2px; }
+.crumbs button[aria-current="true"] { border-color: var(--ink); box-shadow: 2px 2px 0 var(--fence); }
+.crumbs .act { background: var(--fence); color: var(--ink); border-color: var(--ink); font-family: var(--font, inherit); }
+.crumbs .act.q { background: var(--surface); }
+.node.fn .card { stroke: var(--text-2); }
+.node.edge { opacity: 0.55; }
+.node.edge .card { stroke-dasharray: 3 3; fill: var(--surface-2); }
+.rfiles { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12.5px; }
+.rfiles li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) 160px; gap: 10px; align-items: center; padding: 5px 0; border-top: 1px solid var(--line); }
+.rfiles .d { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .crumbs em { font: italic 12px var(--sans, inherit); color: var(--text-3); margin-left: 8px; }
 body.panel-open .crumbs { max-width: calc(100% - var(--panel-w) - 32px); }
 .node.faded { opacity: 0.45; }
