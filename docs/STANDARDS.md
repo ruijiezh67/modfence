@@ -16,7 +16,7 @@ Sources (short names used below):
 |---|---|---|---|---|
 | 1 | Plan before editing: settle open questions, name what will change, agree on "done". | Anthropic, Pocock | **Yes.** Every edit run starts with a read-only plan: at most 4 questions with a recommended answer, the functions to touch, and a done line. Build resumes the same session. | `test_plan_phase_reads_only_and_returns_a_plan` |
 | 2 | Every change has a pass/fail check, and the harness enforces it, not the prompt. | Anthropic, git | **Yes.** A `Stop` hook runs the project's tests (pytest or unittest, or `--test-cmd`) and sends the agent back once if they fail. | `test_build_phase_adds_the_done_check_hook`, `test_done_check_blocks_once_then_lets_the_agent_stop` |
-| 3 | The agent may only change what you agreed to; anything else is blocked or reported. | Anthropic ("make it a hook") | **Yes** for file tools: a `PreToolUse` hook denies edits outside the fence and fails closed. Shell writes are reported after the run, with a revert. | `test_hook_denies_outside_and_allows_inside_and_reads`, `test_hook_fails_closed`, `test_read_only_run_may_edit_nothing` |
+| 3 | The agent may only change what you agreed to; anything else is blocked or reported. | Anthropic ("make it a hook") | **Yes** for file tools: a `PreToolUse` hook denies edits outside the fence and fails closed. Shell writes are reported after the run, with a revert. Sealed runs (default) also hide other modules' code and give their interfaces instead; Bash is limited to tests, git status/diff/log, ls and the interface viewer. | `test_hook_denies_outside_and_allows_inside_and_reads`, `test_sealed_run_hides_other_modules_but_gives_their_interface`, `test_brief_lists_what_the_fence_uses_and_must_keep`, `test_hook_fails_closed`, `test_read_only_run_may_edit_nothing` |
 | 4 | You can explain every change you keep. | Willison | **Partly.** Each run lists the functions added, changed and removed, with one line on what each does now; the diff is one click away. There is no walkthrough or quiz yet. | History view; `test_changes_are_named_per_function` |
 | 5 | Every change can be undone. | git (small reversible commits) | **Yes.** Each run is a numbered version in History with a revert; a file edited again since is left alone. | `test_run_is_stored_with_diff_and_can_be_reverted`, `test_revert_leaves_files_edited_after_the_run`, `test_versions_keep_prompt_and_revert` |
 | 6 | One logical change per run; about 100 changed lines is a good size, 1000 is too big. | git, Google | **Shown, not enforced.** History shows functions and files per version. No size warning yet. | History view |
@@ -28,7 +28,7 @@ Sources (short names used below):
 
 | Rule | Source | Status | How to check |
 |---|---|---|---|
-| Tests come with every change, and the suite passes before a commit. | git | Yes: 32 deterministic tests, no model or network. | `python -m unittest discover -s tests -t .` |
+| Tests come with every change, and the suite passes before a commit. | git | Yes: 34 deterministic tests, no model or network. | `python -m unittest discover -s tests -t .` |
 | No whitespace errors. | git | Yes. | `git diff --check` |
 | One logical change per commit, subject 50 characters or less. | git | Since 2026-11-06; two older subjects are longer (74 and 63). | `git log --format=%s` |
 | Standard library only; nothing installed outside the project. | (project rule) | Yes: `dependencies = []` in `pyproject.toml`. | `pip install .` in a fresh venv, then `modfence --help` |

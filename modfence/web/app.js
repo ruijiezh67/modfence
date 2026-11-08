@@ -767,10 +767,12 @@ function renderFence() {
     const chips = S.fenceLabel && S.scope.size > 1 ? `<span class="fchip">${esc(S.fenceLabel)} (${plural(S.scope.size, "file")})</span>`
       : [...S.scope].map((id) => `<span class="fchip">${esc(chipName(id))}${S.scope.size > 1 ? `<button type="button" data-rm="${esc(id)}" aria-label="Remove ${esc(shown(id))} from the fence">${X_ICON}</button>` : ""}</span>`).join("");
     const add = testsMod && !S.scope.has(testsMod.id) ? `<button type="button" class="fadd" data-add="${esc(testsMod.id)}">+ ${esc(testsMod.id)}</button>` : "";
-    line = `<div class="fline"><span class="lab">Can edit:</span>${chips}${add}</div>`;
+    const seal = `<button type="button" class="fseal" data-seal aria-pressed="${!S.unsealed}" title="${S.unsealed ? "The agent may read every file in this run. Click to seal." : "Sealed: other modules' code is hidden; the agent gets their interfaces, so it cannot lean on or break their internals. Click to let it read everything."}">${S.unsealed ? "Unsealed" : "Sealed"}</button>`;
+    line = `<div class="fline"><span class="lab">Can edit:</span>${chips}${add}${seal}</div>`;
   }
   const nocli = S.claude ? "" : `<div class="nocli">Claude Code CLI not found. Install it and log in, or start modfence with CLAUDE_BIN set to its path, then restart. Reading the project still works.</div>`;
   $("#fence").innerHTML = nocli + mode + line;
+  $("[data-seal]", $("#fence"))?.addEventListener("click", () => { S.unsealed = !S.unsealed; renderFence(); });
   $("#fence").querySelectorAll("[data-ro]").forEach((b) => (b.onclick = () => { S.readOnly = b.dataset.ro === "1"; afterFenceChange(); }));
   $("#fence").querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { S.scope.delete(b.dataset.rm); if (!S.scope.has(S.selected)) S.selected = [...S.scope][0]; afterFenceChange(); }));
   $("#fence").querySelectorAll("[data-add]").forEach((b) => (b.onclick = () => { S.scope.add(b.dataset.add); afterFenceChange(); }));
@@ -1086,7 +1088,7 @@ async function send() {
 }
 async function startRun(prompt, scope, readOnly, phase) {
   let res;
-  try { res = await api(`/api/ask?${q()}`, { prompt, scope, read_only: readOnly, phase }); }
+  try { res = await api(`/api/ask?${q()}`, { prompt, scope, read_only: readOnly, phase, unsealed: !!S.unsealed }); }
   catch (e) { toast(e.message, false); return false; }
   if (phase !== "plan") { S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; paintSelection(); }
   const key = [...scope].sort().join("+");

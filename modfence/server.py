@@ -222,7 +222,8 @@ def make_handler(app, port):
                 running = app.active.get(root)
                 if running and not running.done:
                     return self.send_json({"error": "a run is already in progress in this project", "job": running.id}, 409)
-                job = runner.Job(root, scope, prompt, graph, app.claude, read_only=bool(b.get("read_only")), phase=b.get("phase"))
+                job = runner.Job(root, scope, prompt, graph, app.claude, read_only=bool(b.get("read_only")), phase=b.get("phase"),
+                                 seal=not b.get("unsealed"))
                 app.jobs[job.id] = job
                 app.active[root] = job
             job.start()

@@ -7,7 +7,7 @@ import atexit, http.client, json, os, shutil, subprocess, sys, tempfile, threadi
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from modfence import analyze, purpose, roles, runner, scope_guard, server  # noqa: E402
+from modfence import analyze, brief, purpose, roles, runner, scope_guard, server  # noqa: E402
 
 FAKE = os.path.join(HERE, "fake_claude.py")
 _dirs = []
@@ -225,6 +225,45 @@ class ScopeGuardTest(unittest.TestCase):
         self.assertIsNone(self.hook({"tool_name": "Write", "tool_input": {"file_path": "app/core/new.py"}}, ["app/core"]))
         self.assertIsNone(self.hook({"tool_name": "Read", "tool_input": {"file_path": "app/api/handlers.py"}}, ["app/core"]))
         self.assertIsNone(self.hook({"tool_name": "Bash", "tool_input": {"command": "ls"}}, ["app/core"]))
+
+    def test_sealed_run_hides_other_modules_but_gives_their_interface(self):
+        self.d = project()
+        seal = lambda ev: scope_guard.decide(ev, self.d, ["app/api"], fence=["app/api"])
+        read = lambda p: seal({"tool_name": "Read", "tool_input": {"file_path": os.path.join(self.d, p)}})
+        out = read("app/core/values.py")
+        self.assertIn("modfence seal", out)
+        self.assertIn("def double(x)", out, "the denial carries the interface instead of the code")
+        self.assertNotIn("return 2 * x", out)
+        for ok in ("app/api/handlers.py", "tests/test_api.py", "README.md"):
+            self.assertIsNone(read(ok), ok)
+        self.assertIsNotNone(seal({"tool_name": "Grep", "tool_input": {"pattern": "x"}}), "a search of the whole project")
+        self.assertIsNone(seal({"tool_name": "Grep", "tool_input": {"pattern": "x", "path": "app/api"}}))
+        bash = lambda c: seal({"tool_name": "Bash", "tool_input": {"command": c}})
+        self.assertIsNone(bash("python -m pytest -q"))
+        self.assertIsNone(bash(runner.show_command() + " app/core/values.py::double"))
+        for bad in ("cat app/core/values.py", "python -m pytest; cat app/core/values.py", "python -c 'print(1)'"):
+            self.assertIsNotNone(bash(bad), bad)
+        self.assertIsNone(scope_guard.decide({"tool_name": "Read", "tool_input": {"file_path": "app/core/values.py"}}, self.d, ["app/api"]),
+                          "unsealed runs read freely")
+        shown = subprocess.run([sys.executable, runner.SHOW, "app/core/values.py::double"],
+                               capture_output=True, text=True, env=dict(os.environ, MODFENCE_ROOT=self.d))
+        self.assertEqual(shown.stdout.strip(), "def double(x)", shown.stderr)
+
+    def test_brief_lists_what_the_fence_uses_and_must_keep(self):
+        d = project()
+        g = analyze.analyze(d)
+        b = brief.brief(g, ["app/api"])
+        self.assertIn("def double(x)", b)
+        self.assertIn("handle(x)  <- app/cli, tests", b, "the contract: who relies on the fence")
+        self.assertNotIn("return 2 * x", b)
+        tiny = brief.render_sig(brief.facts(g, ["app/api"]), budget=10)
+        self.assertIn("also: double", tiny, "past the budget, names only")
+        job = runner.Job(d, ["app/api"], "x", g, FAKE, phase="build")
+        self.assertIn("Read|Grep|Bash", load(job._settings_file())["hooks"]["PreToolUse"][0]["matcher"])
+        self.assertIn("This run is sealed", job.system_note())
+        explain = runner.Job(d, ["app/api"], "x", g, FAKE, read_only=True)
+        self.assertFalse(explain.sealed, "Explain reads everything")
+        self.assertFalse(runner.Job(d, ["app/api"], "x", g, FAKE, seal=False).sealed)
 
     def test_hook_fails_closed(self):
         self.d = project()

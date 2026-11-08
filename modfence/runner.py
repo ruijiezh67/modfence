@@ -11,10 +11,11 @@ ripple of the change.
 """
 import difflib, glob, hashlib, itertools, json, os, re, shutil, subprocess, sys, threading, time
 
-from . import analyze
+from . import analyze, brief
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GUARD = os.path.join(HERE, "scope_guard.py")
+SHOW = os.path.join(HERE, "show.py")
 DONE_CHECK = os.path.join(HERE, "done_check.py")
 PLAN_RULE = (
     "This is the planning step of fence coding. You may read any file but edit nothing; a hook blocks every edit. "
@@ -110,8 +111,14 @@ def forget(root, scope):
         pass
 
 
-def context_note(graph, scope, read_only=False, phase=None):
-    """System note telling the agent which modules it works on and how they connect to the rest."""
+def show_command():
+    fwd = lambda p: p.replace("\\", "/")
+    return f'"{fwd(sys.executable)}" "{fwd(SHOW)}"'
+
+
+def context_note(graph, scope, read_only=False, phase=None, sealed=False):
+    """System note telling the agent which modules it works on and how they connect to the rest. Sealed (golden
+    rule 4): the rest of the project is the brief, not code it may read."""
     mods = {m["id"]: m for m in graph["modules"]}
     out_edges = [e for e in graph["edges"] if e["source"] in scope and e["target"] not in scope]
     in_edges = [e for e in graph["edges"] if e["target"] in scope and e["source"] not in scope]
@@ -124,9 +131,13 @@ def context_note(graph, scope, read_only=False, phase=None):
                 "or edit any file, and a hook blocks every edit. Explain, point to exact file:line locations, and give "
                 "hints rather than finished solutions unless the user asks for one.")
     else:
-        rule = ("You may read any file in the project, but you may only create or edit files inside: " + where
+        rule = (("You may read any file in the project, but you" if not sealed else "You") + " may only create or edit files inside: " + where
                 + ". A hook blocks edits anywhere else. If the request needs a change in another module, do what you can "
                   "inside the scope, then say exactly which module needs what change, and why.")
+    if sealed:
+        rule += (" This run is sealed: you can read and search only the fence and the tests; other modules' code is "
+                 "hidden so you cannot depend on or break their internals. What they offer, and what the fence must keep "
+                 f"working, is in the brief below. For one definition's docstring run: {show_command()} path/to/file.py::name")
     lines = [f"You are working in modfence on project `{graph['name']}`, focused on module(s): "
              + ", ".join(f"`{s}`" for s in scope) + ".", rule, ""]
     loose = [s for s in scope if s not in mods]
@@ -140,10 +151,12 @@ def context_note(graph, scope, read_only=False, phase=None):
         lines.append("  files: " + ", ".join(f"{f} ({graph['files'][f]['lines']} lines)" for f in m["files"]))
         if m["names"]:
             lines.append("  public names: " + ", ".join(f"{n['name']} ({n['file']}:{n['line']})" for n in m["names"][:40]))
-    if out_edges:
+    if sealed:
+        lines.append(brief.brief(graph, scope))
+    elif out_edges:
         lines.append("Depends on (outside the scope): " + "; ".join(
             f"`{e['target']}` via " + ", ".join(f"{r['file']}:{r['line']}" for r in e["receipts"][:3]) for e in out_edges))
-    if in_edges:
+    if in_edges and not sealed:
         lines.append("Used by (outside the scope; changing a public name breaks them): " + "; ".join(
             f"`{e['source']}` via " + ", ".join(f"{r['file']}:{r['line']}" for r in e["receipts"][:3]) for e in in_edges))
     cmd = test_command(graph["root"]) if phase == "build" else None
@@ -160,11 +173,13 @@ def context_note(graph, scope, read_only=False, phase=None):
 class Job:
     """phase: None (a plain run), "plan" (read-only, answers with questions and a plan as JSON) or "build" (edits, and
     a Stop hook runs the project's tests before the agent may finish)."""
-    def __init__(self, root, scope, prompt, graph, claude_bin, read_only=False, phase=None):
+    def __init__(self, root, scope, prompt, graph, claude_bin, read_only=False, phase=None, seal=True):
         self.id = f"r{int(time.time() * 1000)}{next(_ids)}"  # unique across restarts: runs are stored on disk
         self.root, self.scope, self.prompt, self.graph, self.claude = root, list(scope), prompt, graph, claude_bin
         self.phase = phase if phase in ("plan", "build") else None
         self.read_only = bool(read_only) or self.phase == "plan"
+        # sealed unless asked not to, or a plain read-only run (Explain), which may read everything to teach
+        self.sealed = bool(seal) and not (self.read_only and self.phase != "plan")
         # "file::function" fences the function: the hook allows its file, and _finish flags other functions changed there
         self.editable = [] if self.read_only else sorted({s.split("::")[0] for s in scope})
         self.fn_fence = {}
@@ -201,13 +216,13 @@ class Job:
             self.emit("status", text="Cancelled.")
 
     def system_note(self):
-        return context_note(self.graph, self.scope, self.read_only, self.phase)
+        return context_note(self.graph, self.scope, self.read_only, self.phase, self.sealed)
 
     def _settings_file(self):
         p = os.path.join(state_dir(self.root), f"settings-{self.id}.json")
         fwd = lambda p: p.replace("\\", "/")  # hook commands run in a POSIX shell, also on Windows
         cmd = f'"{fwd(sys.executable)}" "{fwd(GUARD)}"'
-        hooks = {"PreToolUse": [{"matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        hooks = {"PreToolUse": [{"matcher": "Edit|Write|MultiEdit|NotebookEdit" + ("|Read|Grep|Bash" if self.sealed else ""),
                                  "hooks": [{"type": "command", "command": cmd, "timeout": 10, "onFailure": "block"}]}]}
         if self.phase == "build" and test_command(self.root):
             hooks["Stop"] = [{"hooks": [{"type": "command", "command": f'"{fwd(sys.executable)}" "{fwd(DONE_CHECK)}"',
@@ -238,7 +253,10 @@ class Job:
                 cmd += ["--resume", session]
             env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDECODE") and k != "CLAUDE_CODE_ENTRYPOINT"}
             env.update(MODFENCE_ROOT=self.root, MODFENCE_SCOPE=os.pathsep.join(self.editable), MODFENCE_RUN=self.id)
+            if self.sealed:
+                env.update(MODFENCE_SEAL="1", MODFENCE_FENCE=os.pathsep.join(sorted({s.split("::")[0] for s in self.scope})))
             mode = "planning, read-only" if self.phase == "plan" else "read-only" if self.read_only else "can edit " + ", ".join(self.editable)
+            mode += ", sealed" if self.sealed else ""
             self.emit("status", text=("Resumed this scope's session" if session else "New session") + f" ({mode}).")
             self.proc = subprocess.Popen(cmd, cwd=self.root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
