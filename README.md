@@ -6,12 +6,26 @@
 
 Tools that draw a repository's structure help you read it. modfence is for changing it with an AI agent without losing track of your own project. You work in **fence coding**:
 
-1. **Pick the module.** Select it on the map, see its functions and what each one does, what it uses and who uses it. Shift-click to fence more modules.
+1. **Pick the part.** Zoom from the system's roles to a role's folders to a graph of its functions and classes (below). Fence a role, a module, or a single function.
 2. **Agree on a plan.** The agent reads the project (it cannot edit yet), asks up to four questions with its recommended answer preselected, and lists the functions it will add, change or remove. You answer and press *Build*.
 3. **Build inside the fence.** A hook blocks every edit outside the fenced modules. Before the agent may stop, the project's tests run; if they fail it is sent back once.
 4. **Review the version.** Every run that changed code becomes a numbered version in **History**: what you asked, which modules and functions changed, whether the tests passed, the cost, the diff, and a revert.
 
 ![History: two builds on the iris example, which module each changed, and the functions of v2](docs/history.png)
+
+## Three levels, from what the system does to how its functions work together
+
+Reading code line by line was the human engineer's way in. With an agent writing the lines, what you need is the shape: which part does what, and which parts talk to each other. modfence gives you that at three levels, and each one is also a fence you can hand the agent.
+
+| Level | You see | Click | Fence |
+|---|---|---|---|
+| **1 Roles** | What the system does: observer, segmenter, inference, memory ... Each box is a role with its files and lines; lines between boxes are imports (the 3 strongest per box). | a role opens its folders | the role's files |
+| **2 Folders of a role** | The folders the role's files live in, and which other roles they call into (grey). | a folder opens its function graph | the module (panel) |
+| **3 Functions and classes** | Who calls whom and who inherits from whom, across the files of the folder; calls into other folders or roles at the edge. Static and approximate: the bar says how many calls were traced. | a function to mention it in the instruction | shift-click: that function alone |
+
+**Where roles come from.** On a project with more than 12 modules, the first open groups the files by folder and splits big flat folders by the words in their file names (deterministic), then one Haiku call (about one cent) maps those groups onto 6-15 roles named in the project's own words. A file moves between groups only if its imports back it. You then rename roles, move files and confirm (*Files*, *Rename*, *Confirm roles*); roles keep a stable id, so a rename never changes which files they hold, and new files wait under "not placed yet". Names are checked: at most 3 words and 24 characters, and no two alike. This method was chosen out of nine by measurement: see [Evaluation, section 4](docs/EVALUATION.md#4-grouping-files-into-roles).
+
+**A function fence** lets the agent edit the function's file (the hook works per file); after the run, any other function it changed in that file is listed in red.
 
 ## Run it
 
@@ -29,7 +43,8 @@ It opens `http://127.0.0.1:8765` on the current directory. `modfence a b` opens 
 
 ## Big projects
 
-- **Folders fold.** A project with more than 60 modules opens as its top folders (fastapi: 430 modules as 4 folders). Click a folder to open it; the path at the top goes back. Search (`/`) finds any module and opens the folders down to it.
+- **Roles first.** Above 12 modules the project opens at its roles (see above); *All modules* shows the module graph.
+- **Folders fold.** In the module graph, a project with more than 60 modules opens as its top folders (fastapi: 430 modules as 4 folders). Click a folder to open it; the path at the top goes back. Search (`/`) finds any module and opens the folders down to it.
 - **Fast after the first scan.** Parsed files and file hashes are cached by size and modification time. Measured on a laptop: fastapi (1,219 Python files) scans and snapshots in 1.6 s once cached (8.9 s for the first scan; 61 s right after cloning, when the disk cache is cold too); pydantic (3,155 files) in 2.2 s (11.8 s first scan).
 - **Revert is kept for the fence.** Before a run, modfence keeps a copy of up to 50 MB of the project's files, and always of the fenced modules' files, so the run can be undone.
 
@@ -84,7 +99,9 @@ The two versions in the History screenshot are real runs on it (Claude Code 2.1.
 - **Runs use your Claude Code settings**, including your CLAUDE.md (the plan's questions come in your chat language). Function summaries do not.
 - **"Used by" per function** counts `from x import name`; `import x` then `x.f()` is not traced to the function.
 - **Plan + build is not benchmarked yet.** One calculator run cost $0.76 against $0.51 for a fenced run without a plan; n = 1, so the comparison is N/A.
-- **One run at a time per project.** The grouping threshold (60 modules) is fixed.
+- **Roles are a proposal.** Measured on one 400-file system against its docs, the proposal agrees with them at ARI 0.61 (1 = identical). Expect to move files.
+- **The function graph is static**: calls through variables, `getattr` and duck typing are missed (on that system about one call in five was traced).
+- **One run at a time per project.** The thresholds (12 modules for roles, 60 for folding, 3 links per box) are fixed.
 
 ## Evaluation
 
@@ -96,4 +113,4 @@ On four cross-module features, fencing the modules a feature needs (tests includ
 python -m unittest discover -s tests -t .
 ```
 
-27 deterministic tests. No model is called: `tests/fake_claude.py` stands in for the CLI, emitting Claude Code's stream-json events and making the edits the prompt asks for.
+32 deterministic tests. No model is called: `tests/fake_claude.py` stands in for the CLI, emitting Claude Code's stream-json events and making the edits the prompt asks for.

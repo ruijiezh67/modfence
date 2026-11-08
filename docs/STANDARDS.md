@@ -28,12 +28,23 @@ Sources (short names used below):
 
 | Rule | Source | Status | How to check |
 |---|---|---|---|
-| Tests come with every change, and the suite passes before a commit. | git | Yes: 27 deterministic tests, no model or network. | `python -m unittest discover -s tests -t .` |
+| Tests come with every change, and the suite passes before a commit. | git | Yes: 32 deterministic tests, no model or network. | `python -m unittest discover -s tests -t .` |
 | No whitespace errors. | git | Yes. | `git diff --check` |
 | One logical change per commit, subject 50 characters or less. | git | Since 2026-11-06; two older subjects are longer (74 and 63). | `git log --format=%s` |
 | Standard library only; nothing installed outside the project. | (project rule) | Yes: `dependencies = []` in `pyproject.toml`. | `pip install .` in a fresh venv, then `modfence --help` |
 | Local server cannot be driven by another website. | OWASP (CSRF, DNS rebinding) | Yes: `Host` must be localhost; writes need the `X-Modfence` header. | `test_guards` |
 | CI runs the tests on every push. | git | **Not yet**: the workflow is ready on branch `ci`, waiting for a token with the `workflow` scope. | N/A |
+
+## The rules for how modfence groups a project
+
+| Rule | Source | Status | How to check |
+|---|---|---|---|
+| Score a grouping against a reference with the field's measures. | Architecture-recovery studies (ARI, NMI, MoJoFM) | ARI, NMI and pairwise F1: yes. MoJoFM: N/A, not implemented. | `python bench/roles_eval.py PROJECT REFERENCE.json` |
+| Without a reference, prefer high cohesion and low coupling. | Stevens, Myers & Constantine 1974; Bunch's MQ | Reported for every method (MQ, share of crossing imports). | same script, no reference |
+| No cycles between parts. | Martin, Acyclic Dependencies Principle | Reported (cyclic groups); not enforced. | same script |
+| A proposal should not reshuffle after a small edit. | (stability, as used in clustering studies) | Reported (ARI after removing 10% of files, 5 seeds); model runs compared pairwise. | same script; EVALUATION section 4 |
+| The reference is built before the methods run, from the project's own docs, by someone who does not see their output. | (blinding) | Yes, for the one system measured; one annotator, so agreement between annotators is N/A. | EVALUATION section 4 |
+| A model may propose, code decides. | Reflexion models (Murphy, Notkin & Sullivan 1995) | Yes: the model names and assigns groups; a file move needs import evidence that code checks; the user confirms. | `test_roles_can_be_renamed_and_corrected_without_losing_anything` |
 
 ## What is measured, and what is not
 

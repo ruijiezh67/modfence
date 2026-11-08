@@ -117,7 +117,41 @@ Shallow clones at the commits below, parsed as data (nothing in them is executed
 - **Flat code is split into file modules.** Training repos keep `model.py` and `train.py` at the root, and nanochat keeps 15 files in one `nanochat/` package. With "a module is a directory", nanoGPT was one module and nanochat's core was one module, so nothing useful could be fenced. Now each root `.py` file, and each file in a directory with 8 or more `.py` files of its own, is a module: you can fence `nanochat/gpt.py` or `train.py` alone.
 - **Import scanning visits statements only.** It was 60.7 s on pydantic; it is 7.7 s now, with identical imports found in all 3,451 files of flask, rich and pydantic (checked against the full `ast.walk` version).
 
-**Not solved.** Big libraries now give big graphs (rich 141 modules, fastapi 430 because its `docs_src/` holds hundreds of example programs). There is no collapse or filter yet.
+**Since then.** Big graphs fold into folders and, above 12 modules, open at their roles (section 4). Imports now also resolve from a subfolder that the code runs from (`backend/` on `sys.path`): pydantic gains 64 edges (675 to 739), rich 7, fastapi none, and a private 581-file system went from 261 to 1,159.
+
+## 4. Grouping files into roles
+
+The top level of modfence is a project's roles (in a perception system: observer, segmenter, inference, memory ...). Roles rarely match folders, so modfence proposes them and the user renames, moves files and confirms. Which proposal method to ship was decided by measurement (2026-11-07, `bench/roles_eval.py`).
+
+**Metrics.** Against a reference: ARI (adjusted Rand index; 1 = same grouping, about 0 = chance), NMI, and pairwise F1, the measures architecture-recovery papers report. MoJoFM, the field's third usual metric, is not implemented (N/A). Without a reference: Bunch's MQ per group (cohesion against coupling, higher is better), the share of import lines that cross groups (lower is better), groups caught in a dependency cycle (the Acyclic Dependencies Principle), and stability (ARI between the grouping of all files and of a random 90% of them, mean of 5 seeds).
+
+**Reference.** One private research system: 581 Python files, 242k lines, a FastAPI backend with an older and a newer implementation of the same pipeline. A separate agent built the reference from the system's own architecture docs only, before any method ran and without seeing their output: 207 backend files in 16 roles, 134 placed because a doc names the file, 70 by folder rules the docs state, 3 confirmed by docstring; 17 files the docs do not place and 113 tests are not scored. Weaknesses: one annotator, partly stale docs, and 34% of placements follow folders, which favours folder methods.
+
+**Deterministic methods** (selected rows; all rows in the private run notes):
+
+| Method | Groups | ARI | NMI | F1 | MQ | Crossing imports | Cyclic groups | Stability |
+|---|---|---|---|---|---|---|---|---|
+| modfence modules (folders, flat folders split into files) | 383 | 0.06 | 0.66 | 0.07 | 0.01 | 0.96 | 66 | 1.00 |
+| top folder | 44 | 0.22 | 0.61 | 0.31 | 0.20 | 0.35 | 19 | 1.00 |
+| two folder levels | 54 | **0.42** | **0.71** | **0.46** | 0.25 | 0.37 | 23 | 1.00 |
+| path words | 87 | 0.17 | 0.62 | 0.20 | 0.10 | 0.86 | 63 | 0.93 |
+| Louvain on imports, hubs set aside | 24 | 0.18 | 0.46 | 0.28 | 0.66 | 0.06 | 6 | 0.91 |
+| imports + folders + words (best of 6 weightings) | 19 | 0.26 | 0.52 | 0.33 | 0.76 | 0.14 | 10 | 0.84 |
+| folders merged by imports | 18 | 0.22 | 0.48 | 0.33 | 0.58 | 0.07 | 2 | 0.89 |
+| two folder levels, flat folders split by path words | 228 | 0.14 | 0.68 | 0.16 | 0.06 | 0.88 | 94 | 0.92 |
+
+The structural metrics and the reference disagree: clustering the import graph gives the cleanest structure (crossing imports 0.06 against 0.37, few cycles) but matches the documented roles worst. The same split showed on fastapi, pydantic and rich, where no reference exists: import clustering cut crossing imports from 0.67-1.00 (folders) to 0.09-0.21 and removed most cycles, at stability 0.59-0.93 against 1.00 for folders. This agrees with the literature: documented architectures follow folders more than coupling.
+
+**Adding a model.** One Haiku call names the groups. Asked freely to name groups, it merged same-job groups in 1 run of 3 (ARI 0.42 → 0.52 once, unchanged twice), so free naming was dropped. The shipped prompt is deductive: decide 6-15 roles from the project's own vocabulary, then assign every group to one; file moves need import evidence that code checks.
+
+| Base grouping | Model | Runs | ARI | NMI | F1 | Run-to-run ARI | Cost per run |
+|---|---|---|---|---|---|---|---|
+| two folder levels | Haiku | 3 | 0.56 (0.53-0.58) | 0.71 | 0.60 | 0.87 | $0.004-0.008 |
+| two folder levels | Sonnet | 1 | 0.56 | 0.69 | 0.61 | N/A | $0.088 |
+| imports + folders + words | Haiku | 3 | 0.26 | 0.51 | 0.33 | N/A | $0.004-0.008 |
+| **flat folders split by path words** | **Haiku** | 3 | **0.61 (0.54-0.66)** | **0.74** | **0.65** | 0.77 | $0.009-0.015 |
+
+modfence ships the last row: from 0.42 (best deterministic) to 0.61 ARI for about one cent, and Sonnet at ten times the cost was no better. For scale only, since the systems differ: the best 2026 architecture-recovery method reports ARI 0.51 on eight other systems. Limits: one reference system, one annotator, three runs per row, and the model reads the same docs the reference was built from, which favours it. That is why the result is a proposal the user confirms, not an answer.
 
 ## How modfence compares with popular tools
 
