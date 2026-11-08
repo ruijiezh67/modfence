@@ -2,7 +2,7 @@
 
 modfence exists for one thing: **module vibe coding**. You understand your project as modules, then direct the AI module by module. Every design choice and every revision is checked against the six rules below. If a change serves none of them, it does not ship. If it breaks one, it needs a written reason.
 
-1. **Save tokens.** Build the project's graph deterministically, with no model call wherever code can do it. Build two outputs from it: a picture for the user, and a compact document for the AI only. That document does not have to be readable by people, but it must replace the AI's own grep-and-read exploration.
+1. **Save tokens.** Build the project's graph deterministically, with no model call wherever code can do it. Build two outputs from it: a picture for the user, and a compact document for the AI only. That document is written for the model, not for people. Treat it like a latent: it can be unreadable to a person, and its format is whatever measures best on tokens multiplied by task success. It must replace the AI's own grep-and-read exploration.
 
 2. **Code through a picture.** The graph is how a programmer sees what they are doing: which module does what, which ones talk to each other, and what a change touched. Each view must help someone understand or act. A view that only decorates is removed.
 
@@ -18,4 +18,5 @@ modfence exists for one thing: **module vibe coding**. You understand your proje
 
 - Every pull request and commit that changes behaviour names the rule it serves.
 - A measurement backs every claim about tokens or safety. A number that was not measured is written N/A, never 0.
+- Every design is a trade-off among the six rules. Name what it gains and what it costs on each rule it touches.
 - When two rules conflict, the earlier one wins, except rule 4: never trade the safety of working code for tokens.
