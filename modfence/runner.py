@@ -339,16 +339,20 @@ class Job:
             checks = _read_jsonl(os.path.join(run_dir(self.root, self.id), "checks.jsonl"))
             check = dict(ok=checks[-1]["ok"], summary=checks[-1]["summary"], blocked=sum(c["blocked"] for c in checks)) if checks else None
             res = next((e for e in reversed(self.events) if e["kind"] == "result"), {})
+            # golden rule 3: names other modules used before the run, whose signature the run broke
+            contract = brief.contract_breaks(self.graph, {p: (None if p in added else self.before_bytes.get(p),
+                                                              None if p in deleted else _read_or_none(os.path.join(self.root, p)))
+                                                          for p in modified + deleted if p.endswith(".py")})
             files = save_run(self, changed, set(added), set(deleted), set(outside),
                              dict(prompt=self.prompt, phase=self.phase, modules=changed_mods, ripple=ripple, check=check,
-                                  cost_usd=res.get("cost_usd"), turns=res.get("turns")))
+                                  cost_usd=res.get("cost_usd"), turns=res.get("turns"), contract=contract))
             out_fns = [f"{f['path']}::{u['name']}" for f in files if f["path"] in self.fn_fence for u in f["funcs"] or []
                        if u["name"] != "(module level)" and not any(u["name"] == n or u["name"].startswith(n + ".")
                                                                    for n in self.fn_fence[f["path"]])]
             if check:
                 self.emit("check", **check)
             self.emit("changes", added=added, modified=modified, deleted=deleted, outside_scope=outside, outside_functions=out_fns,
-                      modules=changed_mods, ripple=ripple, run=self.id, files=files)
+                      modules=changed_mods, ripple=ripple, run=self.id, files=files, contract=contract)
         except Exception as e:
             self.emit("error", text=f"rescan failed: {e}")
         with self.cond:

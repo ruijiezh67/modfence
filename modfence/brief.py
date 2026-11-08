@@ -73,15 +73,17 @@ def facts(graph, scope):
     root, mine = graph["root"], scope_files(graph, scope)
     mod_of = {f: i["module"] for f, i in graph["files"].items()}
     docs = {m["id"]: m["doc"] for m in graph["modules"]}
-    used = defaultdict(lambda: defaultdict(int))   # (module, target file) -> name -> import lines in the fence
+    used = defaultdict(lambda: defaultdict(int))   # (module, target file) -> name -> uses in the fence
     users = defaultdict(lambda: defaultdict(list))  # fence file -> name -> [user file:line]
     for e in graph["edges"]:
         for r in e["receipts"]:
             a, b = r["file"] in mine, r["target_file"] in mine
-            if a and not b:
-                used[(mod_of[r["target_file"]], r["target_file"])][r["name"]] += 1  # None: the whole module
-            elif b and not a:
-                users[r["target_file"]][r["name"] or "(module)"].append(f"{r['file']}:{r['line']}")
+            names = [(r["name"], r["line"])] if r["name"] else attr_uses(root, r) or [(None, r["line"])]  # mod.f() counts as f
+            for n, line in names:
+                if a and not b:
+                    used[(mod_of[r["target_file"]], r["target_file"])][n] += 1  # None: the whole module, no attribute seen
+                elif b and not a:
+                    users[r["target_file"]][n or "(module)"].append(f"{r['file']}:{line}")
     deps = []
     for (m, f), names in used.items():
         units = _units(root, f)
@@ -216,3 +218,152 @@ def show(root, name):
     except (StopIteration, SyntaxError, OSError):
         doc = ""
     return _stub(u) + (f'\n"""{doc}"""' if doc else "")
+
+
+# ---------- the contract across a run (golden rule 3): did a run break what other modules use? ----------
+def _params(fn):
+    """[(name, kind, required, default source)] for a def, self/cls dropped."""
+    a, out = fn.args, []
+    pos = a.posonlyargs + a.args
+    defaults = [None] * (len(pos) - len(a.defaults)) + list(a.defaults)
+    for i, (x, d) in enumerate(zip(pos, defaults)):
+        if i == 0 and x.arg in ("self", "cls"):
+            continue
+        out.append((x.arg, "positional", d is None, ast.unparse(d) if d is not None else None))
+    if a.vararg:
+        out.append(("*" + a.vararg.arg, "var", False, None))
+    for x, d in zip(a.kwonlyargs, a.kw_defaults):
+        out.append((x.arg, "keyword", d is None, ast.unparse(d) if d is not None else None))
+    if a.kwarg:
+        out.append(("**" + a.kwarg.arg, "var", False, None))
+    return out
+
+
+def signatures(data):
+    """{top-level name: {"kind", "params", "bases"}} from a file's bytes; None when it does not parse. A class's params
+    are its __init__'s, else its annotated fields (dataclasses). Imported or assigned names are "name" kind."""
+    if data is None:
+        return {}
+    try:
+        tree = ast.parse(data.decode("utf-8"))
+    except (UnicodeDecodeError, SyntaxError, ValueError):
+        return None
+    out = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            out[node.name] = {"kind": "def", "params": _params(node), "bases": []}
+        elif isinstance(node, ast.ClassDef):
+            init = next((x for x in node.body if isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef)) and x.name == "__init__"), None)
+            fields = [(x.target.id, "keyword", x.value is None, ast.unparse(x.value) if x.value is not None else None)
+                      for x in node.body if isinstance(x, ast.AnnAssign) and isinstance(x.target, ast.Name)]
+            out[node.name] = {"kind": "class", "params": _params(init) if init else fields,
+                              "bases": [ast.unparse(b) for b in node.bases]}
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for a in node.names:
+                out.setdefault((a.asname or a.name).split(".")[0], {"kind": "name", "params": None, "bases": []})
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            for t in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+                if isinstance(t, ast.Name):
+                    out.setdefault(t.id, {"kind": "name", "params": None, "bases": []})
+    return out
+
+
+def breaks(old, new):
+    """What changed in one name's contract, in the spirit of griffe's breakage kinds; [] when nothing a caller relies
+    on changed. old/new: entries of signatures(); new None means the name is gone."""
+    if new is None:
+        return ["removed"]
+    if old["kind"] != new["kind"] and "name" not in (old["kind"], new["kind"]):
+        return [f"was a {old['kind']}, now a {new['kind']}"]
+    out = [f"base {b} removed" for b in old["bases"] if b not in new["bases"]]
+    if old["params"] is None or new["params"] is None:
+        return out
+    np = {p[0]: (i, p) for i, p in enumerate(new["params"])}
+    takes_any = any(p[0].startswith("**") for p in new["params"])
+    for i, (name, kind, req, default) in enumerate(old["params"]):
+        if name.startswith("*"):
+            if name not in np:
+                out.append(f"{name} removed")
+            continue
+        if name not in np:
+            if not takes_any:
+                out.append(f"parameter {name} removed")
+            continue
+        j, (_, nkind, nreq, ndefault) = np[name]
+        if kind == "positional" and nkind == "positional" and j != i:
+            out.append(f"parameter {name} moved")
+        if kind != nkind and "var" not in (kind, nkind):
+            out.append(f"parameter {name} became {nkind}-only" if nkind == "keyword" else f"parameter {name} kind changed")
+        if nreq and not req:
+            out.append(f"parameter {name} lost its default")
+        elif not req and not nreq and default != ndefault:
+            out.append(f"default of {name} changed: {default} -> {ndefault}")
+    olds = {p[0] for p in old["params"]}
+    out += [f"new required parameter {p[0]}" for p in new["params"] if p[0] not in olds and p[2] and not p[0].startswith("*")]
+    return out
+
+
+def contract_breaks(graph, files_before_after):
+    """Names other modules use (from graph, taken before the run) whose contract the run broke.
+    files_before_after: {path: (before bytes or None, after bytes or None)}. Returns [{file, name, change, users}]."""
+    mod_of = {f: i["module"] for f, i in graph["files"].items()}
+    users = defaultdict(lambda: defaultdict(list))
+    for user, line, target, name in _named_receipts(graph):
+        if target in files_before_after and mod_of.get(user) != mod_of.get(target):
+            users[target][name].append(f"{user}:{line}")
+    out = []
+    for f in sorted(users):
+        before, after = files_before_after[f]
+        old, new = signatures(before), signatures(after)
+        if not old or new is None:  # unreadable before, or does not parse now (the done check reports that)
+            continue
+        for n in sorted(users[f]):
+            if n in old:
+                for change in breaks(old[n], new.get(n)):
+                    out.append({"file": f, "name": n, "change": change, "users": sorted(set(users[f][n]))})
+    return out
+
+
+_TREES = {}  # (full path, size, mtime) -> ast; the user files of one run, parsed once
+
+
+def attr_uses(root, receipt):
+    """For an import of a whole module (`from pkg import mod`, `import pkg.mod as m`), the names the importing file
+    takes from it through attributes (`mod.f(...)`): [(name, line)]. [] for a from-import of a name."""
+    if receipt["name"]:
+        return []
+    stem = os.path.splitext(os.path.basename(receipt["target_file"]))[0]
+    if stem == "__init__":
+        stem = os.path.basename(os.path.dirname(receipt["target_file"]))
+    aliases = set()
+    try:
+        stmt = ast.parse(receipt["code"].strip().rstrip("(\\").strip()).body[0]
+        for a in stmt.names:
+            if isinstance(stmt, ast.ImportFrom) and a.name == stem:
+                aliases.add(a.asname or a.name)
+            elif isinstance(stmt, ast.Import) and a.name.split(".")[-1] == stem:
+                aliases.add(a.asname or a.name)
+    except (SyntaxError, IndexError, AttributeError):
+        aliases.add(stem)
+    full = os.path.join(root, receipt["file"])
+    try:
+        st = os.stat(full)
+        key = (full, st.st_size, st.st_mtime_ns)
+        if key not in _TREES:
+            _TREES[key] = ast.parse(analyze.read_text(full))
+        tree = _TREES[key]
+    except (OSError, SyntaxError, ValueError):
+        return []
+    return sorted({(n.attr, n.lineno) for n in ast.walk(tree)
+                   if isinstance(n, ast.Attribute) and isinstance(n.value, (ast.Name, ast.Attribute)) and ast.unparse(n.value) in aliases})
+
+
+def _named_receipts(graph):
+    """Every receipt as (user file, line, target file, name): direct from-imports, plus attribute uses of modules."""
+    for e in graph["edges"]:
+        for r in e["receipts"]:
+            if r["name"]:
+                yield r["file"], r["line"], r["target_file"], r["name"]
+            else:
+                for n, line in attr_uses(graph["root"], r):
+                    yield r["file"], line, r["target_file"], n

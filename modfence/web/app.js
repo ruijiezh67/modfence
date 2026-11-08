@@ -945,7 +945,9 @@ function renderChanges(root, c, r, check, live) {
   const rev = files.some((f) => f.revertible) && c && c.run;
   const units = (f) => f.funcs == null ? (f.path.endsWith(".py") && f.status !== "deleted" ? `<p class="none">Could not read its functions.</p>` : "")
     : f.funcs.map((u) => `<div class="cf ${u.status}"><span class="sym" aria-label="${u.status}">${SYM[u.status]}</span><span class="mono nm">${esc(u.name)}${u.kind === "def" || u.kind === "method" ? "()" : ""}</span><span class="fdesc" data-unit="${esc(f.path + "::" + u.name)}"></span></div>`).join("");
-  box.innerHTML = (outside.length ? `<div class="banner bad">${plural(outside.length, "file")} changed outside the fence: <span class="mono">${esc(outside.map((f) => f.path).join(", "))}</span>${rev ? `<button class="btn" type="button" data-rev-out>Revert those</button>` : ""}</div>` : "")
+  const broke = (c && c.contract) || [];
+  box.innerHTML = (broke.length ? `<div class="banner bad"><b>Contract broken</b>: other modules use ${broke.length === 1 ? "this name" : "these names"} and the run changed ${broke.length === 1 ? "it" : "them"}.<ul class="broke">${broke.map((b) => `<li><span class="mono">${esc(b.name)}</span> ${esc(b.change)} <span class="u">used by ${esc([...new Set(b.users.map((u) => u.split(":")[0]))].slice(0, 3).join(", "))}${b.users.length > 3 ? " …" : ""}</span></li>`).join("")}</ul></div>` : "")
+    + (outside.length ? `<div class="banner bad">${plural(outside.length, "file")} changed outside the fence: <span class="mono">${esc(outside.map((f) => f.path).join(", "))}</span>${rev ? `<button class="btn" type="button" data-rev-out>Revert those</button>` : ""}</div>` : "")
     + (files.length ? files.map((f, i) => `<div class="cfile${f.outside ? " out" : ""}">
         <div class="cfh"><span class="mono p" title="${esc(f.path)}">${esc(f.path)}</span>${f.outside ? '<span class="tagout">outside fence</span>' : ""}${f.status !== "modified" ? `<span class="st">${f.status}</span>` : ""}
           <span class="s mono">${f.plus == null ? "N/A" : `<span class="plus">+${f.plus}</span> <span class="minus">−${f.minus}</span>`}</span>

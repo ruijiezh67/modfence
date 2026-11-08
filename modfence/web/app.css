@@ -601,3 +601,5 @@ details.src[open]::details-content, .msec details[open]::details-content { block
 body[data-view="history"] :is(.crumbs, .legend, .zoom, .hint) { display: none; }
 .fseal { float: right; margin-top: 4px; font: 12px var(--mono); padding: 2px 8px; border: 1.5px solid var(--ink); border-radius: var(--r); background: var(--ink); color: var(--surface); cursor: pointer; }
 .fseal[aria-pressed="false"] { background: none; color: var(--text-2); border-style: dashed; }
+.broke { margin: 4px 0 0; padding-left: 18px; }
+.broke .u { color: var(--text-3); font-size: 12px; }

@@ -265,6 +265,25 @@ class ScopeGuardTest(unittest.TestCase):
         self.assertFalse(explain.sealed, "Explain reads everything")
         self.assertFalse(runner.Job(d, ["app/api"], "x", g, FAKE, seal=False).sealed)
 
+    def test_contract_breaks_only_for_names_other_modules_use(self):
+        d = project()
+        g = analyze.analyze(d)
+        old = b'"""Values."""\nLIMIT = 3\n\ndef double(x):\n    return 2 * x\n\ndef _helper(a):\n    return a\n'
+        case = lambda new: brief.contract_breaks(g, {"app/core/values.py": (old, new)})
+        self.assertEqual(case(old.replace(b"return 2 * x", b"return x + x")), [], "a body change keeps the contract")
+        self.assertEqual(case(old.replace(b"def _helper(a)", b"def _helper(a, b)")), [], "nobody else uses _helper")
+        got = case(old.replace(b"def double(x)", b"def double(x, factor)"))
+        self.assertEqual([(b["name"], b["change"]) for b in got], [("double", "new required parameter factor")])
+        self.assertEqual(got[0]["users"], ["app/api/handlers.py:1"])
+        self.assertEqual(case(old.replace(b"def double(x)", b"def double(x, factor=2)")), [], "an optional parameter is fine")
+        self.assertEqual([b["change"] for b in case(old.replace(b"def double(x)", b"def twice(x)"))], ["removed"])
+        self.assertEqual([b["change"] for b in case(old.replace(b"def double(x)", b"def double(y)"))], ["parameter x removed", "new required parameter y"])
+        self.assertEqual(case(old.replace(b"def double(x):\n    return 2 * x", b"from app.core.other import double")), [], "re-exported")
+        write(os.path.join(d, "app/cli/extra.py"), "from app.core import values as v\n\ndef go():\n    return v.double(1) + v.LIMIT\n")
+        g = analyze.analyze(d)
+        got = brief.contract_breaks(g, {"app/core/values.py": (old, old.replace(b"def double(x)", b"def double(x, factor)"))})
+        self.assertIn("app/cli/extra.py:4", got[0]["users"], "a use through a module alias (v.double) counts")
+
     def test_hook_fails_closed(self):
         self.d = project()
         self.assertEqual(self.hook(None, ["app/core"], raw="not json")["permissionDecision"], "deny")
