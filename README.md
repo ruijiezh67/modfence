@@ -1,31 +1,28 @@
 <h1 align="center"><img src="docs/banner.svg" alt="modfence" width="720"></h1>
 
-**Vibe code one module at a time. Fence what the AI agent may edit, agree on a plan, and get every run back as a version you can read by function and undo.**
+**Understand your project as modules, then direct the AI module by module.** modfence draws your code as the roles the system plays and the parts inside them, and every box is something you can hand the agent as its fence. Design rules: [docs/GOLDEN_RULES.md](docs/GOLDEN_RULES.md).
 
 ![modfence on the iris example: the evaluate module selected and fenced, its functions with what each does](docs/graph.png)
 
 Tools that draw a repository's structure help you read it. modfence is for changing it with an AI agent without losing track of your own project. You work in **fence coding**:
 
-1. **Pick the part.** Zoom from the system's roles to a role's folders to a graph of its functions and classes (below). Fence a role, a module, or a single function.
+1. **Pick the box.** Zoom from the system's roles to a role's parts (below). Select a box: its card says what it does; *Ask / edit* makes it the fence.
 2. **Agree on a plan.** The agent reads the project (it cannot edit yet), asks up to four questions with its recommended answer preselected, and lists the functions it will add, change or remove. You answer and press *Build*.
 3. **Build inside the fence.** A hook blocks every edit outside the fenced modules. Before the agent may stop, the project's tests run; if they fail it is sent back once.
 4. **Review the version.** Every run that changed code becomes a numbered version in **History**: what you asked, which modules and functions changed, whether the tests passed, the cost, the diff, and a revert.
 
 ![History: two builds on the iris example, which module each changed, and the functions of v2](docs/history.png)
 
-## Three levels, from what the system does to how its functions work together
+## Two levels: what the system does, and the parts of each role
 
-Reading code line by line was the human engineer's way in. With an agent writing the lines, what you need is the shape: which part does what, and which parts talk to each other. modfence gives you that at three levels, and each one is also a fence you can hand the agent.
+Reading code line by line was the human engineer's way in. With an agent writing the lines, what you need is the shape: which part does what, and which parts talk to each other. modfence gives you that at two levels, and every box is also a fence you can hand the agent. Function-level graphs were tried and removed: nobody wants to read them.
 
-| Level | You see | Select, then *Open* | Fence |
+| Level | You see | On the card | Fence |
 |---|---|---|---|
-| **1 Roles** | What the system does: observer, segmenter, inference, memory ... Each box is a role with its files and lines; lines between boxes are imports (the 3 strongest per box). | *Open parts* | the role's files |
-| **2 Parts of a role** | Only the role's own parts, at most 8: files grouped by the word their names share (all `*_round` files), else by folder; a role of 8 files or fewer shows its files. Lines are the imports between parts. Imports to other roles are counted, not drawn. | *Open functions* | the module (panel) |
-| **3 Functions and classes** | Only the part's own functions and classes, at most 16: the ones that call others here first, tiny helpers last; the rest are counted. Who calls whom and who inherits from whom. Calls leaving the part are counted, not drawn. Static and approximate: the bar says how many calls were traced. | a click mentions the function in the instruction | shift-click: that function alone |
+| **1 Roles** | What the system does: observer, segmenter, inference, memory ... Each box is a role with its files and lines; lines between boxes are imports (the 3 strongest per box). | *Open parts*, *Ask / edit* | the role's files |
+| **2 Parts of a role** | Only the role's own parts, at most 8: files grouped by the word their names share (all `*_round` files), else by folder; a role of 8 files or fewer shows its files. Lines are the imports between parts. Imports to other roles are counted, not drawn. | *Ask / edit* | the part's files |
 
 **Where roles come from.** On a project with more than 12 modules, the first open groups the files by folder and splits big flat folders by the words in their file names (deterministic), then one Haiku call (about one cent) maps those groups onto 6-15 roles named in the project's own words. A file moves between groups only if its imports back it. You then rename roles, move files and confirm (*Files*, *Rename*, *Confirm roles*); roles keep a stable id, so a rename never changes which files they hold, and new files wait under "not placed yet". Names are checked: at most 3 words and 24 characters, and no two alike. This method was chosen out of nine by measurement: see [Evaluation, section 4](docs/EVALUATION.md#4-grouping-files-into-roles).
-
-**A function fence** lets the agent edit the function's file (the hook works per file); after the run, any other function it changed in that file is listed in red.
 
 ## Run it
 
@@ -100,8 +97,7 @@ The two versions in the History screenshot are real runs on it (Claude Code 2.1.
 - **"Used by" per function** counts `from x import name`; `import x` then `x.f()` is not traced to the function.
 - **Plan + build is not benchmarked yet.** One calculator run cost $0.76 against $0.51 for a fenced run without a plan; n = 1, so the comparison is N/A.
 - **Roles are a proposal.** Measured on one 400-file system against its docs, the proposal agrees with them at ARI 0.61 (1 = identical). Expect to move files.
-- **The function graph is static**: calls through variables, `getattr` and duck typing are missed (on that system about one call in five was traced).
-- **One run at a time per project.** The thresholds (12 modules for roles, 60 for folding, 3 links per box) are fixed.
+- **One run at a time per project.** The thresholds (12 modules for roles, 8 parts per role, 60 for folding, 3 links per box) are fixed.
 
 ## Evaluation
 
@@ -113,4 +109,4 @@ On four cross-module features, fencing the modules a feature needs (tests includ
 python -m unittest discover -s tests -t .
 ```
 
-33 deterministic tests. No model is called: `tests/fake_claude.py` stands in for the CLI, emitting Claude Code's stream-json events and making the edits the prompt asks for.
+32 deterministic tests. No model is called: `tests/fake_claude.py` stands in for the CLI, emitting Claude Code's stream-json events and making the edits the prompt asks for.

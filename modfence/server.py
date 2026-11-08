@@ -161,11 +161,6 @@ def make_handler(app, port):
                     return self.send_json({"ok": bool(job)})
                 if u.path.startswith("/api/roles/"):
                     return self.roles(app.project(q), u.path.rsplit("/", 1)[1], b)
-                if u.path == "/api/calls":
-                    root = app.project(q)
-                    g = analyze.analyze(root)
-                    files = [f for f in b.get("files") or [] if f in g["files"]][:400]
-                    return self.send_json(analyze.call_graph(root, files, set(g["files"])))
                 if u.path == "/api/tests":
                     ok, summary, out = runner.run_tests(app.project(q))
                     return self.send_json({"ok": ok, "summary": summary, "output": out})

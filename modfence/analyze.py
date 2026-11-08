@@ -6,8 +6,7 @@ of its own. Other root files belong to the module ".".
 An edge A -> B exists when a file in A imports a file in B. Nothing here asks a model: the graph is what the
 code says, so a node or an edge can always be traced back to a file and a line.
 """
-import ast, builtins, hashlib, os, threading, time
-from collections import Counter
+import ast, hashlib, os, threading, time
 
 
 def read_text(path):
@@ -328,73 +327,3 @@ def dependents(graph, module_ids):
                 seen.add(s)
                 todo.append(s)
     return sorted(seen)
-
-
-def call_graph(root, files, allfiles):
-    """How the top-level functions and classes of `files` use each other: calls (a method's calls count for its class),
-    and base classes. Found by name from the code, so it is approximate: calls through variables, getattr and duck
-    typing are missed. Returns {"nodes": [...], "edges": [...], "boundary": [...], "calls": n, "resolved": n}.
-    Node ids are "path::Name"; a boundary node is another project file the code calls into."""
-    files = list(files)
-    keep = set(files)
-    nodes, edges, boundary, calls, resolved = [], Counter(), Counter(), 0, 0
-    tops = {}
-    trees = {}
-    for f in files:
-        text = read_text(os.path.join(root, f))
-        try:
-            tree = ast.parse(text)
-        except SyntaxError:
-            continue
-        trees[f] = tree
-        for node in tree.body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                tops[(f, node.name)] = f"{f}::{node.name}"
-                doc = (ast.get_docstring(node) or "").strip()
-                nodes.append({"id": f"{f}::{node.name}", "name": node.name, "file": f, "line": node.lineno,
-                              "kind": "class" if isinstance(node, ast.ClassDef) else "def",
-                              "lines": node.end_lineno - node.lineno + 1, "doc": doc.splitlines()[0] if doc else ""})
-    for f, tree in trees.items():
-        imported = {}  # local name -> target file, for `from x import name`
-        for parts, _line, is_from in import_specs(f, tree):
-            t, used = _resolve(parts, allfiles, f.split("/")[:-1])
-            if t and is_from and used == len(parts) - 1:
-                imported[parts[-1]] = t
-        for node in tree.body:
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                continue
-            src = f"{f}::{node.name}"
-            targets = []
-            if isinstance(node, ast.ClassDef):
-                targets += [(b.id, "inherits") for b in node.bases if isinstance(b, ast.Name)]
-            for sub in ast.walk(node):
-                if isinstance(sub, ast.Call):
-                    calls += 1
-                    fn = sub.func
-                    if isinstance(fn, ast.Name):
-                        if hasattr(builtins, fn.id):  # print(), len() ... are not project code
-                            calls -= 1
-                            continue
-                        targets.append((fn.id, "calls"))
-                    elif isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name) and fn.value.id in imported:
-                        targets.append((fn.value.id, "calls"))  # SomeClass.create(), imported module objects
-                    else:
-                        continue
-            for name, kind in targets:
-                if (f, name) in tops:
-                    dst = tops[(f, name)]
-                elif name in imported:
-                    t = imported[name]
-                    dst = tops.get((t, name)) if t in keep else None
-                    if dst is None:
-                        boundary[(src, t, kind)] += 1
-                        resolved += kind == "calls"
-                        continue
-                else:
-                    continue
-                resolved += kind == "calls"
-                if dst != src:
-                    edges[(src, dst, kind)] += 1
-    return {"nodes": nodes, "edges": [{"source": a, "target": b, "kind": k, "count": n} for (a, b, k), n in sorted(edges.items())],
-            "boundary": [{"source": a, "file": t, "kind": k, "count": n} for (a, t, k), n in sorted(boundary.items())],
-            "calls": calls, "resolved": resolved}

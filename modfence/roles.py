@@ -516,7 +516,9 @@ def role_parts(files, most=PART_MAX):
         for raw in re.split(r"[_.\-]+", os.path.basename(f)):
             for t in tokens(raw):
                 shown[t][raw.lower()] += 1
-    names = {f: set(tokens(os.path.basename(f))) for f in files}
+    # a word that is also a folder here would read like that folder ("evaluation" next to "evaluation/"): not a name
+    in_folders = {t for f in files for t in tokens(os.path.dirname(f))}
+    names = {f: set(tokens(os.path.basename(f))) - in_folders for f in files}
     df = Counter(t for ts in names.values() for t in ts)
     key = {}
     for f in files:

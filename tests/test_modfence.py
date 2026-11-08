@@ -125,6 +125,8 @@ class RolesTest(unittest.TestCase):
         self.assertEqual({parts[f"ev/round_{i}.py"] for i in range(4)}, {"round"})  # the word as written, not a stem
         self.assertEqual(parts["ev/misc0.py"], "ev/")
         self.assertEqual(parts, roles.role_parts(list(reversed(files))))  # deterministic
+        clash = [f"evaluation/x{i}.py" for i in range(9)] + ["backend/evaluation_judge.py", "w/backend/evaluation_judge.py"]
+        self.assertEqual(roles.role_parts(clash)["backend/evaluation_judge.py"], "judge", "no part named like a folder")
 
     def test_imports_resolve_from_a_subfolder_root(self):
         d = tempfile.mkdtemp(prefix="modfence-test-")
@@ -169,16 +171,6 @@ class RolesTest(unittest.TestCase):
         self.assertIn("app/cli/main.py", next(r for r in v["roles"] if r["id"] == core["id"])["files"])
         self.assertNotIn("app/cli/main.py", next(r for r in v["roles"] if r["id"] == other["id"])["files"])
         self.assertEqual(v["unassigned"], ["app/core/extra.py"], "new files wait to be placed")
-
-    def test_call_graph_links_functions_across_files(self):
-        d = project()
-        write(os.path.join(d, "app/api/handlers.py"), "from app.core.values import double\n\ndef handle(x):\n    print(x)\n    return double(x)\n")
-        g = analyze.analyze(d)
-        c = analyze.call_graph(d, ["app/api/handlers.py", "app/core/values.py"], set(g["files"]))
-        self.assertIn({"source": "app/api/handlers.py::handle", "target": "app/core/values.py::double", "kind": "calls", "count": 1}, c["edges"])
-        self.assertEqual((c["calls"], c["resolved"]), (1, 1), "print() is not counted")
-        c = analyze.call_graph(d, ["app/api/handlers.py"], set(g["files"]))
-        self.assertEqual(c["boundary"][0]["file"], "app/core/values.py", "calls leaving the files are boundary links")
 
     def test_a_function_fence_allows_its_file(self):
         d = project()

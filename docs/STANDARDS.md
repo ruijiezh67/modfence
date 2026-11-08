@@ -28,7 +28,7 @@ Sources (short names used below):
 
 | Rule | Source | Status | How to check |
 |---|---|---|---|
-| Tests come with every change, and the suite passes before a commit. | git | Yes: 33 deterministic tests, no model or network. | `python -m unittest discover -s tests -t .` |
+| Tests come with every change, and the suite passes before a commit. | git | Yes: 32 deterministic tests, no model or network. | `python -m unittest discover -s tests -t .` |
 | No whitespace errors. | git | Yes. | `git diff --check` |
 | One logical change per commit, subject 50 characters or less. | git | Since 2026-11-06; two older subjects are longer (74 and 63). | `git log --format=%s` |
 | Standard library only; nothing installed outside the project. | (project rule) | Yes: `dependencies = []` in `pyproject.toml`. | `pip install .` in a fresh venv, then `modfence --help` |

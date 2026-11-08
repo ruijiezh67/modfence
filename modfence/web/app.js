@@ -112,14 +112,11 @@ function viewGraph(full, focus) {
   });
   return { ...full, modules: modules.sort((x, y) => x.id.localeCompare(y.id)), edges: [...edges.values()] };
 }
-const callCache = new Map(); // call graphs fetched for the card; dropped whenever the view is rebuilt, so never stale
 function regroup() {
-  callCache.clear();
   if (!(S.roles && S.roles.roles.length) && (S.level === "roles" || S.level === "parts")) S.level = "modules";
-  if (S.level === "funcs" && !S.calls) S.level = "parts";
   S.hiddenLinks = 0; S.outside = 0;
   if (S.picked) unpick();
-  S.graph = S.level === "roles" ? roleGraph() : S.level === "parts" ? partGraph(S.role) : S.level === "funcs" ? funcGraph() : viewGraph(S.full, S.focus);
+  S.graph = S.level === "roles" ? roleGraph() : S.level === "parts" ? partGraph(S.role) : viewGraph(S.full, S.focus);
   document.body.dataset.level = S.level;
   layout();
   drawGraph();
@@ -181,25 +178,6 @@ function partGraph(rid) {
   S.outside = aggregate((f) => (mine.has(f) ? "in" : fr[f] ? "out" : null)).reduce((a, e) => a + e.receipts.length, 0);
   return { ...S.full, modules: nodes, edges };
 }
-const FN_MAX = 16; // ponytail: a picture you can read at once; the full list is in the module panel
-function funcGraph() {
-  const c = S.calls, fr = fileRoles();
-  const oneFile = new Set(c.nodes.map((n) => n.file)).size === 1;
-  const nodes = c.nodes.map((n) => ({ id: n.id, kind: "fn", label: n.name + (n.kind === "class" ? "" : "()"), meta: oneFile ? `line ${n.line}` : `${clip(n.file.split("/").pop(), 14)}:${n.line}`,
-    files: [n.file], lines: n.lines, names: [], doc: n.doc }));
-  // At most FN_MAX boxes: the functions that drive the part (call others here), then the ones they lean on; tiny
-  // helpers (now(), say()) last. The rest are counted, not drawn.
-  const out = new Map(), inn = new Map(), add = (m, k) => m.set(k, (m.get(k) || 0) + 1);
-  c.edges.forEach((e) => { add(out, e.source); add(inn, e.target); });
-  const score = (n) => 2 * (out.get(n.id) || 0) + (inn.get(n.id) || 0) + Math.log2(1 + n.lines) - (n.lines < 5 ? 4 : 0) + (n.label.startsWith("_") ? 0 : 1);
-  const keep = new Set([...nodes].sort((a, b) => score(b) - score(a) || a.id.localeCompare(b.id)).slice(0, FN_MAX).map((n) => n.id));
-  S.lonely = nodes.length - keep.size;
-  const shownNodes = nodes.filter((n) => keep.has(n.id));
-  const edges = c.edges.filter((e) => keep.has(e.source) && keep.has(e.target))
-    .map((e) => ({ source: e.source, target: e.target, receipts: Array.from({ length: Math.min(e.count, 8) }, () => ({ file: e.source.split("::")[0], line: 0, code: e.kind, name: e.target.split("::")[1] })) }));
-  S.outside = c.boundary.reduce((a, b) => a + b.count, 0); // calls leaving this part: counted, not drawn
-  return { ...S.full, modules: shownNodes, edges };
-}
 function pick(id) { // a click only selects; the card below says what it is and opens it on purpose
   S.picked = id;
   const m = mod(id), card = $("#pick"), role = id.startsWith("role:"), folder = !!m.group, plain = S.level === "modules";
@@ -207,35 +185,17 @@ function pick(id) { // a click only selects; the card below says what it is and 
   card.innerHTML = `<div class="pk"><b>${esc(name)}</b><span class="mono">${plural(m.files.length, "file")} · ${m.lines.toLocaleString()} ln</span>`
     + `<button type="button" class="btn quiet" data-x aria-label="Close">${X_ICON}</button></div>`
     + (m.doc && !folder ? `<p title="${esc(m.doc)}">${esc(m.doc)}</p>` : "")
-    + `<div class="pa"><button type="button" class="btn primary" data-open>${role ? "Open parts" : folder ? "Open folder" : "Open functions"} ▸</button>`
-    + (plain && !folder ? `<button type="button" class="btn" data-ask>Ask / edit</button>` : "")
-    + (role && id !== "role:?" ? `<button type="button" class="btn" data-fence>Fence role</button>` : "") + `</div>`;
+    + `<div class="pa">` + (role || folder ? `<button type="button" class="btn primary" data-open>${role ? "Open parts" : "Open folder"} ▸</button>` : "")
+    + (folder || id === "role:?" ? "" : `<button type="button" class="btn${role ? "" : " primary"}" data-ask>Ask / edit</button>`) + `</div>`;
   card.hidden = false;
-  $("[data-open]", card).onclick = () => { unpick(); role ? openRole(id.slice(5)) : folder ? select(id) : openFuncs(m.files, name, !plain); };
-  $("[data-ask]", card)?.addEventListener("click", () => { unpick(); select(id); });
-  if (!role && !folder) callsOf(m.files).then((c) => { // nothing to draw: say so on the button instead of opening an empty level
-    const b = S.picked === id && $("[data-open]", card);
-    if (b && c && !c.nodes.length) { b.disabled = true; b.textContent = "No functions here"; $("[data-ask]", card)?.focus(); }
-  });
-  $("[data-fence]", card)?.addEventListener("click", () => { unpick(); fenceRole(id.slice(5)); });
+  $("[data-open]", card)?.addEventListener("click", () => { unpick(); role ? openRole(id.slice(5)) : select(id); });
+  // Ask / edit fences the box itself: a role or part fences its files, a module fences the module
+  $("[data-ask]", card)?.addEventListener("click", () => { unpick(); plain ? select(id) : fenceFiles(m.files, role ? "role " + name : name, m.doc); });
   $("[data-x]", card).onclick = unpick;
-  $("[data-open]", card).focus();
+  ($("[data-open]", card) || $("[data-ask]", card) || $("[data-x]", card)).focus();
   paintSelection();
 }
 function unpick() { S.picked = null; $("#pick").hidden = true; paintSelection(); }
-async function callsOf(files) {
-  const k = q() + "|" + files.join("|");
-  if (!callCache.has(k)) callCache.set(k, api(`/api/calls?${q()}`, { files }).catch((e) => { callCache.delete(k); throw e; }));
-  return callCache.get(k);
-}
-async function openFuncs(files, title, inRole) {
-  let c;
-  try { c = await callsOf(files); } catch (e) { toast(e.message, false); return; }
-  if (!c.nodes.length) { toast(`${title} has no functions or classes.`); return; }
-  if (!inRole) S.role = null; // opened from the module graph: the way back is the project
-  S.level = "funcs"; S.callTitle = title; S.calls = c;
-  regroup(); fitView();
-}
 function openRole(rid) {
   if (rid === "?" || !S.roles) { S.level = "parts"; S.role = rid; regroup(); fitView(); return; }
   const r = S.roles.roles.find((x) => x.id === rid);
@@ -269,22 +229,19 @@ function roleFiles(rid) { // a sheet: every file of the role, each with a role p
   $("[data-newrole]", $("#scode"))?.addEventListener("click", () => { const n = prompt("Name of the new role (at most 3 words):"); if (n) rolesDo("add", { name: n }, "Role added; move files into it.").then(() => roleFiles(rid)); });
   showSheet(true);
 }
-function fenceRole(rid) {
-  const r = S.roles.roles.find((x) => x.id === rid);
-  const first = S.full.files[r.files[0]].module;
-  select(first);
-  S.scope = new Set(r.files); S.fenceRole = rid;
+function fenceRole(rid) { const r = S.roles.roles.find((x) => x.id === rid); fenceFiles(r.files, "role " + r.name, r.purpose); }
+function fenceFiles(files, label, doc) { // a role or part as the fence: its files, under one name
+  S.fenceLabel = label; S.fenceDoc = doc || ""; // set first: select() renders the panel for the fence, not one module
+  select(S.full.files[files[0]].module, true);
+  S.scope = new Set(files); renderHeader(); renderOverview();
   afterFenceChange();
-  toast(`The agent may edit the ${plural(r.files.length, "file")} of ${r.name}.`);
+  toast(`The agent may edit the ${plural(files.length, "file")} of ${label}.`);
 }
 function renderCrumbs() {
   const c = $("#crumbs"), big = S.full.modules.length > GROUP_AT, has = S.roles && S.roles.roles.length;
   const step = (n, text, attrs, cur) => `<button type="button" ${attrs}${cur ? ' aria-current="true"' : ""}><b>${n}</b> ${esc(text)}</button>`;
   let h = "";
-  if (S.level === "funcs" && !S.role) {
-    h = `<button type="button" data-lv="modules">${esc(S.full.name)}</button><span>/</span>` + step(3, S.callTitle, "", true)
-      + `<em>${S.lonely ? `${FN_MAX} most connected of ${S.lonely + FN_MAX} · ` : ""}${S.calls.resolved}/${S.calls.calls} calls traced</em>`;
-  } else if (S.level === "modules") {
+  if (S.level === "modules") {
     if (!big && !has && S.full.modules.length <= ROLE_AT) { c.hidden = true; return; }
     const parts = S.focus ? S.focus.split("/") : [];
     h = (has ? step(1, "Roles", 'data-lv="roles"') + `<span>/</span>` : "") + `<button type="button" data-f="" aria-current="${!S.focus}">${esc(S.full.name)}</button>`
@@ -295,14 +252,12 @@ function renderCrumbs() {
     const r = S.roles.roles.find((x) => x.id === S.role);
     h = step(1, "Roles", 'data-lv="roles"', S.level === "roles");
     if (S.level !== "roles") h += `<span>/</span>` + step(2, S.role === "?" ? "not placed yet" : rname(S.role), `data-role="${esc(S.role)}"`, S.level === "parts");
-    if (S.level === "funcs") h += `<span>/</span>` + step(3, S.callTitle, "", true);
-    if (S.level !== "funcs" && S.hiddenLinks) h += `<em title="Strongest ${KEEP_LINKS} links per box">${S.hiddenLinks} weak links hidden</em>`;
+    if (S.hiddenLinks) h += `<em title="Strongest ${KEEP_LINKS} links per box">${S.hiddenLinks} weak links hidden</em>`;
     if (S.level === "roles") h += `<em title="${esc(S.roles.how || "")}">${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}</em>`
       + (S.roles.status !== "confirmed" ? `<button type="button" class="act" data-confirm>Confirm roles</button>` : "") + `<button type="button" class="act q" data-propose>Propose again</button><button type="button" class="act q" data-lv="modules">All modules</button>`;
     if (S.level === "parts" && r && S.outside) h += `<em title="${esc(r.purpose || "")}">${S.outside} imports to other roles</em>`;
     if (r && S.level !== "roles") h += `<button type="button" class="act q" data-rename>Rename</button><button type="button" class="act q" data-files>Files</button><button type="button" class="act" data-fence>Fence this role</button>`;
     if (S.role === "?" && S.level !== "roles") h += `<button type="button" class="act" data-files>Place files</button>`;
-    if (S.level === "funcs") h += `<em title="Static and approximate. Click a function to mention it; shift-click to fence it alone.">${S.lonely ? `${FN_MAX} most connected of ${S.lonely + FN_MAX} · ` : ""}${S.calls.resolved}/${S.calls.calls} calls traced</em>`;
   }
   c.hidden = false;
   c.innerHTML = h;
@@ -321,7 +276,7 @@ function reveal(id) { // a module hidden in a grouped folder: open the folders d
   S.focus = S.full.modules.some((m) => m.id.startsWith(id + "/")) ? id : parent(id);
   regroup();
 }
-const inSet = (set, id) => set.has(id) || !!(mod(id)?.members && mod(id).members.some((x) => set.has(x)));
+const inSet = (set, id) => set.has(id) || !!(mod(id)?.members && mod(id).members.some((x) => set.has(x))) || !!(id.includes(":") && mod(id)?.files.some((f) => set.has(f)));
 
 /* ---------------- layout: layered, foundations at the bottom ---------------- */
 function layout() {
@@ -413,7 +368,7 @@ function drawGraph() {
     hit.addEventListener("pointerenter", (ev) => showEdgeTip(ev, e));
     hit.addEventListener("pointermove", moveTip);
     hit.addEventListener("pointerleave", hideTip);
-    hit.addEventListener("click", () => S.level !== "funcs" && pick(e.target));
+    hit.addEventListener("click", () => pick(e.target));
   });
   g.modules.forEach((m) => {
     const { x, y } = S.pos[m.id];
@@ -632,7 +587,7 @@ function showEdgeTip(ev, e) {
   const t = $("#tip"), names = takes(e);
   t.innerHTML = `<div class="h">${esc(shown(e.source))} uses ${esc(shown(e.target))}</div>`
     + (names.length ? `<div class="tn">${names.slice(0, 12).map((n) => `<b class="mono">${esc(n)}</b>`).join(" ")}${names.length > 12 ? ` +${names.length - 12}` : ""}</div>` : `<div class="tn">the whole module</div>`)
-    + (S.level !== "funcs" ? `<div class="tk">Click: ${esc(shown(e.target))}</div>` : "");
+    + `<div class="tk">Click: ${esc(shown(e.target))}</div>`;
   t.classList.add("show"); moveTip(ev);
 }
 function moveTip(ev) { const t = $("#tip"); t.style.left = Math.min(ev.clientX + 14, innerWidth - t.offsetWidth - 10) + "px"; t.style.top = Math.min(ev.clientY + 16, innerHeight - t.offsetHeight - 10) + "px"; }
@@ -641,22 +596,15 @@ function hideTip() { $("#tip").classList.remove("show"); }
 /* ---------------- selection, fence & panel ---------------- */
 function onNodeClick(id, ev) {
   if (id.startsWith("role:") || id.startsWith("dir:") || id.startsWith("part:")) { pick(id); return; }
-  if (S.level === "funcs") { // mention the function in the instruction; shift-click fences it alone (file kept, others flagged)
-    const [file, name] = id.split("::"), m = S.full.files[file].module;
-    if (ev.shiftKey || ev.metaKey || ev.ctrlKey) { if (S.selected !== m) select(m); S.scope = new Set([id]); afterFenceChange(); toast(`Fenced ${name}(): its file may change, other functions in it are flagged.`); return; }
-    if (S.selected !== m) select(m);
-    insertRef(`\`${name}()\` in ${file}`);
-    return;
-  }
   // a click only picks (the card opens it on purpose); shift-click with a module open grows the fence
   if (!((ev.shiftKey || ev.metaKey || ev.ctrlKey) && S.selected) || mod(id)?.group) { pick(id); return; }
   if (S.scope.has(id) && S.scope.size > 1) S.scope.delete(id); else S.scope.add(id);
   if (!S.scope.has(S.selected)) S.selected = [...S.scope][0];
   afterFenceChange();
 }
-function select(id) {
+function select(id, keepLabel) {
   if (id.endsWith("/")) { S.focus = id.slice(0, -1); regroup(); fitView(); return; } // a grouped folder: open it
-  S.fenceRole = null;
+  if (!keepLabel) S.fenceLabel = null;
   if (S.level === "roles" || (S.level === "parts" && !S.graph.modules.some((m) => m.id === id))) { // show the module among its role's parts
     const fr = fileRoles(), f = (S.full.modules.find((m) => m.id === id) || { files: [] }).files.find((x) => fr[x]);
     if (f) { S.level = "parts"; S.role = fr[f]; regroup(); } else { S.level = "modules"; regroup(); }
@@ -699,6 +647,12 @@ function setTab(t, focus) {
 }
 
 function renderHeader() {
+  if (S.fenceLabel) { // a role or part: the panel is about the whole fence
+    const fs = [...S.scope].filter((f) => S.full.files[f]);
+    $("#mname").textContent = S.fenceLabel; $("#mdoc").textContent = S.fenceDoc || "";
+    $("#mfacts").textContent = `${plural(fs.length, "file")} · ${fs.reduce((a, f) => a + S.full.files[f].lines, 0).toLocaleString()} lines`;
+    return;
+  }
   const m = mod(S.selected);
   if (!m) return;
   $("#mname").textContent = m.id === "." ? "(project root)" : m.id.endsWith(".py") ? m.id : m.id + "/";
@@ -735,9 +689,11 @@ async function moduleFns(id, describe) {
   return S.fn[id];
 }
 const AI_TAG = '<i class="ai" title="Written by a small model from the code; the author wrote no docstring">AI</i>';
-function fnRows(v) {
+const testsIds = () => new Set(S.full.modules.filter((m) => m.kind === "tests").map((m) => m.id));
+const usedElsewhere = (f) => { const t = testsIds(); return f.used_by.some((m) => !t.has(m)); }; // tests use everything; not interface
+function fnRows(v) { // folded: only what other modules use (the module's interface); unfold for all
   const byFile = {};
-  v.functions.forEach((f) => (byFile[f.file] ||= []).push(f));
+  v.functions.filter((f) => S.allFns || usedElsewhere(f)).forEach((f) => (byFile[f.file] ||= []).push(f));
   const busy = describing.has(v.module);
   return Object.entries(byFile).map(([file, fs]) => `<div class="fgroup"><div class="fhead mono">${esc(file.split("/").pop())}<span>${plural(fs.length, "unit")}</span></div>
     ${fs.map((f) => {
@@ -754,10 +710,12 @@ function fnRows(v) {
 function paintFns(id) {
   const box = $("#fns"), v = S.fn[id];
   if (!box || S.selected !== id || !v) return;
-  box.innerHTML = fnRows(v);
+  const used = v.functions.filter(usedElsewhere).length;
+  box.innerHTML = (S.allFns || used ? fnRows(v) : "")
+    + (used < v.functions.length ? `<button type="button" class="btn quiet" data-allfns>${S.allFns ? "Only what other modules use" : `Show all ${v.functions.length}`}</button>` : "");
   box.querySelectorAll("[data-ref]").forEach((b) => (b.onclick = () => insertRef(b.dataset.ref)));
-  const u = v.functions.filter((f) => !f.purpose).length;
-  $("#fncount").textContent = `${plural(v.functions.length, "unit")}${u && !describing.has(id) ? `, ${u} undescribed` : ""}`;
+  $("[data-allfns]", box)?.addEventListener("click", () => { S.allFns = !S.allFns; paintFns(id); });
+  $("#fncount").textContent = `${used} used by other modules`;
   if (v.purpose && !mod(id).doc) $("#mdoc").innerHTML = esc(v.purpose) + " " + AI_TAG;
 }
 function insertRef(text) {
@@ -768,6 +726,12 @@ function insertRef(text) {
 }
 
 function renderOverview() {
+  if (S.fenceLabel) { // the fence's files, one line each
+    const fs = [...S.scope].filter((f) => S.full.files[f]).sort();
+    $("#v-over").innerHTML = `<div class="sect"><h3>Files</h3><div class="rows">${fs.map((f) => `<button class="row" data-file="${esc(f)}"><span class="k">${esc(f.split("/").pop())}</span><span class="d">${esc(S.full.files[f].doc || "")}</span><span class="n">${S.full.files[f].lines} ln</span></button>`).join("")}</div></div>`;
+    $("#v-over").querySelectorAll("[data-file]").forEach((b) => (b.onclick = () => openFile(b.dataset.file)));
+    return;
+  }
   const m = mod(S.selected); if (!m) return;
   const { dep, use } = related(m.id);
   const tasks = S.tasks.filter((t) => t.modules.includes(m.id));
@@ -800,7 +764,7 @@ function renderFence() {
     line = `<div class="fline ro"><span class="lab">Read only.</span> ${[...S.scope].map((id) => `<span class="mono">${esc(shown(id))}</span>`).join(", ")}: explain, no edits.</div>`;
   } else {
     const chipName = (id) => (id.includes("::") ? id.split("::")[1] + "()" : shown(id));
-    const chips = S.fenceRole && S.scope.size > 3 ? `<span class="fchip">role ${esc(rname(S.fenceRole))} (${plural(S.scope.size, "file")})</span>`
+    const chips = S.fenceLabel && S.scope.size > 1 ? `<span class="fchip">${esc(S.fenceLabel)} (${plural(S.scope.size, "file")})</span>`
       : [...S.scope].map((id) => `<span class="fchip">${esc(chipName(id))}${S.scope.size > 1 ? `<button type="button" data-rm="${esc(id)}" aria-label="Remove ${esc(shown(id))} from the fence">${X_ICON}</button>` : ""}</span>`).join("");
     const add = testsMod && !S.scope.has(testsMod.id) ? `<button type="button" class="fadd" data-add="${esc(testsMod.id)}">+ ${esc(testsMod.id)}</button>` : "";
     line = `<div class="fline"><span class="lab">Can edit:</span>${chips}${add}</div>`;
@@ -1313,7 +1277,7 @@ function wire() {
   $("#panel").inert = true;
   $("#picker").onchange = async (e) => {
     S.p = Number(e.target.value); store.set("modfence.project", S.p);
-    closePanel(); S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; S.userCam = false; S.focus = ""; S.level = null; S.role = null; S.calls = null; S.proposed = false;
+    closePanel(); S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; S.userCam = false; S.focus = ""; S.level = null; S.role = null; S.proposed = false;
     const b = $("#tests"); b.classList.remove("ok", "bad"); $(".lbl", b).textContent = "Run tests";
     await loadGraph(true);
   };
