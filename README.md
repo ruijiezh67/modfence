@@ -17,11 +17,11 @@ Tools that draw a repository's structure help you read it. modfence is for chang
 
 Reading code line by line was the human engineer's way in. With an agent writing the lines, what you need is the shape: which part does what, and which parts talk to each other. modfence gives you that at three levels, and each one is also a fence you can hand the agent.
 
-| Level | You see | Click | Fence |
+| Level | You see | Select, then *Open* | Fence |
 |---|---|---|---|
-| **1 Roles** | What the system does: observer, segmenter, inference, memory ... Each box is a role with its files and lines; lines between boxes are imports (the 3 strongest per box). | a role opens its folders | the role's files |
-| **2 Folders of a role** | The folders the role's files live in, and which other roles they call into (grey). | a folder opens its function graph | the module (panel) |
-| **3 Functions and classes** | Who calls whom and who inherits from whom, across the files of the folder; calls into other folders or roles at the edge. Static and approximate: the bar says how many calls were traced. | a function to mention it in the instruction | shift-click: that function alone |
+| **1 Roles** | What the system does: observer, segmenter, inference, memory ... Each box is a role with its files and lines; lines between boxes are imports (the 3 strongest per box). | a card shows the role's job; *Open its parts* | the role's files |
+| **2 Parts of a role** | Only the role's own parts: its folders, or its files when it lives in three folders or fewer, and the imports between them. Imports to other roles are counted, not drawn. | *Open its functions* | the module (panel) |
+| **3 Functions and classes** | Only the part's own functions and classes: who calls whom and who inherits from whom. Calls leaving the part are counted, not drawn. Static and approximate: the bar says how many calls were traced. | a click mentions the function in the instruction | shift-click: that function alone |
 
 **Where roles come from.** On a project with more than 12 modules, the first open groups the files by folder and splits big flat folders by the words in their file names (deterministic), then one Haiku call (about one cent) maps those groups onto 6-15 roles named in the project's own words. A file moves between groups only if its imports back it. You then rename roles, move files and confirm (*Files*, *Rename*, *Confirm roles*); roles keep a stable id, so a rename never changes which files they hold, and new files wait under "not placed yet". Names are checked: at most 3 words and 24 characters, and no two alike. This method was chosen out of nine by measurement: see [Evaluation, section 4](docs/EVALUATION.md#4-grouping-files-into-roles).
 

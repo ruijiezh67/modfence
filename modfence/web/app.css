@@ -240,7 +240,17 @@ body:not([data-view="graph"]) .zoom { display: none; }
   position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 9; padding: 6px 12px; border-radius: 6px;
   background: var(--surface); border: 1px solid var(--line); color: var(--text-2); font-size: 12.5px; white-space: nowrap;
 }
-body.panel-open .hint, body:not([data-view="graph"]) .hint { display: none; }
+body.panel-open .hint, body:not([data-view="graph"]) .hint, .pick:not([hidden]) ~ .hint { display: none; }
+.pick { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 12; width: min(560px, calc(100% - 32px));
+  padding: 10px 12px; background: var(--surface); border: 1.5px solid var(--ink); border-radius: var(--r); box-shadow: 4px 4px 0 var(--fence); }
+.pick[hidden] { display: none; }
+.pick .pk { display: flex; align-items: baseline; gap: 10px; }
+.pick .pk b { font-size: 15px; }
+.pick .pk span { color: var(--text-3); font-size: 12px; }
+.pick p { margin: 4px 0 0; color: var(--text-2); font-size: 13px; }
+.pick .pa { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+.pick .pa [data-x] { margin-left: auto; }
+body.panel-open .pick { left: calc((100% - var(--panel-w)) / 2); }
 
 .tip { position: fixed; z-index: 60; max-width: 520px; padding: 8px 10px; border-radius: 6px; pointer-events: none; background: var(--text); color: var(--surface); font-size: 12px; opacity: 0; }
 .tip.show { opacity: 1; }

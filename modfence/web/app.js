@@ -115,7 +115,8 @@ function viewGraph(full, focus) {
 function regroup() {
   if (!(S.roles && S.roles.roles.length) && S.level !== "modules") S.level = "modules";
   if (S.level === "funcs" && !S.calls) S.level = "parts";
-  S.hiddenLinks = 0;
+  S.hiddenLinks = 0; S.outside = 0;
+  if (S.picked) unpick();
   S.graph = S.level === "roles" ? roleGraph() : S.level === "parts" ? partGraph(S.role) : S.level === "funcs" ? funcGraph() : viewGraph(S.full, S.focus);
   document.body.dataset.level = S.level;
   layout();
@@ -164,35 +165,48 @@ function roleGraph() {
 }
 function partGraph(rid) {
   const fr = fileRoles(), mine = new Set(Object.keys(fr).filter((f) => fr[f] === rid));
-  // a part is a folder of the role's files: few enough to read, and each opens as one function graph
+  // Only the role's own parts are drawn. A part is a folder of its files, or a single file when the role lives in
+  // three folders or fewer (a folder would then be most of the role).
   const dir = (f) => (f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : ".");
+  const byFile = new Set([...mine].map(dir)).size <= 3;
+  const key = (f) => (byFile ? "part:" + f : "dir:" + dir(f));
   const parts = new Map();
-  mine.forEach((f) => { const d = "dir:" + dir(f); if (!parts.has(d)) parts.set(d, []); parts.get(d).push(f); });
-  const nodes = [...parts].map(([d, fs]) => ({ id: d, kind: "module", label: d.slice(4).split("/").slice(-2).join("/") + "/", meta: plural(fs.length, "file"),
+  mine.forEach((f) => { const d = key(f); if (!parts.has(d)) parts.set(d, []); parts.get(d).push(f); });
+  const nodes = [...parts].map(([d, fs]) => ({ id: d, kind: "module", label: byFile ? d.split("/").pop() : d.slice(4).split("/").slice(-2).join("/") + "/",
+    meta: byFile ? dir(fs[0]).split("/").slice(-2).join("/") + "/" : plural(fs.length, "file"),
     files: fs.sort(), names: [], doc: fs.map((f) => S.full.files[f].doc).find(Boolean) || "", lines: fs.reduce((a, f) => a + S.full.files[f].lines, 0) }));
-  const edges = prune(aggregate((f) => (mine.has(f) ? "dir:" + dir(f) : fr[f] && "role:" + fr[f]))
-    .filter((e) => e.source.startsWith("dir:") || e.target.startsWith("dir:"))); // links among other roles are not this role's story
-  const near = new Set(edges.flatMap((e) => [e.source, e.target]).filter((id) => id.startsWith("role:")));
-  near.forEach((id) => { const r = S.roles.roles.find((x) => "role:" + x.id === id); if (r) nodes.push({ ...roleNode(r, "edge"), meta: "other role" }); });
+  const edges = prune(aggregate((f) => (mine.has(f) ? key(f) : null)));
+  S.outside = aggregate((f) => (mine.has(f) ? "in" : fr[f] ? "out" : null)).reduce((a, e) => a + e.receipts.length, 0);
   return { ...S.full, modules: nodes, edges };
 }
 function funcGraph() {
   const c = S.calls, fr = fileRoles();
-  const nodes = c.nodes.map((n) => ({ id: n.id, kind: "fn", label: n.name + (n.kind === "class" ? "" : "()"), meta: `${n.file.split("/").pop()}:${n.line}`,
+  const oneFile = new Set(c.nodes.map((n) => n.file)).size === 1;
+  const nodes = c.nodes.map((n) => ({ id: n.id, kind: "fn", label: n.name + (n.kind === "class" ? "" : "()"), meta: oneFile ? `line ${n.line}` : `${clip(n.file.split("/").pop(), 14)}:${n.line}`,
     files: [n.file], lines: n.lines, names: [], doc: n.doc }));
   const edges = c.edges.map((e) => ({ source: e.source, target: e.target, receipts: Array.from({ length: Math.min(e.count, 8) }, () => ({ file: e.source.split("::")[0], line: 0, code: e.kind, name: e.target.split("::")[1] })) }));
   // functions that call nothing here and nobody here calls are listed by count only: the picture is how they work together
-  const linked = new Set([...c.edges.flatMap((e) => [e.source, e.target]), ...c.boundary.map((b) => b.source)]);
+  const linked = new Set(c.edges.flatMap((e) => [e.source, e.target]));
   if (linked.size) { S.lonely = nodes.length - nodes.filter((n) => linked.has(n.id)).length; nodes.splice(0, nodes.length, ...nodes.filter((n) => linked.has(n.id))); } else S.lonely = 0;
-  const out = new Map();
-  c.boundary.forEach((b) => {
-    const rid = fr[b.file], id = rid ? "role:" + rid : "file:" + b.file;
-    if (!out.has(id)) nodes.push(rid ? { ...roleNode(S.roles.roles.find((r) => r.id === rid) || { id: rid, name: rid, files: [] }, "edge"), meta: rid === S.role ? "same role, other folder" : "other role" } : { id, kind: "edge", label: b.file.split("/").pop(), meta: "other file", files: [b.file], lines: 0, names: [], doc: "" });
-    out.set(id, 1);
-    edges.push({ source: b.source, target: id, receipts: [{ file: b.source.split("::")[0], line: 0, code: b.kind, name: null }] });
-  });
+  S.outside = c.boundary.reduce((a, b) => a + b.count, 0); // calls leaving this part: counted, not drawn
   return { ...S.full, modules: nodes, edges };
 }
+function pick(id) { // a click only selects; the card below says what it is and opens it on purpose
+  S.picked = id;
+  const m = mod(id), card = $("#pick"), role = id.startsWith("role:");
+  card.innerHTML = `<div class="pk"><b>${esc(m.label)}</b><span class="mono">${esc(m.meta)} · ${m.lines.toLocaleString()} lines</span></div>`
+    + (m.doc ? `<p>${esc(m.doc)}</p>` : "")
+    + `<div class="pa"><button type="button" class="btn primary" data-open>Open ${role ? "its parts" : "its functions"} ▸</button>`
+    + (role && id !== "role:?" ? `<button type="button" class="btn" data-fence>Fence this role</button>` : "")
+    + `<button type="button" class="btn quiet" data-x aria-label="Close">${X_ICON}</button></div>`;
+  card.hidden = false;
+  $("[data-open]", card).onclick = () => { unpick(); role ? openRole(id.slice(5)) : openFuncs(m.files, m.label); };
+  $("[data-fence]", card)?.addEventListener("click", () => { unpick(); fenceRole(id.slice(5)); });
+  $("[data-x]", card).onclick = unpick;
+  $("[data-open]", card).focus();
+  paintSelection();
+}
+function unpick() { S.picked = null; $("#pick").hidden = true; paintSelection(); }
 async function openFuncs(files, title) {
   S.level = "funcs"; S.callTitle = title;
   try { S.calls = await api(`/api/calls?${q()}`, { files }); } catch (e) { toast(e.message, false); return; }
@@ -202,8 +216,6 @@ function openRole(rid) {
   if (rid === "?" || !S.roles) { S.level = "parts"; S.role = rid; regroup(); fitView(); return; }
   const r = S.roles.roles.find((x) => x.id === rid);
   S.role = rid;
-  const parts = new Set(r.files.map((f) => f.slice(0, f.lastIndexOf("/") + 1)));
-  if (parts.size <= 3) { openFuncs(r.files, r.name); return; } // few parts: go straight to how its functions work together
   S.level = "parts"; regroup(); fitView();
 }
 async function rolesDo(action, body, okText) {
@@ -258,12 +270,12 @@ function renderCrumbs() {
     if (S.level !== "roles") h += `<span>/</span>` + step(2, S.role === "?" ? "not placed yet" : rname(S.role), `data-role="${esc(S.role)}"`, S.level === "parts");
     if (S.level === "funcs") h += `<span>/</span>` + step(3, S.callTitle, "", true);
     if (S.level !== "funcs" && S.hiddenLinks) h += `<em>Strongest ${KEEP_LINKS} links per box shown (${S.hiddenLinks} weaker hidden).</em>`;
-    if (S.level === "roles") h += `<em>${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}: ${esc(S.roles.how || "")}. Click a role to open it.</em>`
+    if (S.level === "roles") h += `<em>${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}: ${esc(S.roles.how || "")}. Select a role, then Open.</em>`
       + (S.roles.status !== "confirmed" ? `<button type="button" class="act" data-confirm>Confirm roles</button>` : "") + `<button type="button" class="act q" data-propose>Propose again</button><button type="button" class="act q" data-lv="modules">All modules</button>`;
-    if (S.level === "parts" && r) h += `<em>${esc(r.purpose || "")} Click a folder to see how its functions work together.</em>`;
+    if (S.level === "parts" && r) h += `<em>${esc(r.purpose || "")} Only this role's own parts are shown${S.outside ? `; ${S.outside} import lines go to other roles` : ""}. Select a part, then Open.</em>`;
     if (r && S.level !== "roles") h += `<button type="button" class="act q" data-rename>Rename</button><button type="button" class="act q" data-files>Files</button><button type="button" class="act" data-fence>Fence this role</button>`;
     if (S.role === "?" && S.level !== "roles") h += `<button type="button" class="act" data-files>Place files</button>`;
-    if (S.level === "funcs") h += `<em>${S.lonely ? `${plural(S.lonely, "function")} with no links here not drawn. ` : ""}Static and approximate: ${S.calls.resolved} of ${S.calls.calls} calls traced. Click a function to mention it; shift-click to fence it alone.</em>`;
+    if (S.level === "funcs") h += `<em>${S.lonely ? `${plural(S.lonely, "function")} with no links here not drawn. ` : ""}${S.outside ? `${plural(S.outside, "call")} leave this part (not drawn). ` : ""}Static and approximate: ${S.calls.resolved} of ${S.calls.calls} calls traced. Click a function to mention it; shift-click to fence it alone.</em>`;
   }
   c.hidden = false;
   c.innerHTML = h;
@@ -454,7 +466,7 @@ function paintSelection(hover) {
   const rel = focus ? related(focus) : { dep: new Set(), use: new Set() };
   document.querySelectorAll(".node").forEach((n) => {
     const id = n.dataset.id, m = mod(id);
-    n.classList.toggle("selected", id === S.selected);
+    n.classList.toggle("selected", id === S.selected || id === S.picked);
     n.classList.toggle("fenced", fenced(id));
     n.classList.toggle("dep", !!focus && rel.dep.has(id));
     n.classList.toggle("use", !!focus && rel.use.has(id));
@@ -601,9 +613,7 @@ function hideTip() { $("#tip").classList.remove("show"); }
 
 /* ---------------- selection, fence & panel ---------------- */
 function onNodeClick(id, ev) {
-  if (id.startsWith("role:")) { openRole(id.slice(5)); return; }
-  if (id.startsWith("file:")) return;
-  if (id.startsWith("dir:")) { openFuncs(mod(id).files, mod(id).label); return; }
+  if (id.startsWith("role:") || id.startsWith("dir:") || id.startsWith("part:")) { pick(id); return; }
   if (S.level === "funcs") { // mention the function in the instruction; shift-click fences it alone (file kept, others flagged)
     const [file, name] = id.split("::"), m = S.full.files[file].module;
     if (ev.shiftKey || ev.metaKey || ev.ctrlKey) { if (S.selected !== m) select(m); S.scope = new Set([id]); afterFenceChange(); toast(`Fenced ${name}(): its file may change, other functions in it are flagged.`); return; }
