@@ -65,7 +65,7 @@ async function loadGraph(fit) {
 function mod(id) { return S.graph && (S.graph.modules.find((m) => m.id === id) || S.full.modules.find((m) => m.id === id)); }
 const label = (id) => (id === "." ? "(root)" : id.endsWith("/") ? id.slice(0, -1).split("/").pop() + "/" : id.split("/").pop());
 const parent = (id) => (id.includes("/") ? id.slice(0, id.lastIndexOf("/")) : "");
-const shown = (id) => (id === "." ? "(root)" : id);
+const shown = (id) => (id === "." ? "(root)" : id.startsWith("role:") ? rname(id.slice(5)) : id.startsWith("part:") || id.startsWith("dir:") ? (mod(id)?.label || id.slice(id.indexOf(":") + 1)) : id);
 const moduleOf = (p) => { // mirrors analyze.module_of
   const d = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
   const own = p.endsWith(".py") && !p.endsWith("/__init__.py") && p !== "__init__.py";
@@ -182,12 +182,24 @@ function pick(id) { // a click only selects; the card below says what it is and 
   S.picked = id;
   const m = mod(id), card = $("#pick"), role = id.startsWith("role:"), folder = !!m.group, plain = S.level === "modules";
   const name = m.label || shown(id);
-  card.innerHTML = `<div class="pk"><b>${esc(name)}</b><span class="mono">${plural(m.files.length, "file")} · ${m.lines.toLocaleString()} ln</span>`
-    + `<button type="button" class="btn quiet" data-x aria-label="Close">${X_ICON}</button></div>`
-    + (m.doc && !folder ? `<p title="${esc(m.doc)}">${esc(m.doc)}</p>` : "")
+  // a side bar, read top to bottom: what it is, what to do, then the facts behind it (uses, used by, files)
+  const link = (e, other) => { const n = takes(e); return `<li><button type="button" class="lk" data-go="${esc(other)}">${esc(shown(other))}</button>`
+    + `<span class="mono">${n.length ? esc(clip(n.join(", "), 80)) : "the whole module"}</span></li>`; };
+  const out = (S.graph.edges || []).filter((e) => e.source === id), inn = (S.graph.edges || []).filter((e) => e.target === id);
+  const doc = folder ? "" : m.doc || mdoc(m);
+  const fdoc = (f) => S.full.files[f]?.doc || "";
+  card.innerHTML = `<div class="pk"><b>${esc(name)}</b><button type="button" class="btn quiet" data-x aria-label="Close">${X_ICON}</button></div>`
+    + `<div class="pm mono">${plural(m.files.length, "file")} · ${m.lines.toLocaleString()} ln</div>`
+    + (doc ? `<p>${esc(doc)}</p>` : `<p class="none">No description in the code.</p>`)
     + `<div class="pa">` + (role || folder ? `<button type="button" class="btn primary" data-open>${role ? "Open parts" : "Open folder"} ▸</button>` : "")
-    + (folder || id === "role:?" ? "" : `<button type="button" class="btn${role ? "" : " primary"}" data-ask>Ask / edit</button>`) + `</div>`;
-  card.hidden = false;
+    + (folder || id === "role:?" ? "" : `<button type="button" class="btn${role ? "" : " primary"}" data-ask>Ask / edit</button>`) + `</div>`
+    + (out.length ? `<h4>Uses <i>${out.length}</i></h4><ul class="pl">${out.map((e) => link(e, e.target)).join("")}</ul>` : "")
+    + (inn.length ? `<h4>Used by <i>${inn.length}</i></h4><ul class="pl">${inn.map((e) => link(e, e.source)).join("")}</ul>` : "")
+    + `<h4>Files <i>${m.files.length}</i></h4><ul class="pf">${m.files.map((f) => `<li><span class="mono">${esc(f)}</span>${fdoc(f) ? `<span>${esc(fdoc(f))}</span>` : ""}</li>`).join("")}</ul>`;
+  const opening = card.hidden;
+  card.hidden = false; card.scrollTop = 0;
+  if (opening && !S.userCam) fitView();
+  card.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => pick(b.dataset.go)));
   $("[data-open]", card)?.addEventListener("click", () => { unpick(); role ? openRole(id.slice(5)) : select(id); });
   // Ask / edit fences the box itself: a role or part fences its files, a module fences the module
   $("[data-ask]", card)?.addEventListener("click", () => { unpick(); plain ? select(id) : fenceFiles(m.files, role ? "role " + name : name, m.doc); });
@@ -195,7 +207,7 @@ function pick(id) { // a click only selects; the card below says what it is and 
   ($("[data-open]", card) || $("[data-ask]", card) || $("[data-x]", card)).focus();
   paintSelection();
 }
-function unpick() { S.picked = null; $("#pick").hidden = true; paintSelection(); }
+function unpick() { const was = !$("#pick").hidden; S.picked = null; $("#pick").hidden = true; paintSelection(); if (was && !S.userCam && !document.body.classList.contains("panel-open")) fitView(); }
 function openRole(rid) {
   if (rid === "?" || !S.roles) { S.level = "parts"; S.role = rid; regroup(); fitView(); return; }
   const r = S.roles.roles.find((x) => x.id === rid);
@@ -518,7 +530,10 @@ function bounds() {
   return { x0: Math.min(ex.x0, ...xs.map((p) => p.x)) - 30, y0: Math.min(...xs.map((p) => p.y)) - 24,
            x1: Math.max(ex.x1, ...xs.map((p) => p.x + NODE_W)) + 30, y1: Math.max(...xs.map((p) => p.y + NODE_H)) + 24 };
 }
-function viewport() { const c = $("#canvas").getBoundingClientRect(); return { w: c.width || innerWidth, h: c.height || innerHeight, bottom: 52 }; }
+function viewport() { // the side bar covers the right of the canvas, so the graph fits in what is left
+  const c = $("#canvas").getBoundingClientRect(), side = $("#pick").hidden ? 0 : $("#pick").offsetWidth;
+  return { w: (c.width || innerWidth) - side, h: c.height || innerHeight, bottom: 52 };
+}
 function fitView(animate = true) {
   const b = bounds(), v = viewport(), top = $("#crumbs").hidden ? 16 : $("#crumbs").offsetHeight + 24; // below the path bar
   const k = Math.min(1.2, Math.max(0.35, Math.min((v.w - 40) / (b.x1 - b.x0), (v.h - v.bottom - top - 4) / (b.y1 - b.y0))));
