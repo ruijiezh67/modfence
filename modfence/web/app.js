@@ -113,7 +113,7 @@ function viewGraph(full, focus) {
   return { ...full, modules: modules.sort((x, y) => x.id.localeCompare(y.id)), edges: [...edges.values()] };
 }
 function regroup() {
-  if (!(S.roles && S.roles.roles.length) && S.level !== "modules") S.level = "modules";
+  if (!(S.roles && S.roles.roles.length) && (S.level === "roles" || S.level === "parts")) S.level = "modules";
   if (S.level === "funcs" && !S.calls) S.level = "parts";
   S.hiddenLinks = 0; S.outside = 0;
   if (S.picked) unpick();
@@ -193,21 +193,25 @@ function funcGraph() {
 }
 function pick(id) { // a click only selects; the card below says what it is and opens it on purpose
   S.picked = id;
-  const m = mod(id), card = $("#pick"), role = id.startsWith("role:");
-  card.innerHTML = `<div class="pk"><b>${esc(m.label)}</b><span class="mono">${esc(m.meta)} · ${m.lines.toLocaleString()} lines</span></div>`
-    + (m.doc ? `<p>${esc(m.doc)}</p>` : "")
-    + `<div class="pa"><button type="button" class="btn primary" data-open>Open ${role ? "its parts" : "its functions"} ▸</button>`
-    + (role && id !== "role:?" ? `<button type="button" class="btn" data-fence>Fence this role</button>` : "")
-    + `<button type="button" class="btn quiet" data-x aria-label="Close">${X_ICON}</button></div>`;
+  const m = mod(id), card = $("#pick"), role = id.startsWith("role:"), folder = !!m.group, plain = S.level === "modules";
+  const name = m.label || shown(id);
+  card.innerHTML = `<div class="pk"><b>${esc(name)}</b><span class="mono">${plural(m.files.length, "file")} · ${m.lines.toLocaleString()} ln</span>`
+    + `<button type="button" class="btn quiet" data-x aria-label="Close">${X_ICON}</button></div>`
+    + (m.doc && !folder ? `<p title="${esc(m.doc)}">${esc(m.doc)}</p>` : "")
+    + `<div class="pa"><button type="button" class="btn primary" data-open>${role ? "Open parts" : folder ? "Open folder" : "Open functions"} ▸</button>`
+    + (plain && !folder ? `<button type="button" class="btn" data-ask>Ask / edit</button>` : "")
+    + (role && id !== "role:?" ? `<button type="button" class="btn" data-fence>Fence role</button>` : "") + `</div>`;
   card.hidden = false;
-  $("[data-open]", card).onclick = () => { unpick(); role ? openRole(id.slice(5)) : openFuncs(m.files, m.label); };
+  $("[data-open]", card).onclick = () => { unpick(); role ? openRole(id.slice(5)) : folder ? select(id) : openFuncs(m.files, name, !plain); };
+  $("[data-ask]", card)?.addEventListener("click", () => { unpick(); select(id); });
   $("[data-fence]", card)?.addEventListener("click", () => { unpick(); fenceRole(id.slice(5)); });
   $("[data-x]", card).onclick = unpick;
   $("[data-open]", card).focus();
   paintSelection();
 }
 function unpick() { S.picked = null; $("#pick").hidden = true; paintSelection(); }
-async function openFuncs(files, title) {
+async function openFuncs(files, title, inRole) {
+  if (!inRole) S.role = null; // opened from the module graph: the way back is the project
   S.level = "funcs"; S.callTitle = title;
   try { S.calls = await api(`/api/calls?${q()}`, { files }); } catch (e) { toast(e.message, false); return; }
   regroup(); fitView();
@@ -257,25 +261,28 @@ function renderCrumbs() {
   const c = $("#crumbs"), big = S.full.modules.length > GROUP_AT, has = S.roles && S.roles.roles.length;
   const step = (n, text, attrs, cur) => `<button type="button" ${attrs}${cur ? ' aria-current="true"' : ""}><b>${n}</b> ${esc(text)}</button>`;
   let h = "";
-  if (S.level === "modules") {
+  if (S.level === "funcs" && !S.role) {
+    h = `<button type="button" data-lv="modules">${esc(S.full.name)}</button><span>/</span>` + step(3, S.callTitle, "", true)
+      + `<em>${S.calls.resolved}/${S.calls.calls} calls traced${S.outside ? ` · ${S.outside} leave` : ""}</em>`;
+  } else if (S.level === "modules") {
     if (!big && !has && S.full.modules.length <= ROLE_AT) { c.hidden = true; return; }
     const parts = S.focus ? S.focus.split("/") : [];
     h = (has ? step(1, "Roles", 'data-lv="roles"') + `<span>/</span>` : "") + `<button type="button" data-f="" aria-current="${!S.focus}">${esc(S.full.name)}</button>`
       + parts.map((p, i) => `<span>/</span><button type="button" data-f="${esc(parts.slice(0, i + 1).join("/"))}">${esc(p)}</button>`).join("")
-      + (big ? `<em>${plural(S.full.modules.length, "module")}: folders are grouped; click one to open it</em>` : "")
+      + (big ? `<em>${plural(S.full.modules.length, "module")}, grouped by folder</em>` : "")
       + (!has && S.claude ? `<button type="button" class="act" data-propose>Group into roles</button>` : "");
   } else {
     const r = S.roles.roles.find((x) => x.id === S.role);
     h = step(1, "Roles", 'data-lv="roles"', S.level === "roles");
     if (S.level !== "roles") h += `<span>/</span>` + step(2, S.role === "?" ? "not placed yet" : rname(S.role), `data-role="${esc(S.role)}"`, S.level === "parts");
     if (S.level === "funcs") h += `<span>/</span>` + step(3, S.callTitle, "", true);
-    if (S.level !== "funcs" && S.hiddenLinks) h += `<em>Strongest ${KEEP_LINKS} links per box shown (${S.hiddenLinks} weaker hidden).</em>`;
-    if (S.level === "roles") h += `<em>${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}: ${esc(S.roles.how || "")}. Select a role, then Open.</em>`
+    if (S.level !== "funcs" && S.hiddenLinks) h += `<em title="Strongest ${KEEP_LINKS} links per box">${S.hiddenLinks} weak links hidden</em>`;
+    if (S.level === "roles") h += `<em title="${esc(S.roles.how || "")}">${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}</em>`
       + (S.roles.status !== "confirmed" ? `<button type="button" class="act" data-confirm>Confirm roles</button>` : "") + `<button type="button" class="act q" data-propose>Propose again</button><button type="button" class="act q" data-lv="modules">All modules</button>`;
-    if (S.level === "parts" && r) h += `<em>${esc(r.purpose || "")} Only this role's own parts are shown${S.outside ? `; ${S.outside} import lines go to other roles` : ""}. Select a part, then Open.</em>`;
+    if (S.level === "parts" && r && S.outside) h += `<em title="${esc(r.purpose || "")}">${S.outside} imports to other roles</em>`;
     if (r && S.level !== "roles") h += `<button type="button" class="act q" data-rename>Rename</button><button type="button" class="act q" data-files>Files</button><button type="button" class="act" data-fence>Fence this role</button>`;
     if (S.role === "?" && S.level !== "roles") h += `<button type="button" class="act" data-files>Place files</button>`;
-    if (S.level === "funcs") h += `<em>${S.lonely ? `${plural(S.lonely, "function")} with no links here not drawn. ` : ""}${S.outside ? `${plural(S.outside, "call")} leave this part (not drawn). ` : ""}Static and approximate: ${S.calls.resolved} of ${S.calls.calls} calls traced. Click a function to mention it; shift-click to fence it alone.</em>`;
+    if (S.level === "funcs") h += `<em title="Static and approximate. Click a function to mention it; shift-click to fence it alone.">${S.calls.resolved}/${S.calls.calls} calls traced${S.outside ? ` · ${S.outside} leave` : ""}</em>`;
   }
   c.hidden = false;
   c.innerHTML = h;
@@ -386,7 +393,7 @@ function drawGraph() {
     hit.addEventListener("pointerenter", (ev) => showEdgeTip(ev, e));
     hit.addEventListener("pointermove", moveTip);
     hit.addEventListener("pointerleave", hideTip);
-    hit.addEventListener("click", () => select(e.target));
+    hit.addEventListener("click", () => S.level !== "funcs" && pick(e.target));
   });
   g.modules.forEach((m) => {
     const { x, y } = S.pos[m.id];
@@ -605,7 +612,7 @@ function showEdgeTip(ev, e) {
   const t = $("#tip"), names = takes(e);
   t.innerHTML = `<div class="h">${esc(shown(e.source))} uses ${esc(shown(e.target))}</div>`
     + (names.length ? `<div class="tn">${names.slice(0, 12).map((n) => `<b class="mono">${esc(n)}</b>`).join(" ")}${names.length > 12 ? ` +${names.length - 12}` : ""}</div>` : `<div class="tn">the whole module</div>`)
-    + `<div class="tk">Click to open ${esc(shown(e.target))}</div>`;
+    + (S.level !== "funcs" ? `<div class="tk">Click: ${esc(shown(e.target))}</div>` : "");
   t.classList.add("show"); moveTip(ev);
 }
 function moveTip(ev) { const t = $("#tip"); t.style.left = Math.min(ev.clientX + 14, innerWidth - t.offsetWidth - 10) + "px"; t.style.top = Math.min(ev.clientY + 16, innerHeight - t.offsetHeight - 10) + "px"; }
@@ -621,14 +628,11 @@ function onNodeClick(id, ev) {
     insertRef(`\`${name}()\` in ${file}`);
     return;
   }
-  if (mod(id)?.group) { select(id); return; }
-  if ((ev.shiftKey || ev.metaKey || ev.ctrlKey) && S.selected) {
-    if (S.scope.has(id) && S.scope.size > 1) S.scope.delete(id); else S.scope.add(id);
-    if (!S.scope.has(S.selected)) S.selected = [...S.scope][0];
-    afterFenceChange();
-    return;
-  }
-  select(id);
+  // a click only picks (the card opens it on purpose); shift-click with a module open grows the fence
+  if (!((ev.shiftKey || ev.metaKey || ev.ctrlKey) && S.selected) || mod(id)?.group) { pick(id); return; }
+  if (S.scope.has(id) && S.scope.size > 1) S.scope.delete(id); else S.scope.add(id);
+  if (!S.scope.has(S.selected)) S.selected = [...S.scope][0];
+  afterFenceChange();
 }
 function select(id) {
   if (id.endsWith("/")) { S.focus = id.slice(0, -1); regroup(); fitView(); return; } // a grouped folder: open it
@@ -679,7 +683,7 @@ function renderHeader() {
   if (!m) return;
   $("#mname").textContent = m.id === "." ? "(project root)" : m.id.endsWith(".py") ? m.id : m.id + "/";
   $("#mdoc").textContent = m.doc || "";
-  $("#mfacts").textContent = `${plural(m.files.length, "file")} · ${m.lines} lines · ${plural(m.names.length, "public name")}`;
+  $("#mfacts").textContent = `${plural(m.files.length, "file")} · ${m.lines} lines`;
 }
 
 function relRows(ids, other, dir) {
@@ -748,10 +752,10 @@ function renderOverview() {
   const { dep, use } = related(m.id);
   const tasks = S.tasks.filter((t) => t.modules.includes(m.id));
   $("#v-over").innerHTML = `
-    ${tasks.length ? `<div class="sect"><h3>Exercises <small>from TASKS.md</small></h3><div class="rows">${tasks.map((t, i) => `<button class="task" data-task="${i}"><b>${esc(t.title)}</b><span class="lv">${esc(t.level)}</span><p>${esc(clip(t.summary, 170))}</p></button>`).join("")}</div></div>` : ""}
+    ${tasks.length ? `<div class="sect"><h3>Exercises</h3><div class="rows">${tasks.map((t, i) => `<button class="task" data-task="${i}" title="${esc(t.summary)}"><b>${esc(t.title)}</b></button>`).join("")}</div></div>` : ""}
     <div class="sect"><h3>Functions <small id="fncount"></small></h3><div id="fns"><p class="none">Loading…</p></div></div>
-    <div class="sect"><h3>Uses <small>what ${esc(label(m.id))} takes from other modules</small></h3>${relRows([...dep], m.id, "dep")}</div>
-    <div class="sect"><h3>Used by <small>who takes what from ${esc(label(m.id))}</small></h3>${relRows([...use], m.id, "use")}</div>
+    <div class="sect"><h3>Uses</h3>${relRows([...dep], m.id, "dep")}</div>
+    <div class="sect"><h3>Used by</h3>${relRows([...use], m.id, "use")}</div>
     <details class="src"><summary>Source files</summary><div class="rows">${m.files.map((f) => {
       const fi = S.graph.files[f];
       return `<button class="row" data-file="${esc(f)}"><span class="k">${esc(f.split("/").pop())}</span><span class="d">${esc(fi.error || "")}</span><span class="n">${fi.lines} ln</span></button>`;
@@ -769,17 +773,17 @@ function renderFence() {
   if (!S.selected) return;
   const testsMod = S.full.modules.find((m) => m.kind === "tests");
   const mode = `<div class="mode" role="group" aria-label="Fence mode">
-    <button type="button" data-ro="0" aria-pressed="${!S.readOnly}">Edit inside the fence</button>
-    <button type="button" data-ro="1" aria-pressed="${S.readOnly}">Read only: explain</button></div>`;
+    <button type="button" data-ro="0" aria-pressed="${!S.readOnly}" title="Edits only inside the fence; reads everything">Edit</button>
+    <button type="button" data-ro="1" aria-pressed="${S.readOnly}" title="Explains, edits nothing">Explain</button></div>`;
   let line;
   if (S.readOnly) {
-    line = `<div class="fline ro"><span class="lab">Read only.</span> The agent explains ${[...S.scope].map((id) => `<span class="mono">${esc(shown(id))}</span>`).join(", ")} and can edit nothing. <span class="reads">It reads the whole project.</span></div>`;
+    line = `<div class="fline ro"><span class="lab">Read only.</span> ${[...S.scope].map((id) => `<span class="mono">${esc(shown(id))}</span>`).join(", ")}: explain, no edits.</div>`;
   } else {
     const chipName = (id) => (id.includes("::") ? id.split("::")[1] + "()" : shown(id));
     const chips = S.fenceRole && S.scope.size > 3 ? `<span class="fchip">role ${esc(rname(S.fenceRole))} (${plural(S.scope.size, "file")})</span>`
       : [...S.scope].map((id) => `<span class="fchip">${esc(chipName(id))}${S.scope.size > 1 ? `<button type="button" data-rm="${esc(id)}" aria-label="Remove ${esc(shown(id))} from the fence">${X_ICON}</button>` : ""}</span>`).join("");
     const add = testsMod && !S.scope.has(testsMod.id) ? `<button type="button" class="fadd" data-add="${esc(testsMod.id)}">+ ${esc(testsMod.id)}</button>` : "";
-    line = `<div class="fline"><span class="lab">Can edit:</span>${chips}${add} <span class="reads">Reads everything. Shift-click a module to add it.</span></div>`;
+    line = `<div class="fline"><span class="lab">Can edit:</span>${chips}${add}</div>`;
   }
   const nocli = S.claude ? "" : `<div class="nocli">Claude Code CLI not found. Install it and log in, or start modfence with CLAUDE_BIN set to its path, then restart. Reading the project still works.</div>`;
   $("#fence").innerHTML = nocli + mode + line;

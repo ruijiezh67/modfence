@@ -56,7 +56,7 @@
   </div>
   <nav class="crumbs" id="crumbs" aria-label="Open folder" hidden></nav>
   <div class="pick" id="pick" role="dialog" aria-label="Selected box" hidden></div>
-  <div class="hint" id="hint">Select a module to read it or give the agent an instruction. <kbd>Shift</kbd>-click adds modules to the fence. Press <kbd>?</kbd> for help.</div>
+  <div class="hint" id="hint">Click a box. <kbd>Shift</kbd>-click: add to fence. <kbd>?</kbd> help</div>
 
   <aside class="panel" id="panel" aria-label="Module" inert>
     <div class="grip" id="grip" role="separator" aria-orientation="vertical" aria-label="Resize panel" tabindex="0"></div>
@@ -79,7 +79,7 @@
     <div class="composer" id="composer">
       <div class="fence" id="fence"></div>
       <label class="clabel" for="prompt">Instruction</label>
-      <textarea id="prompt" rows="2" placeholder="e.g. Explain how this module works, or: add a test for an edge case. Click a function above to mention it."></textarea>
+      <textarea id="prompt" rows="2" placeholder="Ask, or say what to change"></textarea>
       <div class="crow">
         <span class="chint" id="chint"><kbd>Ctrl</kbd> <kbd>Enter</kbd> to send</span>
         <button class="btn quiet" id="forget" type="button" title="Forget this fence's agent session and run history">Clear runs</button>

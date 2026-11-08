@@ -19,8 +19,8 @@ Reading code line by line was the human engineer's way in. With an agent writing
 
 | Level | You see | Select, then *Open* | Fence |
 |---|---|---|---|
-| **1 Roles** | What the system does: observer, segmenter, inference, memory ... Each box is a role with its files and lines; lines between boxes are imports (the 3 strongest per box). | a card shows the role's job; *Open its parts* | the role's files |
-| **2 Parts of a role** | Only the role's own parts: its folders, or its files when it lives in three folders or fewer, and the imports between them. Imports to other roles are counted, not drawn. | *Open its functions* | the module (panel) |
+| **1 Roles** | What the system does: observer, segmenter, inference, memory ... Each box is a role with its files and lines; lines between boxes are imports (the 3 strongest per box). | *Open parts* | the role's files |
+| **2 Parts of a role** | Only the role's own parts: its folders, or its files when it lives in three folders or fewer, and the imports between them. Imports to other roles are counted, not drawn. | *Open functions* | the module (panel) |
 | **3 Functions and classes** | Only the part's own functions and classes: who calls whom and who inherits from whom. Calls leaving the part are counted, not drawn. Static and approximate: the bar says how many calls were traced. | a click mentions the function in the instruction | shift-click: that function alone |
 
 **Where roles come from.** On a project with more than 12 modules, the first open groups the files by folder and splits big flat folders by the words in their file names (deterministic), then one Haiku call (about one cent) maps those groups onto 6-15 roles named in the project's own words. A file moves between groups only if its imports back it. You then rename roles, move files and confirm (*Files*, *Rename*, *Confirm roles*); roles keep a stable id, so a rename never changes which files they hold, and new files wait under "not placed yet". Names are checked: at most 3 words and 24 characters, and no two alike. This method was chosen out of nine by measurement: see [Evaluation, section 4](docs/EVALUATION.md#4-grouping-files-into-roles).
@@ -44,7 +44,7 @@ It opens `http://127.0.0.1:8765` on the current directory. `modfence a b` opens 
 ## Big projects
 
 - **Roles first.** Above 12 modules the project opens at its roles (see above); *All modules* shows the module graph.
-- **Folders fold.** In the module graph, a project with more than 60 modules opens as its top folders (fastapi: 430 modules as 4 folders). Click a folder to open it; the path at the top goes back. Search (`/`) finds any module and opens the folders down to it.
+- **Folders fold.** In the module graph, a project with more than 60 modules opens as its top folders (fastapi: 430 modules as 4 folders). Select a folder, then *Open folder*; the path at the top goes back. Search (`/`) finds any module and opens the folders down to it.
 - **Fast after the first scan.** Parsed files and file hashes are cached by size and modification time. Measured on a laptop: fastapi (1,219 Python files) scans and snapshots in 1.6 s once cached (8.9 s for the first scan; 61 s right after cloning, when the disk cache is cold too); pydantic (3,155 files) in 2.2 s (11.8 s first scan).
 - **Revert is kept for the fence.** Before a run, modfence keeps a copy of up to 50 MB of the project's files, and always of the fenced modules' files, so the run can be undone.
 
@@ -69,8 +69,8 @@ The two versions in the History screenshot are real runs on it (Claude Code 2.1.
 |---|---|
 | Find a module | `/` or `Ctrl` + `K`, then type. |
 | Switch view | `1` Modules, `2` History. |
-| Read a module | What it uses turns blue, the modules that use it orange. Its functions are listed with what each does: the docstring, or a one-line summary by a small model (Haiku), cached until the file changes and marked `AI`. Source files are folded away under *Source files*. |
-| Set the fence | The selected module is editable (pink). Shift-click adds modules; `+ tests` adds the tests. `Read only: explain` fences nothing and skips the plan. |
+| Read a module | Click a box: a card shows what it is, with *Open functions* (its call graph) and *Ask / edit* (the panel). What it uses turns blue, the modules that use it orange. Its functions are listed with what each does: the docstring, or a one-line summary by a small model (Haiku), cached until the file changes and marked `AI`. Source files are folded away under *Source files*. |
+| Set the fence | The selected module is editable (pink). Shift-click adds modules; `+ tests` adds the tests. *Explain* fences nothing and skips the plan. |
 | Instruct | Type (click a function to mention it), press *Plan* or `Ctrl` + `Enter`. Answer, press *Build*. The bar at the top shows the running agent, with Stop. |
 | Review | The run's functions appear in the panel; every run is also a version in History. *Show on graph* paints the modules it changed (green) and those that use them (yellow). *Changes, diff and revert* opens the functions, the line diff, and the revert. |
 | Link | `http://127.0.0.1:8765/#p=0&m=iris/evaluate` opens a module. |
