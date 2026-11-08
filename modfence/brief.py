@@ -253,9 +253,34 @@ def _params(fn):
     return out
 
 
+def _top_statements(body):
+    """Module-level statements, also inside if/try/with blocks (`if TYPE_CHECKING:`, `try: import x`), not in defs."""
+    for node in body:
+        yield node
+        if isinstance(node, (ast.If, ast.Try, ast.With)) or type(node).__name__ == "TryStar":
+            for part in (getattr(node, "body", []), getattr(node, "orelse", []), getattr(node, "finalbody", []),
+                         *[h.body for h in getattr(node, "handlers", [])]):
+                yield from _top_statements(part)
+
+
+def _base(b):
+    """A base class by name: `MutableMapping[str, T]` and `typing.MutableMapping` are both MutableMapping."""
+    if isinstance(b, ast.Subscript):
+        b = b.value
+    name = ast.unparse(b).split(".")[-1]
+    return name.lower() if name in _TYPING_ALIASES else name  # typing.List[T] and list[T] are the same base
+
+
+_TYPING_ALIASES = {"List", "Dict", "Set", "FrozenSet", "Tuple", "Type", "DefaultDict", "OrderedDict", "Deque"}
+
+
+_RECORDS = ("dataclass", "define", "frozen", "attrs", "NamedTuple", "TypedDict")  # classes whose fields are parameters
+
+
 def signatures(data):
     """{top-level name: {"kind", "params", "bases"}} from a file's bytes; None when it does not parse. A class's params
-    are its __init__'s, else its annotated fields (dataclasses). Imported or assigned names are "name" kind."""
+    are its __init__'s; a dataclass-like class's are its annotated fields; otherwise unknown (None), since annotations
+    on a plain class are not constructor parameters. Imported or assigned names are "name" kind."""
     if data is None:
         return {}
     try:
@@ -263,15 +288,16 @@ def signatures(data):
     except (UnicodeDecodeError, SyntaxError, ValueError):
         return None
     out = {}
-    for node in tree.body:
+    for node in _top_statements(tree.body):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            out[node.name] = {"kind": "def", "params": _params(node), "bases": []}
+            out.setdefault(node.name, {"kind": "def", "params": _params(node), "bases": []})
         elif isinstance(node, ast.ClassDef):
             init = next((x for x in node.body if isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef)) and x.name == "__init__"), None)
+            record = any(k in ast.unparse(x) for x in node.decorator_list + node.bases for k in _RECORDS)
             fields = [(x.target.id, "keyword", x.value is None, ast.unparse(x.value) if x.value is not None else None)
                       for x in node.body if isinstance(x, ast.AnnAssign) and isinstance(x.target, ast.Name)]
-            out[node.name] = {"kind": "class", "params": _params(init) if init else fields,
-                              "bases": [ast.unparse(b) for b in node.bases]}
+            out.setdefault(node.name, {"kind": "class", "params": _params(init) if init else fields if record else None,
+                                       "bases": [_base(b) for b in node.bases]})
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
             for a in node.names:
                 out.setdefault((a.asname or a.name).split(".")[0], {"kind": "name", "params": None, "bases": []})

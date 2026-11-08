@@ -8,7 +8,7 @@ Tools that draw a repository's structure help you read it. modfence is for chang
 
 1. **Pick the box.** Zoom from the system's roles to a role's parts (below). Select a box: its card says what it does; *Ask / edit* makes it the fence.
 2. **Agree on a plan.** The agent reads the project (it cannot edit yet), asks up to four questions with its recommended answer preselected, and lists the functions it will add, change or remove. You answer and press *Build*.
-3. **Build inside the fence, sealed.** A hook blocks every edit outside the fence. By default the run is also sealed: the agent cannot read other modules' code, only a short brief of what they offer and what the fence must keep working (built from the import graph, no model call; a whole role of a 581-file system is 0.3k-3.4k tokens). It cannot lean on or break their internals. *Sealed* in the fence line turns this off for one run. Before the agent may stop, the project's tests run; if they fail it is sent back once.
+3. **Build inside the fence, sealed.** A hook blocks every edit outside the fence. By default the run is also sealed: the agent cannot read other modules' code, only a short brief of what they offer and what the fence must keep working (built from the import graph, no model call; a whole role of a 581-file system is 0.3k-3.4k tokens). It cannot lean on or break their internals. *Sealed* in the fence line turns this off for one run. Measured on rich (100 files): naming the module cut cost 19% against asking with the task alone; the seal added about 5% on these small tasks and saved nothing there, since no agent read other modules anyway. It is on for safety, not tokens ([Evaluation, section 5](docs/EVALUATION.md#5-the-ai-only-brief-sealed-runs-and-contracts-golden-rules-1-3-4)). Before the agent may stop, the project's tests run; if they fail it is sent back once.
 4. **Review the version.** Every run that changed code becomes a numbered version in **History**: what you asked, which modules and functions changed, whether the tests passed, the cost, the diff, and a revert.
 
 ![History: two builds on the iris example, which module each changed, and the functions of v2](docs/history.png)
@@ -109,4 +109,4 @@ On four cross-module features, fencing the modules a feature needs (tests includ
 python -m unittest discover -s tests -t .
 ```
 
-34 deterministic tests. No model is called: `tests/fake_claude.py` stands in for the CLI, emitting Claude Code's stream-json events and making the edits the prompt asks for.
+35 deterministic tests. No model is called: `tests/fake_claude.py` stands in for the CLI, emitting Claude Code's stream-json events and making the edits the prompt asks for.

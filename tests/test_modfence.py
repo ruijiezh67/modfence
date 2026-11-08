@@ -283,6 +283,17 @@ class ScopeGuardTest(unittest.TestCase):
         self.assertEqual([b["change"] for b in case(old.replace(b"def double(x)", b"def twice(x)"))], ["removed"])
         self.assertEqual([b["change"] for b in case(old.replace(b"def double(x)", b"def double(y)"))], ["parameter x removed", "new required parameter y"])
         self.assertEqual(case(old.replace(b"def double(x):\n    return 2 * x", b"from app.core.other import double")), [], "re-exported")
+        # false alarms a replay of requests' history found, now not raised:
+        sig = lambda src: brief.signatures(src.encode())
+        self.assertEqual(brief.breaks(sig("class D(MutableMapping): pass")["D"], sig("class D(MutableMapping[str, T]): pass")["D"]), [],
+                         "a base made generic")
+        self.assertEqual(brief.breaks(sig("class J(cookielib.CookieJar): pass")["J"], sig("class J(CookieJar): pass")["J"]), [])
+        self.assertEqual(brief.breaks(sig("class S(List[T]): pass")["S"], sig("class S(list[T]): pass")["S"]), [], "typing alias (rich)")
+        self.assertEqual(brief.breaks(sig("class J:\n    pass")["J"], sig("class J:\n    _policy: int")["J"]), [],
+                         "annotations on a plain class are not constructor parameters")
+        self.assertEqual(brief.breaks(sig("@dataclass\nclass P:\n    x: int")["P"], sig("@dataclass\nclass P:\n    x: int\n    y: int")["P"]),
+                         ["new required parameter y"], "a dataclass field is")
+        self.assertIn("chardet", sig("if TYPE_CHECKING:\n    import chardet\nelse:\n    chardet = None"), "names inside if blocks")
         write(os.path.join(d, "app/cli/extra.py"), "from app.core import values as v\n\ndef go():\n    return v.double(1) + v.LIMIT\n")
         g = analyze.analyze(d)
         got = brief.contract_breaks(g, {"app/core/values.py": (old, old.replace(b"def double(x)", b"def double(x, factor)"))})

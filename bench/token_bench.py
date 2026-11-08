@@ -1,8 +1,10 @@
 """Does module vibe coding save tokens on a real library? Plain Claude Code against a sealed modfence run, on the four
 rich tasks in bench/token_tasks.py (golden rules 1 and 4; the experiment the survey in research notes calls A0 vs A2).
 
+  vibe    Claude Code alone, the task spec only: "just ask the model".
   plain   Claude Code alone. Prompt: the task spec plus "The change belongs in `<module>`." No note, no hooks.
-  sealed  modfence: fence = the module plus tests; the system note carries the brief; other modules' code is hidden.
+  sealed  modfence: the same prompt; fence = the module; the system note carries the brief; other modules' code is
+          hidden. (Round 1 also fenced the tests and its note invited test writing; see docs/EVALUATION.md.)
 
 Same prompt text, same fresh copy of rich (no .git) per attempt, CLAUDE_CODE_DISABLE_CLAUDE_MDS=1, no plan step and no
 done check in either arm (so only the context differs). After the run, the hidden acceptance tests and rich's own test
@@ -36,10 +38,9 @@ def attempt(rich, name, arm, rep, workdir, claude):
     t = TASKS[name]
     root = os.path.join(workdir, f"{name}-{arm}-{rep}")
     shutil.copytree(rich, root, ignore=shutil.ignore_patterns(".git", "__pycache__", ".modfence"))
-    prompt = t["spec"] + f"\n\nThe change belongs in `{t['module']}`."
+    prompt = t["spec"] + ("" if arm == "vibe" else f"\n\nThe change belongs in `{t['module']}`.")
     graph = analyze.analyze(root)
-    tests = [m["id"] for m in graph["modules"] if m["kind"] == "tests"]
-    job = BenchJob(root, [t["module"]] + tests, prompt, graph, claude, seal=(arm == "sealed"))
+    job = BenchJob(root, [t["module"]], prompt, graph, claude, seal=(arm == "sealed"))
     job.condition = "modfence" if arm == "sealed" else "plain"
     t0 = time.time()
     job._run()
@@ -77,7 +78,7 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--reps", type=int, default=2)
     ap.add_argument("--jobs", type=int, default=3)
-    ap.add_argument("--only", default="plain,sealed")
+    ap.add_argument("--only", default="vibe,plain,sealed")
     ap.add_argument("--tasks", default="")
     a = ap.parse_args()
     os.environ["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"

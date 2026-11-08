@@ -153,6 +153,68 @@ The structural metrics and the reference disagree: clustering the import graph g
 
 modfence ships the last row: from 0.42 (best deterministic) to 0.61 ARI for about one cent, and Sonnet at ten times the cost was no better. For scale only, since the systems differ: the best 2026 architecture-recovery method reports ARI 0.51 on eight other systems. Limits: one reference system, one annotator, three runs per row, and the model reads the same docs the reference was built from, which favours it. That is why the result is a proposal the user confirms, not an answer.
 
+## 5. The AI-only brief, sealed runs and contracts (golden rules 1, 3, 4)
+
+Measured 2026-11-08. Raw rows: `bench/results/brief_probe_haiku.jsonl`, `bench/results/token_bench_round*.jsonl`.
+
+**Can a model read the brief?** `bench/brief_probe.py` asks questions whose answers come from the code itself: the parameters of a function the fence uses, who uses a fence name, and whether a name is used (half are distractors). The model sees one encoding of the brief at a time. Setup: 7 fences (four examples, three rich modules), Haiku, $0.02 in total.
+
+| Encoding | Size (tokens, chars/4) | Parameters | Users | Used or not | All |
+|---|---|---|---|---|---|
+| readable stubs (`sig`) | 145-1,468 | 20/20 | 17/20 | 45/48 | 82/88 |
+| **compressed ids (`ids`, shipped)** | 41-1,280 | 20/20 | 20/20 | 48/48 | **88/88** |
+| names only (`iface`) | 23-224 | 0/20 | 0/20 | 39/48 | 39/88 |
+
+A first run of the probe caught a misleading header in the readable form ("what they offer" rather than "what the fence uses"), which is fixed above. Haiku is a lower bound for the agents that read the brief in practice.
+
+**Does a sealed run save tokens?** `bench/token_bench.py` runs four tasks on rich (100 files, 26k lines; tasks and hidden acceptance tests in `bench/token_tasks.py`, checked to fail on rich as is and to pass with a reference solution). Agent: Claude Code with Opus 5.5.
+
+Round 1 (2 runs per task and arm):
+
+| Arm | Cost per task, median | Turns, median | Tokens billed, median | Acceptance | Reads of other modules |
+|---|---|---|---|---|---|
+| plain Claude Code, told the module | $0.243 | 5.5 | 189k | 8/8 | 0 |
+| sealed modfence | $0.335 (+38%) | 11.5 | 374k | 8/8 | 0 (blocked: N/A, none tried) |
+
+The seal did not save tokens here, and the round shows why. Told the module, Opus read only that file in every run, so there was no exploration to cut. The extra turns came from the harness. Its note fenced the tests and said the agent "may read and edit them", so the agent wrote tests nobody asked for. It also did not say that `python -c` and `cat >>` are blocked in a sealed run, so the agent retried. Round 2 fixes both, fences the module only, and adds a `vibe` arm (the task alone, no module named).
+
+Round 2: 4 runs per task and arm, 16 per arm. Two copies of the run were started by mistake; both are kept, since each attempt is independent.
+
+| Arm | Cost, sum of 16 | Cost per task, median | Turns, median | Tokens billed, median | Acceptance | Reads of other modules |
+|---|---|---|---|---|---|---|
+| `vibe`: Claude Code, task only | $5.12 | $0.284 | 9 | 309k | 16/16 | 0 |
+| `plain`: Claude Code, told the module | $4.15 (-19%) | $0.247 | 6 | 191k | 16/16 | 0 |
+| `sealed`: modfence | $4.38 (-14%) | $0.267 | 7 | 242k | 16/16 | 0 |
+
+Median cost and tokens per task, in the order vibe / plain / sealed:
+- T1 text.count: $0.317 / $0.237 / $0.254 (442k / 224k / 255k tokens);
+- T2 table.add_rows: $0.255 / $0.244 / $0.273;
+- T3 Panel.from_markup: $0.252 / $0.250 / $0.258;
+- T4 filesize.parse: $0.440 / $0.300 / $0.302 (380k / 179k / 221k).
+
+What this shows, and what it does not:
+- **Naming the module saves the tokens.** It cut cost by 19% against asking with the task alone, and by up to a third on T4, where the agent otherwise wrote and debugged more. In modfence, picking the box is that act, so this saving is the module step's, not the seal's.
+- **The seal costs about 5% on top**, and buys no evidence of benefit on these tasks. The brief adds about 2k prompt tokens (cache-creation median 24.4k against 22.5k), and one turn on the median. 6 of 16 sealed runs tried a blocked command once. No run in any arm read another module, so there was nothing to stop.
+- **These tasks are small and fully specified.** Each names its class and needs at most one neighbour. Whether the seal pays off where an agent explores (vague requests, wide modules, a real research codebase) is N/A until measured. Golden rule 4 keeps the seal on by default anyway: it is the protection of working code, not a token saving.
+- Spend for this section: $19.29 in model calls (pilot $0.58, round 1 $5.05, round 2 $13.64, probes about $0.04). This is over the $15 planned, because of the duplicate round-2 run.
+
+**Did a run break what other modules use?** `bench/contract_replay.py` replays a git history at zero model cost. For each commit it checks every name another module used at the parent commit. Each flag was read against its commit by hand.
+
+| History (last commits) | Commits with Python changes | Flags, first detector | Flags, final detector | Real contract changes among final flags |
+|---|---|---|---|---|
+| modfence | 14 | 2 (12 commits then) | 3 | 3/3 (a removal, two changed defaults) |
+| requests (300) | 131 | 10 | 1 | 1/1 (`is_urllib3_2` removed; users updated in the same commit) |
+| rich (300) | 191 | 5 | 4 | 4/4 |
+
+The first detector's false alarms had three causes, each now a regression test:
+- a base made generic or renamed by import (`MutableMapping` to `MutableMapping[str, T]`, `cookielib.CookieJar` to `CookieJar`, `List[T]` to `list[T]`);
+- annotations on a plain class read as constructor parameters (only dataclass-like classes have field parameters);
+- names defined under `if TYPE_CHECKING:` or `try:` missed.
+
+The real flags on rich include a moved class (`CellTable`, 23 user files), a changed parameter (`cell_len(text, _cell_len)` to `cell_len(text, unicode_version)`), a reverted column class, and a renamed NamedTuple field (`before` to `style_before`).
+
+Recall, that is breaks the check misses, is N/A: it needs labelled breaks, which these histories do not have. Known blind spots: uses through `getattr` or re-exported facades, and behaviour changes that keep the signature.
+
 ## How modfence compares with popular tools
 
 Star counts are from the GitHub API on 2026-11-06. Feature cells come from each project's README and docs ([research notes](../../research_notes/Modmap%20next%20step%20priorities/competitor_tools.md)); N/A means not found in their docs.

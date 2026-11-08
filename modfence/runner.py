@@ -137,7 +137,9 @@ def context_note(graph, scope, read_only=False, phase=None, sealed=False):
     if sealed:
         rule += (" This run is sealed: you can read and search only the fence and the tests; other modules' code is "
                  "hidden so you cannot depend on or break their internals. What they offer, and what the fence must keep "
-                 f"working, is in the brief below. For one definition's docstring run: {show_command()} path/to/file.py::name")
+                 f"working, is in the brief below. For one definition's docstring run: {show_command()} path/to/file.py::name . "
+                 "To check behaviour run the tests (python -m pytest path/to/test_file.py -q); python -c, cat and shell "
+                 "chaining or redirection are blocked in this run, so do not try them.")
     lines = [f"You are working in modfence on project `{graph['name']}`, focused on module(s): "
              + ", ".join(f"`{s}`" for s in scope) + ".", rule, ""]
     loose = [s for s in scope if s not in mods]
@@ -148,7 +150,7 @@ def context_note(graph, scope, read_only=False, phase=None, sealed=False):
         if not m:
             continue
         if sealed and m["kind"] == "tests":  # editable, readable; listing every test file only costs tokens
-            lines.append(f"Module `{s}`: the tests ({len(m['files'])} files); you may read and edit them.")
+            lines.append(f"Module `{s}`: the tests ({len(m['files'])} files), inside the fence.")
             continue
         lines.append(f"Module `{s}`" + (f": {m['doc']}" if m["doc"] else ""))
         lines.append("  files: " + ", ".join(f"{f} ({graph['files'][f]['lines']} lines)" for f in m["files"]))
