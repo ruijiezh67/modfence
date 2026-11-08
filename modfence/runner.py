@@ -6,10 +6,10 @@ Each request runs `claude -p --output-format stream-json` in the project root, w
 - `--resume` of that module's previous session, so every module keeps its own conversation.
 
 After the run the project is re-scanned. Files changed outside the scope (for example by a shell command,
-which the hook cannot see) are reported as a scope breach. Modules that import a changed module are the
+which the hook cannot see) are reported as a scope breach. Modules that import hashlib, a changed module are the
 ripple of the change.
 """
-import difflib, glob, itertools, json, os, re, shutil, subprocess, sys, threading, time
+import difflib, glob, hashlib, itertools, json, os, re, shutil, subprocess, sys, threading, time
 
 from . import analyze
 
@@ -80,6 +80,8 @@ def scope_key(scope):
 
 def history_path(root, scope):
     safe = re.sub(r"[^A-Za-z0-9_.+-]", "_", scope_key(scope)) or "_"
+    if len(safe) > 80:  # a role fenced as its files: keep the name short enough for Windows paths
+        safe = safe[:40] + "-" + hashlib.sha1(scope_key(scope).encode("utf-8")).hexdigest()[:12]
     return os.path.join(root, ".modfence", "history", safe + ".jsonl")
 
 
@@ -113,7 +115,8 @@ def context_note(graph, scope, read_only=False, phase=None):
     mods = {m["id"]: m for m in graph["modules"]}
     out_edges = [e for e in graph["edges"] if e["source"] in scope and e["target"] not in scope]
     in_edges = [e for e in graph["edges"] if e["target"] in scope and e["source"] not in scope]
-    where = ", ".join("`(project root files)`" if s == "." else f"`{s}`" if s.endswith(".py") else f"`{s}/`" for s in scope)
+    where = ", ".join("`(project root files)`" if s == "." else f"function `{s.split('::')[1]}` in `{s.split('::')[0]}`"
+                      if "::" in s else f"`{s}`" if s.endswith(".py") else f"`{s}/`" for s in scope)
     if phase == "plan":
         rule = PLAN_RULE.replace("{where}", where)
     elif read_only:
@@ -126,6 +129,9 @@ def context_note(graph, scope, read_only=False, phase=None):
                   "inside the scope, then say exactly which module needs what change, and why.")
     lines = [f"You are working in modfence on project `{graph['name']}`, focused on module(s): "
              + ", ".join(f"`{s}`" for s in scope) + ".", rule, ""]
+    loose = [s for s in scope if s not in mods]
+    if loose:  # files and functions fenced one by one (a role, or a function)
+        lines.append("Fenced files and functions: " + ", ".join(f"`{s}`" for s in loose[:60]) + (" ..." if len(loose) > 60 else ""))
     for s in scope:
         m = mods.get(s)
         if not m:
@@ -159,7 +165,12 @@ class Job:
         self.root, self.scope, self.prompt, self.graph, self.claude = root, list(scope), prompt, graph, claude_bin
         self.phase = phase if phase in ("plan", "build") else None
         self.read_only = bool(read_only) or self.phase == "plan"
-        self.editable = [] if self.read_only else list(scope)
+        # "file::function" fences the function: the hook allows its file, and _finish flags other functions changed there
+        self.editable = [] if self.read_only else sorted({s.split("::")[0] for s in scope})
+        self.fn_fence = {}
+        for s in scope:
+            if "::" in s:
+                self.fn_fence.setdefault(s.split("::")[0], set()).add(s.split("::")[1])
         self.events, self.cond, self.done, self.proc = [], threading.Condition(), False, None
         self.started = time.time()
 
@@ -313,9 +324,12 @@ class Job:
             files = save_run(self, changed, set(added), set(deleted), set(outside),
                              dict(prompt=self.prompt, phase=self.phase, modules=changed_mods, ripple=ripple, check=check,
                                   cost_usd=res.get("cost_usd"), turns=res.get("turns")))
+            out_fns = [f"{f['path']}::{u['name']}" for f in files if f["path"] in self.fn_fence for u in f["funcs"] or []
+                       if u["name"] != "(module level)" and not any(u["name"] == n or u["name"].startswith(n + ".")
+                                                                   for n in self.fn_fence[f["path"]])]
             if check:
                 self.emit("check", **check)
-            self.emit("changes", added=added, modified=modified, deleted=deleted, outside_scope=outside,
+            self.emit("changes", added=added, modified=modified, deleted=deleted, outside_scope=outside, outside_functions=out_fns,
                       modules=changed_mods, ripple=ripple, run=self.id, files=files)
         except Exception as e:
             self.emit("error", text=f"rescan failed: {e}")

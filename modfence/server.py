@@ -7,7 +7,7 @@ import json, os, subprocess, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import analyze, purpose, runner
+from . import analyze, purpose, roles, runner
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -76,6 +76,9 @@ def make_handler(app, port):
                     # ponytail: module summaries are not keyed by content; they are refreshed when the module is described again
                     g["ai_purposes"] = {k: v.get("text", "") for k, v in purpose.load(root).get("modules", {}).items()}
                     return self.send_json(g)
+                if u.path == "/api/roles":
+                    root = app.project(q)
+                    return self.send_json(roles.view(root, analyze.analyze(root)))
                 if u.path == "/api/versions":
                     return self.send_json({"versions": runner.versions(app.project(q))})
                 if u.path == "/api/module":
@@ -156,6 +159,13 @@ def make_handler(app, port):
                     if job:
                         job.cancel()
                     return self.send_json({"ok": bool(job)})
+                if u.path.startswith("/api/roles/"):
+                    return self.roles(app.project(q), u.path.rsplit("/", 1)[1], b)
+                if u.path == "/api/calls":
+                    root = app.project(q)
+                    g = analyze.analyze(root)
+                    files = [f for f in b.get("files") or [] if f in g["files"]][:400]
+                    return self.send_json(analyze.call_graph(root, files, set(g["files"])))
                 if u.path == "/api/tests":
                     ok, summary, out = runner.run_tests(app.project(q))
                     return self.send_json({"ok": ok, "summary": summary, "output": out})
@@ -183,12 +193,35 @@ def make_handler(app, port):
             except Exception as e:
                 return self.send_json({"error": f"{type(e).__name__}: {e}"}, 500)
 
+        def roles(self, root, action, b):
+            graph = analyze.analyze(root)
+            try:
+                if action == "propose":
+                    with app.lock:  # ponytail: one proposal at a time across projects
+                        roles.propose_and_store(root, graph, app.claude)
+                elif action == "rename":
+                    roles.rename(root, b.get("id"), b.get("name"))
+                elif action == "move":
+                    if b.get("path") not in graph["files"]:
+                        raise LookupError("no such file")
+                    roles.move(root, b.get("path"), b.get("id"))
+                elif action == "add":
+                    roles.add_role(root, b.get("name"), b.get("purpose", ""))
+                elif action == "confirm":
+                    roles.confirm(root)
+                else:
+                    raise LookupError("no such action")
+            except ValueError as e:  # a name that cannot be used: say why, change nothing
+                return self.send_json({"error": str(e)}, 400)
+            return self.send_json(roles.view(root, graph))
+
         def ask(self, root, b):
             prompt = (b.get("prompt") or "").strip()
             scope = [s for s in b.get("scope") or [] if isinstance(s, str) and s]
             graph = analyze.analyze(root)
-            known = {m["id"] for m in graph["modules"]}
-            if not prompt or not scope or not set(scope) <= known:
+            # a scope entry is a module, a file (a role is fenced as its files) or "file::function"
+            known = {m["id"] for m in graph["modules"]} | set(graph["files"])
+            if not prompt or not scope or not {s.split("::")[0] for s in scope} <= known:
                 return self.send_json({"error": "need a prompt and a scope of known modules"}, 400)
             with app.lock:
                 running = app.active.get(root)

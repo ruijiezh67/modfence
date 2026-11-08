@@ -2,11 +2,12 @@
 
 Run from the modfence folder: python -m unittest discover -s tests -t .
 """
+from collections import Counter
 import atexit, http.client, json, os, shutil, subprocess, sys, tempfile, threading, time, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from modfence import analyze, purpose, runner, scope_guard, server  # noqa: E402
+from modfence import analyze, purpose, roles, runner, scope_guard, server  # noqa: E402
 
 FAKE = os.path.join(HERE, "fake_claude.py")
 _dirs = []
@@ -111,6 +112,68 @@ class FlatProjectTest(unittest.TestCase):
             self.assertFalse(scope_guard.allowed("README.md", d, ["train.py"]))
         finally:
             shutil.rmtree(d)
+
+
+class RolesTest(unittest.TestCase):
+    def test_imports_resolve_from_a_subfolder_root(self):
+        d = tempfile.mkdtemp(prefix="modfence-test-")
+        _dirs.append(d)
+        for rel, text in {"backend/kernel/__init__.py": "", "backend/kernel/store.py": "X = 1\n",
+                          "backend/observers/screen.py": "from kernel.store import X\n"}.items():
+            os.makedirs(os.path.dirname(os.path.join(d, rel)), exist_ok=True)
+            write(os.path.join(d, rel), text)
+        self.assertIsNotNone(edge(analyze.analyze(d), "backend/observers", "backend/kernel"),
+                             "code run from backend/ imports kernel.store as backend/kernel/store.py")
+
+    def test_words_louvain_and_groupings_are_deterministic(self):
+        self.assertEqual({roles.tokens(p)[-1] for p in ("a/segmenter.py", "b/segmentation.py", "c/segment_runner.py")} - {"runn"}, {"segment"})
+        w = {(i, j): 1 for g in (range(5), range(5, 10)) for i in g for j in g if i < j}
+        w[(4, 5)] = 1
+        self.assertEqual(sorted(Counter(roles.louvain(list(range(10)), w).values()).values()), [5, 5])
+        g = analyze.analyze(project())
+        for name, fn in roles.METHODS.items():
+            first = fn(g)
+            self.assertEqual(first, fn(g), name)
+            self.assertEqual(set(first), set(roles.code_files(g)), name)
+
+    def test_roles_can_be_renamed_and_corrected_without_losing_anything(self):
+        d = project()
+        g = analyze.analyze(d)
+        files = roles.code_files(g)
+        roles.save_store(d, roles.to_store({f: "app core" if "/core/" in f else "the_rest:of/it" for f in files}, {}, "test"))
+        v = roles.view(d, g)
+        self.assertEqual(sorted(r["name"] for r in v["roles"]), ["app core", "the rest of"], "names are tidied to 3 words")
+        core = next(r for r in v["roles"] if r["name"] == "app core")
+        roles.rename(d, core["id"], "  values   store ")
+        for bad in ("", "the rest of", "a b c d", "x" * 25, "a/b"):
+            with self.assertRaises(ValueError, msg=bad):
+                roles.rename(d, core["id"], bad)
+        v = roles.view(d, g)
+        renamed = next(r for r in v["roles"] if r["id"] == core["id"])
+        self.assertEqual((renamed["name"], renamed["files"]), ("values store", core["files"]), "a rename keeps the files")
+        other = next(r for r in v["roles"] if r["id"] != core["id"])
+        roles.move(d, "app/cli/main.py", core["id"])
+        write(os.path.join(d, "app/core/extra.py"), "def f():\n    return 1\n")
+        v = roles.view(d, analyze.analyze(d))
+        self.assertIn("app/cli/main.py", next(r for r in v["roles"] if r["id"] == core["id"])["files"])
+        self.assertNotIn("app/cli/main.py", next(r for r in v["roles"] if r["id"] == other["id"])["files"])
+        self.assertEqual(v["unassigned"], ["app/core/extra.py"], "new files wait to be placed")
+
+    def test_call_graph_links_functions_across_files(self):
+        d = project()
+        write(os.path.join(d, "app/api/handlers.py"), "from app.core.values import double\n\ndef handle(x):\n    print(x)\n    return double(x)\n")
+        g = analyze.analyze(d)
+        c = analyze.call_graph(d, ["app/api/handlers.py", "app/core/values.py"], set(g["files"]))
+        self.assertIn({"source": "app/api/handlers.py::handle", "target": "app/core/values.py::double", "kind": "calls", "count": 1}, c["edges"])
+        self.assertEqual((c["calls"], c["resolved"]), (1, 1), "print() is not counted")
+        c = analyze.call_graph(d, ["app/api/handlers.py"], set(g["files"]))
+        self.assertEqual(c["boundary"][0]["file"], "app/core/values.py", "calls leaving the files are boundary links")
+
+    def test_a_function_fence_allows_its_file(self):
+        d = project()
+        job = runner.Job(d, ["app/core/values.py::double"], "x", analyze.analyze(d), FAKE)
+        self.assertEqual((job.editable, job.fn_fence), (["app/core/values.py"], {"app/core/values.py": {"double"}}))
+        self.assertIn("function `double` in `app/core/values.py`", job.system_note())
 
 
 class PurposeTest(unittest.TestCase):

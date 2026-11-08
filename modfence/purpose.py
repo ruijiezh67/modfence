@@ -66,10 +66,10 @@ def module_view(root, graph, module_id):
             "functions": funcs, "undescribed": stale}
 
 
-def _ask(claude, prompt):
+def _ask(claude, prompt, system=SYSTEM, model=MODEL):
     """(parsed JSON object, cost in USD) from one tool-less model call."""
     exe = [sys.executable, claude] if claude.endswith(".py") else [claude]
-    cmd = exe + ["-p", "--model", MODEL, "--output-format", "json", "--tools", "", "--system-prompt", SYSTEM,
+    cmd = exe + ["-p", "--model", model, "--output-format", "json", "--tools", "", "--system-prompt", system,
                  "--no-session-persistence", "--strict-mcp-config", "--setting-sources", "project"]  # no user settings (language ...)
     env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDECODE") and k != "CLAUDE_CODE_ENTRYPOINT"}
     env["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] = "1"  # the user's CLAUDE.md is not needed to describe code
