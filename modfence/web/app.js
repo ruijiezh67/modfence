@@ -112,7 +112,9 @@ function viewGraph(full, focus) {
   });
   return { ...full, modules: modules.sort((x, y) => x.id.localeCompare(y.id)), edges: [...edges.values()] };
 }
+const callCache = new Map(); // call graphs fetched for the card; dropped whenever the view is rebuilt, so never stale
 function regroup() {
+  callCache.clear();
   if (!(S.roles && S.roles.roles.length) && (S.level === "roles" || S.level === "parts")) S.level = "modules";
   if (S.level === "funcs" && !S.calls) S.level = "parts";
   S.hiddenLinks = 0; S.outside = 0;
@@ -185,9 +187,9 @@ function funcGraph() {
   const nodes = c.nodes.map((n) => ({ id: n.id, kind: "fn", label: n.name + (n.kind === "class" ? "" : "()"), meta: oneFile ? `line ${n.line}` : `${clip(n.file.split("/").pop(), 14)}:${n.line}`,
     files: [n.file], lines: n.lines, names: [], doc: n.doc }));
   const edges = c.edges.map((e) => ({ source: e.source, target: e.target, receipts: Array.from({ length: Math.min(e.count, 8) }, () => ({ file: e.source.split("::")[0], line: 0, code: e.kind, name: e.target.split("::")[1] })) }));
-  // functions that call nothing here and nobody here calls are listed by count only: the picture is how they work together
+  // in a big part, functions that call nothing here and nobody here calls are listed by count only; a small part shows all
   const linked = new Set(c.edges.flatMap((e) => [e.source, e.target]));
-  if (linked.size) { S.lonely = nodes.length - nodes.filter((n) => linked.has(n.id)).length; nodes.splice(0, nodes.length, ...nodes.filter((n) => linked.has(n.id))); } else S.lonely = 0;
+  if (linked.size && nodes.length > 20) { S.lonely = nodes.length - nodes.filter((n) => linked.has(n.id)).length; nodes.splice(0, nodes.length, ...nodes.filter((n) => linked.has(n.id))); } else S.lonely = 0;
   S.outside = c.boundary.reduce((a, b) => a + b.count, 0); // calls leaving this part: counted, not drawn
   return { ...S.full, modules: nodes, edges };
 }
@@ -204,16 +206,27 @@ function pick(id) { // a click only selects; the card below says what it is and 
   card.hidden = false;
   $("[data-open]", card).onclick = () => { unpick(); role ? openRole(id.slice(5)) : folder ? select(id) : openFuncs(m.files, name, !plain); };
   $("[data-ask]", card)?.addEventListener("click", () => { unpick(); select(id); });
+  if (!role && !folder) callsOf(m.files).then((c) => { // nothing to draw: say so on the button instead of opening an empty level
+    const b = S.picked === id && $("[data-open]", card);
+    if (b && c && !c.nodes.length) { b.disabled = true; b.textContent = "No functions here"; $("[data-ask]", card)?.focus(); }
+  });
   $("[data-fence]", card)?.addEventListener("click", () => { unpick(); fenceRole(id.slice(5)); });
   $("[data-x]", card).onclick = unpick;
   $("[data-open]", card).focus();
   paintSelection();
 }
 function unpick() { S.picked = null; $("#pick").hidden = true; paintSelection(); }
+async function callsOf(files) {
+  const k = q() + "|" + files.join("|");
+  if (!callCache.has(k)) callCache.set(k, api(`/api/calls?${q()}`, { files }).catch((e) => { callCache.delete(k); throw e; }));
+  return callCache.get(k);
+}
 async function openFuncs(files, title, inRole) {
+  let c;
+  try { c = await callsOf(files); } catch (e) { toast(e.message, false); return; }
+  if (!c.nodes.length) { toast(`${title} has no functions or classes.`); return; }
   if (!inRole) S.role = null; // opened from the module graph: the way back is the project
-  S.level = "funcs"; S.callTitle = title;
-  try { S.calls = await api(`/api/calls?${q()}`, { files }); } catch (e) { toast(e.message, false); return; }
+  S.level = "funcs"; S.callTitle = title; S.calls = c;
   regroup(); fitView();
 }
 function openRole(rid) {
