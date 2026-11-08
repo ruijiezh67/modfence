@@ -7,8 +7,8 @@ It is built from the import graph's receipts and Python's ast, with no model cal
 - contract: the fence's names that other modules use, with who uses them (the fence must keep these working);
 - near: one line per neighbouring module (one hop, after RepoGraph: two hops measured worse).
 
-It is written for the model, not for people. ENCODINGS gives three renderings of the same facts; which one ships is
-decided by measurement (tokens x task success), see bench/brief_probe.py.
+It is written for the model, not for people. ENCODINGS gives three renderings of the same facts; the one that ships
+(DEFAULT) is decided by measurement, see bench/brief_probe.py.
 """
 import ast, os
 from collections import defaultdict
@@ -37,7 +37,8 @@ def _stub(u, methods=()):
         return None
     doc = f"  # {u['doc'][:80]}" if u.get("doc") else ""
     if u["kind"] == "class":
-        ms = " ".join(f"{m['name'].split('.')[-1]}({m['args']})" for m in methods if not m["name"].split(".")[-1].startswith("_"))
+        pub = [m for m in methods if not m["name"].split(".")[-1].startswith("_")]
+        ms = " ".join(f"{m['name'].split('.')[-1]}({m['args']})" for m in pub[:8]) + (f" +{len(pub) - 8} more" if len(pub) > 8 else "")
         fs = f"({', '.join(u['fields'])})" if u.get("fields") else ""
         return f"class {u['name']}{fs}:{(' ' + ms) if ms else ''}{doc}"
     if u["kind"] == "const":
@@ -70,7 +71,8 @@ def scope_files(graph, scope):
 def facts(graph, scope):
     """What the brief says, before rendering: {"fence", "deps", "contract", "near", "others"}. deps and contract are
     lists ordered by importance (how many import lines use a name), so a budget can keep the head and name the tail."""
-    root, mine = graph["root"], scope_files(graph, scope)
+    tests = {m["id"] for m in graph["modules"] if m["kind"] == "tests"}
+    root, mine = graph["root"], scope_files(graph, [s for s in scope if s not in tests])  # tests: editable, not briefed
     mod_of = {f: i["module"] for f, i in graph["files"].items()}
     docs = {m["id"]: m["doc"] for m in graph["modules"]}
     used = defaultdict(lambda: defaultdict(int))   # (module, target file) -> name -> uses in the fence
@@ -144,17 +146,22 @@ def _grouped(full, rest, head):
 def render_sig(f, budget=BUDGET):
     """Readable stubs: the default until measurement says otherwise."""
     full, rest = _fit(f["deps"], lambda d: d["stub"], budget * 3 // 5)
-    out = ["## Outside the fence (you cannot read these files; this is what they offer you)"] + _grouped(full, rest, lambda m: m + ":")
+    out = ["## What the fence uses from other modules (their code is hidden from you; these are the interfaces)"] + _grouped(full, rest, lambda m: m + ":")
     if f["contract"]:
         out.append("## The fence's contract (other modules use these; keep their names and parameters working)")
-        cfull, crest = _fit(f["contract"], lambda c: f"{_terse(c['stub'])}  <- {', '.join(c['mods'])}", budget // 4)
+        cfull, crest = _fit(f["contract"], lambda c: f"{_terse(c['stub'])}  <- {_few(c['mods'])}", budget // 4)
         out += [l for _, l in cfull] + (["also used: " + ", ".join(c["name"] for c in crest)] if crest else [])
-    left = [m for m in f["near"] if not any(d["mod"] == m for d in f["deps"])]
+    told = {d["mod"] for d in f["deps"]} | {m for c in f["contract"] for m in c["mods"]}
+    left = [m for m in f["near"] if m not in told]
     if left:
-        out.append("## Also connected: " + ", ".join(left))
+        out.append("## Also connected: " + _few(left, 8))
     if f["others"] > 0:
         out.append(f"({f['others']} more modules, not connected to the fence)")
     return "\n".join(out)
+
+
+def _few(xs, n=4):
+    return ", ".join(xs[:n]) + (f" +{len(xs) - n} more" if len(xs) > n else "")
 
 
 def _terse(line):
@@ -189,16 +196,23 @@ def render_iface(f, budget=BUDGET):
     by = defaultdict(list)
     for d in f["deps"]:
         by[d["mod"]].append(d["name"])
-    out = [f"{m}: " + ", ".join(sorted(ns)) for m, ns in sorted(by.items())]
+    out = [f"uses from {m}: " + ", ".join(sorted(ns)) for m, ns in sorted(by.items())]
     if f["contract"]:
-        out.append("keep: " + ", ".join(c["name"] for c in f["contract"]))
+        out.append("others use (keep working): " + ", ".join(c["name"] for c in f["contract"]))
     return "\n".join(out)[:budget]
 
 
 ENCODINGS = {"sig": render_sig, "ids": render_ids, "iface": render_iface}
+# Chosen by bench/brief_probe.py (Haiku, 7 fences, 88 questions with known answers): ids 88/88 at 0.3-0.9x the size of
+# sig (82/88); iface 39/88. See docs/EVALUATION.md section 5.
+DEFAULT = "ids"
+LEGEND = {"ids": "Brief format: MODS maps short ids to modules. USE Mx lists what the fence uses from module Mx: f(params), "
+                 "Class{fields}.method(params), NAME = ... for variables; 'also:' names had no room. KEEP lists the fence's "
+                 "names other modules use (<ids of the users): keep their names and parameters working.",
+          "sig": "", "iface": ""}
 
 
-def brief(graph, scope, encoding="sig", budget=BUDGET):
+def brief(graph, scope, encoding=DEFAULT, budget=BUDGET):
     return ENCODINGS[encoding](facts(graph, scope), budget)
 
 

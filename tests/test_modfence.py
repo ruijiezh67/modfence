@@ -252,10 +252,14 @@ class ScopeGuardTest(unittest.TestCase):
     def test_brief_lists_what_the_fence_uses_and_must_keep(self):
         d = project()
         g = analyze.analyze(d)
-        b = brief.brief(g, ["app/api"])
+        b = brief.brief(g, ["app/api"], "sig")
         self.assertIn("def double(x)", b)
         self.assertIn("handle(x)  <- app/cli, tests", b, "the contract: who relies on the fence")
         self.assertNotIn("return 2 * x", b)
+        ids = brief.brief(g, ["app/api"])  # the default, chosen by bench/brief_probe.py
+        self.assertIn("double(x)", ids)
+        self.assertIn("KEEP handle(x) <M0,M2", ids)
+        self.assertIn("M0=app/cli", ids)
         tiny = brief.render_sig(brief.facts(g, ["app/api"]), budget=10)
         self.assertIn("also: double", tiny, "past the budget, names only")
         job = runner.Job(d, ["app/api"], "x", g, FAKE, phase="build")

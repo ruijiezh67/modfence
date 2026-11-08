@@ -147,12 +147,15 @@ def context_note(graph, scope, read_only=False, phase=None, sealed=False):
         m = mods.get(s)
         if not m:
             continue
+        if sealed and m["kind"] == "tests":  # editable, readable; listing every test file only costs tokens
+            lines.append(f"Module `{s}`: the tests ({len(m['files'])} files); you may read and edit them.")
+            continue
         lines.append(f"Module `{s}`" + (f": {m['doc']}" if m["doc"] else ""))
         lines.append("  files: " + ", ".join(f"{f} ({graph['files'][f]['lines']} lines)" for f in m["files"]))
-        if m["names"]:
+        if m["names"] and not sealed:  # sealed: the brief's contract says what matters
             lines.append("  public names: " + ", ".join(f"{n['name']} ({n['file']}:{n['line']})" for n in m["names"][:40]))
     if sealed:
-        lines.append(brief.brief(graph, scope))
+        lines += [x for x in (brief.LEGEND[brief.DEFAULT], brief.brief(graph, scope)) if x]
     elif out_edges:
         lines.append("Depends on (outside the scope): " + "; ".join(
             f"`{e['target']}` via " + ", ".join(f"{r['file']}:{r['line']}" for r in e["receipts"][:3]) for e in out_edges))
@@ -312,7 +315,7 @@ class Job:
                         content = block.get("content")
                         text = content if isinstance(content, str) else " ".join(
                             c.get("text", "") for c in content or [] if isinstance(c, dict))
-                        denied = "modfence scope:" in text
+                        denied = "modfence scope:" in text or "modfence seal:" in text
                         self.emit("tool_result", id=block.get("tool_use_id"), name=tools.get(block.get("tool_use_id")),
                                   error=bool(block.get("is_error")) or denied, denied=denied, text=text[:600])
             elif t == "result":

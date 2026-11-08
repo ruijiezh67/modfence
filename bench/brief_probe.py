@@ -38,7 +38,7 @@ def questions(f):
         params = [p.strip().lstrip("*") for p in re.search(r"\((.*?)\)", d["stub"]).group(1).split(",") if p.strip()]
         qs.append((f"p{i}", "params", f"List the parameter names of `{d['name']}` from module {d['mod']}, in order.", params))
     for i, c in enumerate(f["contract"][:4]):
-        qs.append((f"u{i}", "users", f"Which modules (ids) use the fence's `{c['name']}`?", c["mods"]))
+        qs.append((f"u{i}", "users", f"Which modules use the fence's `{c['name']}`? Answer with module paths (e.g. pkg/mod), not short ids.", c["mods"]))
     used = sorted({(d["mod"], d["name"]) for d in f["deps"]})
     for i, (m, n) in enumerate(used[:3]):
         qs.append((f"y{i}", "imports", f"Does the fence use `{n}` from {m}?", "yes"))
