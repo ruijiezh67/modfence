@@ -115,6 +115,17 @@ class FlatProjectTest(unittest.TestCase):
 
 
 class RolesTest(unittest.TestCase):
+    def test_a_role_opens_as_a_few_named_parts(self):
+        from modfence import roles
+        small = ["a/x.py", "a/y.py"]
+        self.assertEqual(roles.role_parts(small), {"a/x.py": "x.py", "a/y.py": "y.py"})
+        files = [f"ev/{w}_{i}.py" for w in ("round", "study", "watch") for i in range(4)] + [f"ev/misc{i}.py" for i in range(30)]
+        parts = roles.role_parts(files)
+        self.assertLessEqual(len(set(parts.values())), roles.PART_MAX)
+        self.assertEqual({parts[f"ev/round_{i}.py"] for i in range(4)}, {"round"})  # the word as written, not a stem
+        self.assertEqual(parts["ev/misc0.py"], "ev/")
+        self.assertEqual(parts, roles.role_parts(list(reversed(files))))  # deterministic
+
     def test_imports_resolve_from_a_subfolder_root(self):
         d = tempfile.mkdtemp(prefix="modfence-test-")
         _dirs.append(d)

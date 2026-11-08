@@ -20,8 +20,8 @@ Reading code line by line was the human engineer's way in. With an agent writing
 | Level | You see | Select, then *Open* | Fence |
 |---|---|---|---|
 | **1 Roles** | What the system does: observer, segmenter, inference, memory ... Each box is a role with its files and lines; lines between boxes are imports (the 3 strongest per box). | *Open parts* | the role's files |
-| **2 Parts of a role** | Only the role's own parts: its folders, or its files when it lives in three folders or fewer, and the imports between them. Imports to other roles are counted, not drawn. | *Open functions* | the module (panel) |
-| **3 Functions and classes** | Only the part's own functions and classes: who calls whom and who inherits from whom. Calls leaving the part are counted, not drawn. Static and approximate: the bar says how many calls were traced. | a click mentions the function in the instruction | shift-click: that function alone |
+| **2 Parts of a role** | Only the role's own parts, at most 8: files grouped by the word their names share (all `*_round` files), else by folder; a role of 8 files or fewer shows its files. Lines are the imports between parts. Imports to other roles are counted, not drawn. | *Open functions* | the module (panel) |
+| **3 Functions and classes** | Only the part's own functions and classes, at most 16: the ones that call others here first, tiny helpers last; the rest are counted. Who calls whom and who inherits from whom. Calls leaving the part are counted, not drawn. Static and approximate: the bar says how many calls were traced. | a click mentions the function in the instruction | shift-click: that function alone |
 
 **Where roles come from.** On a project with more than 12 modules, the first open groups the files by folder and splits big flat folders by the words in their file names (deterministic), then one Haiku call (about one cent) maps those groups onto 6-15 roles named in the project's own words. A file moves between groups only if its imports back it. You then rename roles, move files and confirm (*Files*, *Rename*, *Confirm roles*); roles keep a stable id, so a rename never changes which files they hold, and new files wait under "not placed yet". Names are checked: at most 3 words and 24 characters, and no two alike. This method was chosen out of nine by measurement: see [Evaluation, section 4](docs/EVALUATION.md#4-grouping-files-into-roles).
 
@@ -113,4 +113,4 @@ On four cross-module features, fencing the modules a feature needs (tests includ
 python -m unittest discover -s tests -t .
 ```
 
-32 deterministic tests. No model is called: `tests/fake_claude.py` stands in for the CLI, emitting Claude Code's stream-json events and making the edits the prompt asks for.
+33 deterministic tests. No model is called: `tests/fake_claude.py` stands in for the CLI, emitting Claude Code's stream-json events and making the edits the prompt asks for.

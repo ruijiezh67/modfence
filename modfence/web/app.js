@@ -167,31 +167,38 @@ function roleGraph() {
 }
 function partGraph(rid) {
   const fr = fileRoles(), mine = new Set(Object.keys(fr).filter((f) => fr[f] === rid));
-  // Only the role's own parts are drawn. A part is a folder of its files, or a single file when the role lives in
-  // three folders or fewer (a folder would then be most of the role).
-  const dir = (f) => (f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : ".");
-  const byFile = new Set([...mine].map(dir)).size <= 3;
-  const key = (f) => (byFile ? "part:" + f : "dir:" + dir(f));
+  // Only the role's own parts are drawn: at most 8, grouped on the server by shared file-name words, else folders
+  // (roles.role_parts). A small role shows its files.
+  const named = (S.roles.roles.find((x) => x.id === rid) || {}).parts || {};
+  const key = (f) => "part:" + (named[f] || f);
   const parts = new Map();
   mine.forEach((f) => { const d = key(f); if (!parts.has(d)) parts.set(d, []); parts.get(d).push(f); });
-  const nodes = [...parts].map(([d, fs]) => ({ id: d, kind: "module", label: byFile ? d.split("/").pop() : d.slice(4).split("/").slice(-2).join("/") + "/",
-    meta: byFile ? dir(fs[0]).split("/").slice(-2).join("/") + "/" : plural(fs.length, "file"),
+  const short = (p) => (p.endsWith("/") ? p.split("/").slice(-3).join("/") : p); // demo_lab/service/demo/capture/ -> demo/capture/
+  const nodes = [...parts].map(([d, fs]) => ({ id: d, kind: "module", label: short(d.slice(5)),
+    meta: fs.length === 1 ? fs[0].split("/").slice(-3, -1).join("/") + "/" : plural(fs.length, "file"),
     files: fs.sort(), names: [], doc: fs.map((f) => S.full.files[f].doc).find(Boolean) || "", lines: fs.reduce((a, f) => a + S.full.files[f].lines, 0) }));
   const edges = prune(aggregate((f) => (mine.has(f) ? key(f) : null)));
   S.outside = aggregate((f) => (mine.has(f) ? "in" : fr[f] ? "out" : null)).reduce((a, e) => a + e.receipts.length, 0);
   return { ...S.full, modules: nodes, edges };
 }
+const FN_MAX = 16; // ponytail: a picture you can read at once; the full list is in the module panel
 function funcGraph() {
   const c = S.calls, fr = fileRoles();
   const oneFile = new Set(c.nodes.map((n) => n.file)).size === 1;
   const nodes = c.nodes.map((n) => ({ id: n.id, kind: "fn", label: n.name + (n.kind === "class" ? "" : "()"), meta: oneFile ? `line ${n.line}` : `${clip(n.file.split("/").pop(), 14)}:${n.line}`,
     files: [n.file], lines: n.lines, names: [], doc: n.doc }));
-  const edges = c.edges.map((e) => ({ source: e.source, target: e.target, receipts: Array.from({ length: Math.min(e.count, 8) }, () => ({ file: e.source.split("::")[0], line: 0, code: e.kind, name: e.target.split("::")[1] })) }));
-  // in a big part, functions that call nothing here and nobody here calls are listed by count only; a small part shows all
-  const linked = new Set(c.edges.flatMap((e) => [e.source, e.target]));
-  if (linked.size && nodes.length > 20) { S.lonely = nodes.length - nodes.filter((n) => linked.has(n.id)).length; nodes.splice(0, nodes.length, ...nodes.filter((n) => linked.has(n.id))); } else S.lonely = 0;
+  // At most FN_MAX boxes: the functions that drive the part (call others here), then the ones they lean on; tiny
+  // helpers (now(), say()) last. The rest are counted, not drawn.
+  const out = new Map(), inn = new Map(), add = (m, k) => m.set(k, (m.get(k) || 0) + 1);
+  c.edges.forEach((e) => { add(out, e.source); add(inn, e.target); });
+  const score = (n) => 2 * (out.get(n.id) || 0) + (inn.get(n.id) || 0) + Math.log2(1 + n.lines) - (n.lines < 5 ? 4 : 0) + (n.label.startsWith("_") ? 0 : 1);
+  const keep = new Set([...nodes].sort((a, b) => score(b) - score(a) || a.id.localeCompare(b.id)).slice(0, FN_MAX).map((n) => n.id));
+  S.lonely = nodes.length - keep.size;
+  const shownNodes = nodes.filter((n) => keep.has(n.id));
+  const edges = c.edges.filter((e) => keep.has(e.source) && keep.has(e.target))
+    .map((e) => ({ source: e.source, target: e.target, receipts: Array.from({ length: Math.min(e.count, 8) }, () => ({ file: e.source.split("::")[0], line: 0, code: e.kind, name: e.target.split("::")[1] })) }));
   S.outside = c.boundary.reduce((a, b) => a + b.count, 0); // calls leaving this part: counted, not drawn
-  return { ...S.full, modules: nodes, edges };
+  return { ...S.full, modules: shownNodes, edges };
 }
 function pick(id) { // a click only selects; the card below says what it is and opens it on purpose
   S.picked = id;
@@ -276,7 +283,7 @@ function renderCrumbs() {
   let h = "";
   if (S.level === "funcs" && !S.role) {
     h = `<button type="button" data-lv="modules">${esc(S.full.name)}</button><span>/</span>` + step(3, S.callTitle, "", true)
-      + `<em>${S.calls.resolved}/${S.calls.calls} calls traced${S.outside ? ` · ${S.outside} leave` : ""}</em>`;
+      + `<em>${S.lonely ? `${FN_MAX} most connected of ${S.lonely + FN_MAX} · ` : ""}${S.calls.resolved}/${S.calls.calls} calls traced</em>`;
   } else if (S.level === "modules") {
     if (!big && !has && S.full.modules.length <= ROLE_AT) { c.hidden = true; return; }
     const parts = S.focus ? S.focus.split("/") : [];
@@ -295,7 +302,7 @@ function renderCrumbs() {
     if (S.level === "parts" && r && S.outside) h += `<em title="${esc(r.purpose || "")}">${S.outside} imports to other roles</em>`;
     if (r && S.level !== "roles") h += `<button type="button" class="act q" data-rename>Rename</button><button type="button" class="act q" data-files>Files</button><button type="button" class="act" data-fence>Fence this role</button>`;
     if (S.role === "?" && S.level !== "roles") h += `<button type="button" class="act" data-files>Place files</button>`;
-    if (S.level === "funcs") h += `<em title="Static and approximate. Click a function to mention it; shift-click to fence it alone.">${S.calls.resolved}/${S.calls.calls} calls traced${S.outside ? ` · ${S.outside} leave` : ""}</em>`;
+    if (S.level === "funcs") h += `<em title="Static and approximate. Click a function to mention it; shift-click to fence it alone.">${S.lonely ? `${FN_MAX} most connected of ${S.lonely + FN_MAX} · ` : ""}${S.calls.resolved}/${S.calls.calls} calls traced</em>`;
   }
   c.hidden = false;
   c.innerHTML = h;

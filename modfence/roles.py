@@ -500,8 +500,43 @@ def confirm(root):
     return store
 
 
+PART_MAX = 8  # ponytail: about what a person holds in mind at once (Miller); one number, not a setting
+
+
+def role_parts(files, most=PART_MAX):
+    """Level 2: a role's files as at most `most` parts. A role of `most` files or fewer shows its files. A bigger one
+    groups files by the word their names share most widely (all *_round files, both *_judge files), else by folder;
+    while there are too many parts the smallest word group falls back to its folders, and only then do the smallest
+    groups go to "other". Returns {file: part label}, a word as written in the file names or a folder ending in /."""
+    if len(files) <= most:
+        return {f: os.path.basename(f) for f in files}
+    folder = lambda f: (os.path.dirname(f) or ".") + "/"
+    shown = defaultdict(Counter)  # stem -> the words it came from, to label parts as people wrote them
+    for f in files:
+        for raw in re.split(r"[_.\-]+", os.path.basename(f)):
+            for t in tokens(raw):
+                shown[t][raw.lower()] += 1
+    names = {f: set(tokens(os.path.basename(f))) for f in files}
+    df = Counter(t for ts in names.values() for t in ts)
+    key = {}
+    for f in files:
+        words = [t for t in names[f] if 2 <= df[t] <= len(files) / 2]
+        key[f] = shown[max(words, key=lambda t: (df[t], t))].most_common(1)[0][0] if words else folder(f)
+    size = Counter(key.values())
+    key = {f: k if size[k] > 1 else folder(f) for f, k in key.items()}  # no part of one file named by a word
+    while True:
+        size = Counter(key.values())
+        words = [k for k in size if not k.endswith("/")]
+        if len(size) <= most or not words:
+            break
+        small = min(words, key=lambda k: (size[k], k))
+        key = {f: folder(f) if k == small else k for f, k in key.items()}
+    keep = set(size) if len(size) <= most else {k for k, _ in sorted(size.items(), key=lambda kv: (-kv[1], kv[0]))[:most - 1]}
+    return {f: k if k in keep else "other" for f, k in key.items()}
+
+
 def view(root, graph):
-    """{"status", "how", "cost_usd", "roles": [{id, name, purpose, files}], "unassigned": [code files with no role]}.
+    """{"status", "how", "cost_usd", "roles": [{id, name, purpose, files, parts}], "unassigned": [code files with no role]}.
     Files deleted since are dropped; files added since are listed as unassigned until the user places them."""
     store = load_store(root)
     if not store:
@@ -511,7 +546,7 @@ def view(root, graph):
     for f, rid in store["files"].items():
         if f in code and rid in store["roles"]:
             members[rid].append(f)
-    roles_ = [dict(id=rid, files=sorted(members[rid]), **r) for rid, r in store["roles"].items()]
+    roles_ = [dict(id=rid, files=sorted(members[rid]), parts=role_parts(sorted(members[rid])), **r) for rid, r in store["roles"].items()]
     roles_.sort(key=lambda r: (r["name"] == SHARED, -len(r["files"]), r["name"]))
     return {"status": store["status"], "how": store.get("how"), "cost_usd": store.get("cost_usd"), "roles": roles_,
             "unassigned": sorted(code - set(store["files"]))}
