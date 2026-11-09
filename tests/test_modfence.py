@@ -199,6 +199,33 @@ class RolesTest(unittest.TestCase):
         self.assertEqual(set(fn), set(b.values()))
         self.assertIsNone(cost)
 
+    def test_project_docs_land_on_the_roles_they_name(self):
+        from modfence import docs
+        d = tempfile.mkdtemp(prefix="modfence-test-")
+        _dirs.append(d)
+        for rel, text in {"core/engine.py": "X = 1\n", "ui/window.py": "Y = 2\n", "core/ENGINE.md": "# Engine\nSee engine.py.\n",
+                          "README.md": "# App\nRuns ui/window.py.\n"}.items():
+            os.makedirs(os.path.join(d, os.path.dirname(rel) or "."), exist_ok=True)
+            write(os.path.join(d, rel), text)
+        role_of = {"core/engine.py": "r1", "ui/window.py": "r2"}
+        v = {x["path"]: x for x in docs.view(d, role_of)["docs"]}
+        self.assertEqual(v["core/ENGINE.md"]["boxes"], ["role:r1"], "named by file name and in its folder")
+        self.assertEqual(v["README.md"]["boxes"], ["role:r2"], "named by path")
+        self.assertIsNone(v["README.md"]["stale"], "no git: stale is N/A, not 0")
+        docs.choose(d, "README.md", "role:r2", False)
+        docs.choose(d, "README.md", "link:role:r1|role:r2", True)
+        v = docs.view(d, role_of)
+        self.assertEqual({x["path"]: x["boxes"] for x in v["docs"]}["README.md"], ["link:role:r1|role:r2"])
+        self.assertEqual({p for p, *_ in docs.for_fence(d, role_of, ["core/engine.py"])}, {"core/ENGINE.md", "README.md"},
+                         "a fence gets its box's docs and the docs on its links")
+        docs.add_lesson(d, "core/ENGINE.md", "the cache is per process")
+        docs.add_lesson(d, "core/ENGINE.md", "restart after config changes")
+        body = open(os.path.join(d, "core/ENGINE.md"), encoding="utf-8").read()
+        self.assertEqual(body.count("## Gotchas"), 1)
+        self.assertLess(body.index("per process"), body.index("restart after"))
+        with self.assertRaises(ValueError):
+            docs.safe_doc(d, "../outside.md")
+
     def test_roles_from_history_keep_what_changes_together(self):
         from modfence import roles
         d = tempfile.mkdtemp(prefix="modfence-test-")

@@ -7,7 +7,7 @@ import atexit, json, os, subprocess, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import analyze, purpose, roles, runner, scope_guard
+from . import analyze, docs, purpose, roles, runner, scope_guard
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -79,6 +79,13 @@ def make_handler(app, port):
                 if u.path == "/api/roles":
                     root = app.project(q)
                     return self.send_json(roles.view(root, analyze.analyze(root)))
+                if u.path == "/api/docs":
+                    root = app.project(q)
+                    return self.send_json(docs.view(root, (roles.load_store(root) or {}).get("files", {})))
+                if u.path == "/api/docs/read":
+                    root, path = app.project(q), (q.get("path") or [""])[0]
+                    with open(docs.safe_doc(root, path), encoding="utf-8", errors="replace") as f:
+                        return self.send_json({"path": path, "text": f.read()})
                 if u.path == "/api/versions":
                     return self.send_json({"versions": runner.versions(app.project(q))})
                 if u.path == "/api/module":
@@ -181,6 +188,18 @@ def make_handler(app, port):
                         "prompt": f"The user approved edits to {', '.join(paths)}.{' ' + note if note else ''} Continue the task: {old.prompt}",
                         "scope": sorted(set(old.scope) | set(paths)), "phase": old.phase, "unsealed": not old.sealed,
                         "resume": runner.load_sessions(old.root).get(runner.scope_key(old.scope))})
+                if u.path in ("/api/docs/save", "/api/docs/choose", "/api/docs/lesson"):  # the project's own files
+                    root, path = app.project(q), str(b.get("path") or "")
+                    full = docs.safe_doc(root, path)
+                    if u.path == "/api/docs/save":
+                        os.makedirs(os.path.dirname(full), exist_ok=True)
+                        with open(full, "w", encoding="utf-8", newline="\n") as f:
+                            f.write(str(b.get("text") or ""))
+                    elif u.path == "/api/docs/choose":
+                        docs.choose(root, path, str(b.get("box") or ""), bool(b.get("on")))
+                    else:
+                        docs.add_lesson(root, path, str(b.get("text") or ""))
+                    return self.send_json({"ok": True})
                 if u.path == "/api/fence/clear":
                     with app.lock:
                         running = app.active.get(app.project(q))

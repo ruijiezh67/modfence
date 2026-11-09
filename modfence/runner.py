@@ -164,6 +164,10 @@ def context_note(graph, scope, read_only=False, phase=None, sealed=False):
     if in_edges and not sealed:
         lines.append("Used by (outside the scope; changing a public name breaks them): " + "; ".join(
             f"`{e['source']}` via " + ", ".join(f"{r['file']}:{r['line']}" for r in e["receipts"][:3]) for e in in_edges))
+    pointers = fence_docs(graph, scope)
+    if pointers:
+        lines.append("Project docs about this fence (read one only if your change touches what it covers; edit docs only "
+                     "if asked): " + "; ".join(f"`{p}` ({t}, {n} lines)" for p, t, n in pointers[:DOC_POINTERS]))
     cmd = test_command(graph["root"]) if phase == "build" else None
     if cmd:
         shown = cmd if isinstance(cmd, str) else " ".join(["python"] + cmd[1:])
@@ -173,6 +177,23 @@ def context_note(graph, scope, read_only=False, phase=None, sealed=False):
     else:
         lines.append("Keep the answer short. When you change code, run the relevant tests if the project has them.")
     return "\n".join(lines)
+
+
+DOC_POINTERS = 6  # ponytail: a handful of pointers; a doc's text costs tokens only when the agent opens it
+
+
+def fence_docs(graph, scope):
+    """[(path, title, lines)] of the project's docs on the roles the fence covers (golden rule 1: pointers, not text)."""
+    from . import docs, roles
+    store = roles.load_store(graph["root"])
+    if not store:
+        return []
+    role_of = store.get("files", {})
+    files = [f for f in role_of if _in_scope(f, [s.split("::")[0] for s in scope])]
+    try:
+        return docs.for_fence(graph["root"], role_of, files)
+    except OSError:
+        return []
 
 
 class Job:
