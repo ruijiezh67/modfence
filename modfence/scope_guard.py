@@ -11,10 +11,24 @@ Edits outside the scope are always denied. In a sealed run the agent also cannot
 learns what it needs at a fraction of the tokens. Grep must stay inside the fence. Bash may only run tests, git
 status/diff/log, ls, and the escape hatch `show.py` (logged in the run).
 Tests and non-Python files stay readable. A hook error denies (fail closed), because the fence is the promise.
+
+Without those variables the fence comes from <root>/.modfence/fence.json, written by arm() while the UI has a fence
+set, with this hook added to <root>/.claude/settings.local.json. So an agent the user starts by hand (Claude Code,
+Cursor, Copilot, Codex) is fenced too. Payloads in Claude Code, Cursor, Copilot (toolName, toolArgs) and Codex
+(apply_patch) shapes are read; an unknown tool whose name says it changes files is denied. No fence: allow everything.
 """
 import json, os, re, sys
+from datetime import datetime
 
 EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+ALIAS = {"edit": "Edit", "write": "Write", "create": "Write", "delete": "Write", "multiedit": "MultiEdit",
+         "notebookedit": "NotebookEdit", "read": "Read", "view": "Read", "grep": "Grep", "bash": "Bash", "shell": "Bash"}
+MUTATING = re.compile(r"write|edit|delete|patch|move|create|rename", re.I)
+NOT_FILES = ("TodoWrite", "TaskCreate", "CronCreate")  # ponytail: Claude Code tools named like edits that touch no file
+PATCH_PATH = re.compile(r"^\*\*\* (?:Update File|Add File|Delete File|Move to): (.+)$", re.M)
+PATH_KEYS = ("file_path", "notebook_path", "path", "filePath", "target_file")
+FENCE_FILE = os.path.join(".modfence", "fence.json")
+LOCAL_SETTINGS = os.path.join(".claude", "settings.local.json")
 SEAL_TOOLS = ("Read", "Grep", "Bash")
 BASH_OK = re.compile(r"^\s*(\S*python[0-9.]*(\.exe)?\"?\s+-m\s+(pytest|unittest)\b|pytest\b|git\s+(status|diff|log)\b|ls\b|"
                      r"\S*python[0-9.]*(\.exe)?\"?\s+\"?\S*show\.py\"?\s)")
@@ -58,14 +72,38 @@ def _stubs(root, rel):
         return f"(interface unavailable: {type(e).__name__})"
 
 
+def normalise(event):
+    """(tool, input) in Claude Code's names, from a Claude Code, Cursor, Copilot or Codex payload."""
+    tool = event.get("tool_name") or event.get("toolName") or ""
+    ti = event.get("tool_input") or event.get("toolArgs") or {}
+    if isinstance(ti, str):  # Copilot sends its arguments as a JSON string
+        ti = json.loads(ti)
+    return ALIAS.get(tool.lower(), tool), ti
+
+
+def patch_paths(text):
+    """Every file an apply_patch text adds, updates, deletes or moves to."""
+    return [p.strip() for p in PATCH_PATH.findall(text)]
+
+
 def decide(event, root, scope, fence=None):
     """None to allow, or the reason to deny. fence: what a sealed run may read (None: not sealed)."""
-    tool, ti = event.get("tool_name"), event.get("tool_input") or {}
-    if tool in EDIT_TOOLS:
-        path = ti.get("file_path") or ti.get("notebook_path")
-        if not path:
+    tool, ti = normalise(event)
+    text = ti.get("command") or ti.get("input") or ""
+    text = "\n".join(text) if isinstance(text, list) else str(text)
+    if tool == "apply_patch" or "*** Begin Patch" in text:
+        paths = patch_paths(text)
+    elif tool in EDIT_TOOLS:
+        paths = [next((ti[k] for k in PATH_KEYS if ti.get(k)), None)]
+    elif tool not in NOT_FILES and MUTATING.search(tool):
+        return f"modfence: {tool} may change files and modfence cannot check where, so it is blocked while a fence is set."
+    else:
+        paths = None
+    if paths is not None:
+        if not paths or not all(paths):
             return "modfence: no file path in this edit, so its scope cannot be checked."
-        if allowed(path, root, scope):
+        path = next((p for p in paths if not allowed(p, root, scope)), None)
+        if path is None:
             return None
         return (f"modfence scope: {path} is outside the modules you may edit ({', '.join(scope) or '(nothing)'}). Do not try "
                 "another way to change it. Finish what you can inside the scope, then tell the user which module needs "
@@ -73,7 +111,7 @@ def decide(event, root, scope, fence=None):
     if fence is None or tool not in SEAL_TOOLS:
         return None
     if tool == "Read":
-        path = ti.get("file_path") or ""
+        path = next((ti[k] for k in PATH_KEYS if ti.get(k)), "")
         rel = _rel(path, root)
         if rel is None or not rel.endswith(".py") or _is_test(rel) or allowed(path, root, fence):
             return None
@@ -97,23 +135,102 @@ def _list(name):
     return [s for s in os.environ.get(name, "").split(os.pathsep) if s]
 
 
+def load_fence(root):
+    """(root, scope, fence) from the runner's variables, else from root's fence file; None when no fence is set."""
+    if "MODFENCE_ROOT" in os.environ:
+        sealed = os.environ.get("MODFENCE_SEAL") == "1"
+        return os.environ["MODFENCE_ROOT"], _list("MODFENCE_SCOPE"), _list("MODFENCE_FENCE") if sealed else None
+    f = _read_json(os.path.join(root, FENCE_FILE))
+    return None if f is None else (root, f["files"], f["files"] if f.get("sealed") else None)
+
+
 def main():
     try:
         event = json.load(sys.stdin)
     except ValueError:
         event = {"tool_name": "Edit"}  # unreadable input: treat as an edit, so it is denied below
-    sealed = os.environ.get("MODFENCE_SEAL") == "1"
-    if event.get("tool_name") not in EDIT_TOOLS + (SEAL_TOOLS if sealed else ()):
-        return 0
     try:
-        root = os.environ["MODFENCE_ROOT"]
-        reason = decide(event, root, _list("MODFENCE_SCOPE"), _list("MODFENCE_FENCE") if sealed else None)
+        fence = load_fence(sys.argv[1] if len(sys.argv) > 1 else os.getcwd())
+        if fence is None:
+            return 0
+        reason = decide(event, *fence)
     except Exception as e:  # fail closed
         reason = f"modfence scope guard error ({type(e).__name__}: {e}); blocked."
-    if reason:
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                                 "permissionDecisionReason": reason}}))
-    return 0
+    if not reason:
+        return 0
+    # Claude Code and Cursor read hookSpecificOutput, Copilot and others the top-level keys; exit 2 with stderr blocks in all
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                             "permissionDecisionReason": reason},
+                      "permissionDecision": "deny", "permissionDecisionReason": reason, "decision": "block", "reason": reason}))
+    sys.stderr.write(reason + "\n")
+    return 2
+
+
+# ----- arm / disarm: the fence for agents the user starts by hand -----
+def _read_json(path):
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_json(path, obj):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(obj, f, indent=2)
+
+
+def _ours(entry):
+    return any("scope_guard" in (h.get("command") or "") for h in entry.get("hooks") or [])
+
+
+def hook_command(root):
+    q = lambda p: '"' + os.path.abspath(p).replace("\\", "/") + '"'  # quoted, forward slashes: works in a POSIX shell on Windows too
+    return f"{q(sys.executable)} {q(__file__)} {q(root)}"
+
+
+def arm(root, files, sealed, label=""):
+    """Write the fence file and add this hook to root's .claude/settings.local.json, keeping everything else there."""
+    root = os.path.abspath(root)
+    fence_path, settings_path = os.path.join(root, FENCE_FILE), os.path.join(root, LOCAL_SETTINGS)
+    settings = _read_json(settings_path)
+    made = (_read_json(fence_path) or {}).get("made_settings", settings is None)  # kept across re-arms
+    _write_json(fence_path, {"files": sorted({f.split("::")[0] for f in files}), "sealed": bool(sealed), "label": label,
+                             "since": datetime.now().astimezone().isoformat(timespec="seconds"), "made_settings": made})
+    gi = os.path.join(root, ".modfence", ".gitignore")
+    if not os.path.exists(gi):  # as runner.state_dir does: modfence's state stays out of git
+        with open(gi, "w", newline="\n") as f:
+            f.write("*\n")
+    settings = settings or {}
+    pre = settings.setdefault("hooks", {}).setdefault("PreToolUse", [])
+    if not any(_ours(e) for e in pre):
+        pre.append({"matcher": "*", "hooks": [{"type": "command", "command": hook_command(root), "timeout": 10}]})
+        _write_json(settings_path, settings)
+
+
+def disarm(root):
+    """Remove the fence file and only modfence's hook; delete settings.local.json if modfence made it and it is now empty."""
+    root = os.path.abspath(root)
+    fence_path, settings_path = os.path.join(root, FENCE_FILE), os.path.join(root, LOCAL_SETTINGS)
+    made = (_read_json(fence_path) or {}).get("made_settings", False)
+    if os.path.exists(fence_path):
+        os.remove(fence_path)
+    settings = _read_json(settings_path)
+    pre = ((settings or {}).get("hooks") or {}).get("PreToolUse") or []
+    if not any(_ours(e) for e in pre):
+        return
+    settings["hooks"]["PreToolUse"] = [e for e in pre if not _ours(e)]
+    for key, d in (("PreToolUse", settings["hooks"]), ("hooks", settings)):
+        if not d[key]:
+            del d[key]
+    if made and not settings:
+        os.remove(settings_path)
+        try:
+            os.rmdir(os.path.dirname(settings_path))  # only if empty
+        except OSError:
+            pass
+    else:
+        _write_json(settings_path, settings)
 
 
 if __name__ == "__main__":

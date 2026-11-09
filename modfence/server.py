@@ -3,11 +3,11 @@
 Binds to 127.0.0.1 only. Requests must carry a localhost Host header, and state-changing requests must come
 from the page itself (X-Modfence header), so another website cannot drive your Claude Code through it.
 """
-import json, os, subprocess, threading
+import atexit, json, os, subprocess, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import analyze, purpose, roles, runner
+from . import analyze, purpose, roles, runner, scope_guard
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -170,7 +170,15 @@ def make_handler(app, port):
                         if running and not running.done:
                             return self.send_json({"error": "wait for the current run to finish"}, 409)
                     reverted, skipped = runner.revert_run(app.project(q), b.get("run") or "", b.get("paths") or None)
+                    scope_guard.disarm(app.project(q))  # the run was discarded
                     return self.send_json({"reverted": reverted, "skipped": skipped})
+                if u.path == "/api/fence/clear":
+                    with app.lock:
+                        running = app.active.get(app.project(q))
+                        if running and not running.done:  # stays set: changing settings now would show as a run change
+                            return self.send_json({"error": "wait for the current run to finish"}, 409)
+                    scope_guard.disarm(app.project(q))
+                    return self.send_json({"ok": True})
                 if u.path == "/api/describe":
                     root, m = app.project(q), b.get("module") or ""
                     graph = analyze.analyze(root)
@@ -226,6 +234,11 @@ def make_handler(app, port):
                                  seal=not b.get("unsealed"))
                 app.jobs[job.id] = job
                 app.active[root] = job
+            if not job.read_only or job.phase == "plan":  # Explain fences nothing
+                try:  # also fence agents the user starts by hand, until the fence is cleared (before start: not a run change)
+                    scope_guard.arm(root, job.scope, job.sealed, ", ".join(job.scope))
+                except (OSError, ValueError) as e:
+                    job.emit("status", text=f"The fence is not set for other agents: {e}")
             job.start()
             return self.send_json({"job": job.id})
 
@@ -234,6 +247,7 @@ def make_handler(app, port):
 
 def serve(projects, port=8765, claude_bin=None, open_browser=True):
     app = App(projects, claude_bin)
+    atexit.register(lambda: [scope_guard.disarm(p) for p in app.projects])  # no fence outlives the server
     httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app, port))
     httpd.daemon_threads = True
     url = f"http://127.0.0.1:{port}/"

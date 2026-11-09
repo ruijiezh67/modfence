@@ -232,8 +232,71 @@ class ScopeGuardTest(unittest.TestCase):
         env = dict(os.environ, MODFENCE_ROOT=self.d, MODFENCE_SCOPE=os.pathsep.join(scope))
         p = subprocess.run([sys.executable, scope_guard.__file__], input=raw if raw is not None else json.dumps(event),
                            capture_output=True, text=True, env=env)
-        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.returncode, 2 if p.stdout.strip() else 0, p.stderr)
         return json.loads(p.stdout)["hookSpecificOutput"] if p.stdout.strip() else None
+
+    def armed_hook(self, event):
+        """Run the hook as an agent started by hand would: no MODFENCE_* variables, the root as its argument."""
+        env = {k: v for k, v in os.environ.items() if not k.startswith("MODFENCE_")}
+        return subprocess.run([sys.executable, scope_guard.__file__, self.d], input=json.dumps(event),
+                              capture_output=True, text=True, env=env)
+
+    def test_arm_and_disarm_keep_the_users_settings(self):
+        self.d = project()
+        p = os.path.join(self.d, ".claude", "settings.local.json")
+        mine = {"permissions": {"allow": ["Bash(ls:*)"]}, "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+            {"type": "command", "command": "echo mine"}]}]}}
+        os.makedirs(os.path.dirname(p))
+        write(p, json.dumps(mine))
+        for _ in range(2):  # idempotent
+            scope_guard.arm(self.d, ["app/core", "app/core/values.py::double"], True, "core")
+        s = load(p)
+        self.assertEqual(s["permissions"], mine["permissions"])
+        self.assertEqual([e["matcher"] for e in s["hooks"]["PreToolUse"]], ["Bash", "*"], "one modfence entry, after the user's")
+        self.assertIn(f'"{self.d.replace(os.sep, "/")}"', s["hooks"]["PreToolUse"][1]["hooks"][0]["command"])
+        f = load(os.path.join(self.d, ".modfence", "fence.json"))
+        self.assertEqual((f["files"], f["sealed"], f["label"]), (["app/core", "app/core/values.py"], True, "core"))
+        self.assertTrue(os.path.exists(os.path.join(self.d, ".modfence", ".gitignore")), "the fence file stays out of git")
+        for _ in range(2):
+            scope_guard.disarm(self.d)
+        self.assertEqual(load(p), mine, "only modfence's hook is removed")
+        self.assertFalse(os.path.exists(os.path.join(self.d, ".modfence", "fence.json")))
+        fresh = project()
+        scope_guard.arm(fresh, ["app/core"], False)
+        scope_guard.disarm(fresh)
+        self.assertFalse(os.path.exists(os.path.join(fresh, ".claude")), "a settings file modfence made is deleted")
+
+    def test_armed_hook_reads_every_agents_payload_and_denies_outside(self):
+        self.d = project()
+        out = "app/api/handlers.py"
+        self.assertEqual(self.armed_hook({"tool_name": "Edit", "tool_input": {"file_path": out}}).returncode, 0, "no fence: allow")
+        scope_guard.arm(self.d, ["app/core"], False)
+        patch = f"*** Begin Patch\n*** Update File: app/core/values.py\n@@\n-x\n+y\n*** Update File: {out}\n*** End Patch\n"
+        shapes = {"claude": {"tool_name": "Write", "tool_input": {"file_path": os.path.join(self.d, out)}},
+                  "cursor": {"tool_name": "Delete", "tool_input": {"file_path": out}},
+                  "copilot": {"toolName": "edit", "toolArgs": json.dumps({"path": out})},
+                  "codex": {"tool_name": "apply_patch", "tool_input": {"command": patch}},
+                  "unknown mutating": {"tool_name": "mcp__fs__move_file", "tool_input": {"source": "app/core/values.py"}}}
+        for name, ev in shapes.items():
+            p = self.armed_hook(ev)
+            self.assertEqual(p.returncode, 2, name)
+            got = json.loads(p.stdout)
+            self.assertEqual((got["hookSpecificOutput"]["permissionDecision"], got["permissionDecision"], got["decision"]),
+                             ("deny", "deny", "block"), name)
+            self.assertEqual(got["reason"], got["hookSpecificOutput"]["permissionDecisionReason"])
+            self.assertIn("modfence", p.stderr, name)
+        for ev in ({"toolName": "create", "toolArgs": json.dumps({"path": "app/core/new.py"})},
+                   {"tool_name": "apply_patch", "tool_input": {"command": patch.replace(out, "app/core/new.py")}},
+                   {"tool_name": "TodoWrite", "tool_input": {}}, {"tool_name": "Glob", "tool_input": {"pattern": "**"}}):
+            p = self.armed_hook(ev)
+            self.assertEqual((p.returncode, p.stdout), (0, ""), ev)
+        scope_guard.disarm(self.d)
+        self.assertEqual(self.armed_hook(shapes["codex"]).returncode, 0, "disarmed: allow")
+
+    def test_apply_patch_paths(self):
+        text = ("*** Begin Patch\n*** Add File: a/new.py\n+x\n*** Delete File: b/old.py\n*** Update File: c/m.py\n"
+                "*** Move to: d/m.py\n@@\n-x\n+y\n*** End Patch")
+        self.assertEqual(scope_guard.patch_paths(text), ["a/new.py", "b/old.py", "c/m.py", "d/m.py"])
 
     def test_hook_denies_outside_and_allows_inside_and_reads(self):
         self.d = project()
@@ -543,6 +606,7 @@ class ServerTest(unittest.TestCase):
     def test_ask_and_stream_events(self):
         s, data = self.req("POST", "/api/ask?p=0", {"prompt": "edit app/cli/main.py", "scope": ["app/cli"]}, {"X-Modfence": "1"})
         self.assertEqual(s, 200, data)
+        self.assertEqual(load(os.path.join(self.d, ".modfence", "fence.json"))["files"], ["app/cli"], "the ask sets the fence")
         job = json.loads(data)["job"]
         s, stream = self.req("GET", f"/api/events?job={job}&from=0")
         events = [json.loads(l[6:]) for l in stream.splitlines() if l.startswith("data: ")]
@@ -558,6 +622,10 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.req("POST", "/api/revert?p=0", {"run": ch["run"]})[0], 403, "needs the X-Modfence header")
         s, data = self.req("POST", "/api/revert?p=0", {"run": ch["run"]}, {"X-Modfence": "1"})
         self.assertEqual(json.loads(data)["reverted"], ["app/cli/main.py"])
+        self.assertFalse(os.path.exists(os.path.join(self.d, ".claude")), "a discarded run clears the fence")
+        scope_guard.arm(self.d, ["app/cli"], True)
+        self.assertEqual(self.req("POST", "/api/fence/clear?p=0", {}, {"X-Modfence": "1"})[0], 200)
+        self.assertFalse(os.path.exists(os.path.join(self.d, ".modfence", "fence.json")))
 
 
 if __name__ == "__main__":
