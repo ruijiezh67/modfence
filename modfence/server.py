@@ -7,7 +7,7 @@ import atexit, json, os, subprocess, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import analyze, docs, purpose, roles, runner, scope_guard
+from . import analyze, docs, purpose, roles, runner, scope_guard, skills
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -86,6 +86,9 @@ def make_handler(app, port):
                     root, path = app.project(q), (q.get("path") or [""])[0]
                     with open(docs.safe_doc(root, path), encoding="utf-8", errors="replace") as f:
                         return self.send_json({"path": path, "text": f.read()})
+                if u.path == "/api/skills":  # slow on a cold cache: one search per library
+                    root = app.project(q)
+                    return self.send_json(skills.view(root, analyze.analyze(root), bool((q.get("refresh") or [""])[0])))
                 if u.path == "/api/versions":
                     return self.send_json({"versions": runner.versions(app.project(q))})
                 if u.path == "/api/module":
@@ -215,6 +218,17 @@ def make_handler(app, port):
                     except (RuntimeError, OSError, subprocess.SubprocessError) as e:
                         return self.send_json(dict(purpose.module_view(root, graph, m), error=str(e)))
                     return self.send_json(dict(purpose.module_view(root, graph, m), cost_usd=cost))
+                if u.path == "/api/skills/install":  # into this project's .claude/skills only, on the user's click
+                    root = app.project(q)
+                    try:
+                        written = skills.install(root, b.get("source"), b.get("skill"), bool(b.get("replace")))
+                    except FileExistsError as e:
+                        return self.send_json({"error": str(e)}, 409)
+                    except ValueError as e:
+                        return self.send_json({"error": str(e)}, 400)
+                    except OSError as e:  # network
+                        return self.send_json({"error": f"{type(e).__name__}: {e}"}, 502)
+                    return self.send_json({"written": written, "installed": skills.installed(root)})
                 if u.path == "/api/forget":
                     runner.forget(app.project(q), [s for s in b.get("scope") or [] if s])
                     return self.send_json({"ok": True})

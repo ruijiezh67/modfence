@@ -7,7 +7,7 @@ import atexit, http.client, json, os, shutil, subprocess, sys, tempfile, threadi
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from modfence import analyze, brief, purpose, roles, runner, scope_guard, server  # noqa: E402
+from modfence import analyze, brief, purpose, roles, runner, scope_guard, server, skills  # noqa: E402
 
 FAKE = os.path.join(HERE, "fake_claude.py")
 _dirs = []
@@ -732,6 +732,80 @@ class RunnerTest(unittest.TestCase):
         self.assertTrue(any(e["kind"] == "error" and "not found" in e["text"] for e in job.events))
 
 
+class SkillsTest(unittest.TestCase):
+    """No network: search, stars and fetch are replaced by fakes."""
+
+    def setUp(self):
+        self.d = project()
+        write(os.path.join(self.d, "app/core/img.py"), "import PIL.Image\nimport numpy as np\nimport os, json\nfrom app.core import values\n")
+        write(os.path.join(self.d, "app/api/web.py"), "from fastapi import FastAPI\nimport numpy\nfrom . import handlers\n")
+        write(os.path.join(self.d, "requirements.txt"), "# deps\nfastapi>=0.100\nrequests==2.0  # http\n-e .\n")
+        self.saved = skills.search, skills.stars
+
+    def tearDown(self):
+        skills.search, skills.stars = self.saved
+
+    def test_stack_from_imports_and_manifests(self):
+        st = skills.stack(self.d, analyze.analyze(self.d))
+        self.assertEqual(st["libs"], {"numpy": 2, "PIL": 1, "fastapi": 1}, "stdlib and the project's own packages are dropped")
+        self.assertEqual(st["manifests"], {"fastapi": "requirements.txt", "requests": "requirements.txt"})
+        self.assertEqual(st["group_kind"], "module")
+        self.assertEqual(st["groups"]["app/core"], [["PIL", 1], ["numpy", 1]])
+
+    def test_filter_and_rank(self):
+        calls = []
+
+        def fake_search(q):
+            calls.append(q)
+            hits = {"numpy": [("numpy-pro", "a/numpy", 5000), ("big-generic", "b/gen", 900000), ("tiny-numpy", "c/t", 999)],
+                    "fastapi": [("fastapi-x", "d/fast", 2000), ("fastapi-lowstars", "e/low", 50000), ("numpy-pro", "a/numpy", 5000)],
+                    "pillow": [("pillow-ratelimited", "f/rl", 3000)]}.get(q, [])
+            return [{"id": f"{src}/{n}", "name": n, "source": src, "installs": i, "description": None,
+                     "url": f"https://skills.sh/{src}/{n}"} for n, src, i in hits], None
+        skills.search = fake_search
+        skills.stars = lambda src: {"e/low": 10, "f/rl": None}.get(src, 500)
+        g = analyze.analyze(self.d)
+        r = skills.recommend(self.d, g)
+        self.assertEqual(calls, ["numpy", "pillow", "fastapi", "requests", "python testing"])
+        self.assertEqual([s["name"] for s in r["skills"]], ["numpy-pro", "pillow-ratelimited", "fastapi-x", "big-generic"],
+                         "name matches first (by files using the library), then installs; <1000 installs and <100 stars dropped")
+        self.assertEqual(r["skills"][0]["reason"], "used by 2 files in app/api and 1 more: numpy")
+        self.assertIsNone(r["skills"][1]["stars"], "stars that cannot be read are N/A, and the skill is kept")
+        self.assertEqual(r["skills"][0]["stars"], 500)
+        skills.search = lambda q: self.fail("a second call within a day is served from the cache")
+        self.assertEqual(skills.recommend(self.d, g)["skills"], r["skills"])
+        skills.search = lambda q: ([], "search: URLError: offline")
+        r = skills.recommend(self.d, g, refresh=True)
+        self.assertEqual((r["skills"], len(r["errors"])), ([], 5))
+
+    def test_install_validates_and_writes_only_the_skill(self):
+        tree = {"tree": [{"path": "README.md", "type": "blob", "size": 5},
+                         {"path": "skills/good/SKILL.md", "type": "blob", "size": 5},
+                         {"path": "skills/good/ref/notes.md", "type": "blob", "size": 5},
+                         {"path": "skills/other/SKILL.md", "type": "blob", "size": 5},
+                         {"path": "skills/evil/SKILL.md", "type": "blob", "size": 5},
+                         {"path": "skills/evil/../../../../x.txt", "type": "blob", "size": 5}]}
+        fetched = []
+
+        def fetch(url):
+            fetched.append(url)
+            return json.dumps(tree).encode() if "/trees/" in url else b"data " + url.encode()
+        self.assertEqual(skills.install(self.d, "o/r", "good", fetch=fetch), ["SKILL.md", "ref/notes.md"])
+        home = os.path.join(self.d, ".claude", "skills", "good")
+        self.assertTrue(os.path.isfile(os.path.join(home, "ref", "notes.md")))
+        self.assertEqual(skills.installed(self.d), ["good"])
+        self.assertFalse(any("README" in u or "other" in u for u in fetched))
+        self.assertRaises(FileExistsError, skills.install, self.d, "o/r", "good", fetch=fetch)
+        self.assertEqual(skills.install(self.d, "o/r", "good", replace=True, fetch=fetch), ["SKILL.md", "ref/notes.md"])
+        n = len(fetched)
+        self.assertRaises(ValueError, skills.install, self.d, "o/r", "evil", fetch=fetch)
+        self.assertEqual(len(fetched), n + 1, "an unsafe path stops the install before any file is downloaded")
+        self.assertFalse(os.path.exists(os.path.join(self.d, ".claude", "skills", "evil")))
+        for src, name in (("o/r", ".."), ("../x", "good"), ("o/r", "a/b"), ("o/r/x", "good")):
+            self.assertRaises(ValueError, skills.install, self.d, src, name, fetch=fetch)
+        self.assertRaises(LookupError, skills.install, self.d, "o/r", "missing", fetch=fetch)
+
+
 class ServerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -805,6 +879,18 @@ class ServerTest(unittest.TestCase):
         scope_guard.arm(self.d, ["app/cli"], True)
         self.assertEqual(self.req("POST", "/api/fence/clear?p=0", {}, {"X-Modfence": "1"})[0], 200)
         self.assertFalse(os.path.exists(os.path.join(self.d, ".modfence", "fence.json")))
+
+    def test_skills_endpoints(self):
+        saved = skills.search
+        skills.search = lambda q: ([], "offline")
+        try:
+            s, data = self.req("GET", "/api/skills?p=0&refresh=1")
+        finally:
+            skills.search = saved
+        self.assertEqual(s, 200, data)
+        self.assertEqual({k for k in json.loads(data)}, {"skills", "queries", "errors", "at", "stack", "installed"})
+        self.assertEqual(self.req("POST", "/api/skills/install?p=0", {"source": "o/r", "skill": "x"})[0], 403)
+        self.assertEqual(self.req("POST", "/api/skills/install?p=0", {"source": "../r", "skill": "x"}, {"X-Modfence": "1"})[0], 400)
 
 
 if __name__ == "__main__":
