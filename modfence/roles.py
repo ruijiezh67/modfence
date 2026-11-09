@@ -546,15 +546,10 @@ def confirm(root):
 # best for vibe coding (bench/area_bench.py, docs/EVALUATION.md) is its evidence and the fallback when it fails.
 AREA_MAX = 7
 AREA_SYSTEM = (
-    "You group the functional roles of a software system into at most 7 areas, for a developer who will pick one area, "
-    "then one role, and ask a coding agent to change it. A good area is one place a typical change stays inside: roles "
-    "that import each other a lot and change together belong together; a role that most others use but that changes on "
-    "its own can stay alone. No area should hold more than 40% of the files: a huge area fences nothing. Folders are "
-    "hints, not rules. You get each role with its purpose, size and main folders, the imports between roles, and a "
-    "suggested grouping computed from imports, the change history and folders. Keep that grouping unless the purposes "
-    "show a clearly better one. Name each area in 1 to 3 lowercase words, in the project's own vocabulary, with one plain "
-    "sentence of at most 20 words. Every role goes in exactly one area. Reply with JSON only: "
-    "{\"areas\": [{\"name\": \"...\", \"purpose\": \"...\", \"roles\": [\"<role name>\", ...]}]}")
+    "You name the areas of a software system for a developer who will pick one area, then one role in it, and ask a "
+    "coding agent to change it. Each area is a fixed group of roles; do not move roles. For each area, in the order "
+    "given, write a name of 1 to 3 lowercase words in the project's own vocabulary and one plain sentence of at most 20 "
+    "words on what it does. Reply with JSON only: {\"areas\": [{\"name\": \"...\", \"purpose\": \"...\"}]}")
 
 
 def role_imports(graph, role_of):
@@ -629,59 +624,49 @@ def suggest_areas(role_of, imports, changes=(), most=AREA_MAX, cap=AREA_CAP):
     return agglomerate(list(size), size, sim, most, cap)
 
 
-def area_prompt(graph, store, role_of, imports, suggestion):
-    rn = lambda rid: store["roles"][rid]["name"]
+def area_prompt(store, role_of, groups):
+    """The areas to name: each with its roles, their purposes, sizes and main folders."""
     size = Counter(role_of.values())
-    lines = ["ROLES"]
-    for rid in sorted(size, key=lambda r: (-size[r], r)):
-        folders = Counter(os.path.dirname(f) or "." for f, r in role_of.items() if r == rid).most_common(3)
-        lines.append(f"- {rn(rid)} ({size[rid]} files; folders: {', '.join(f'{d}/ ({n})' for d, n in folders)}): "
-                     f"{store['roles'][rid].get('purpose', '')}")
-    lines += ["", "IMPORT LINES BETWEEN ROLES (strongest first)"]
-    lines += [f"- {' <-> '.join(sorted(rn(r) for r in k))}: {v}" for k, v in imports.most_common(40)]
-    lines += ["", "SUGGESTED GROUPING (imports, change history, folders)"] + [f"- {', '.join(rn(r) for r in g)}" for g in suggestion]
+    lines = []
+    for i, g in enumerate(groups, 1):
+        lines.append(f"AREA {i}")
+        for rid in g:
+            folders = Counter(os.path.dirname(f) or "." for f, r in role_of.items() if r == rid).most_common(2)
+            lines.append(f"- {store['roles'][rid]['name']} ({size[rid]} files; {', '.join(f'{d}/' for d, _ in folders)}): "
+                         f"{store['roles'][rid].get('purpose', '')}")
     return "\n".join(lines)
 
 
-def apply_areas(store, role_ids, answer):
-    """The model's areas as {"a1": {name, purpose, roles}}, or ValueError when they are not a partition of role_ids
-    into at most AREA_MAX named areas."""
-    by_name = {store["roles"][r]["name"].casefold(): r for r in role_ids}
-    areas, seen = {}, set()
-    for i, a in enumerate((answer or {}).get("areas") or [], 1):
-        rs = [by_name.get(str(n).casefold()) for n in a.get("roles") or []]
-        if None in rs or seen & set(rs) or not rs:
-            raise ValueError("the areas name an unknown role or a role twice")
-        seen |= set(rs)
-        areas[f"a{i}"] = {"name": tidy(str(a.get("name") or f"area {i}")), "purpose": str(a.get("purpose") or "")[:200], "roles": rs}
-    if seen != set(role_ids) or not 1 <= len(areas) <= AREA_MAX:
-        raise ValueError(f"the areas must hold every role once, in at most {AREA_MAX} areas")
-    return areas
-
-
-def propose_areas(root, graph, claude, model="sonnet"):
-    """Group the stored roles into at most AREA_MAX areas: one model call with the import grouping as evidence;
-    on any failure the import grouping itself, named after its biggest roles. Stored in the roles store."""
+def propose_areas(root, graph, claude, model="haiku"):
+    """Group the stored roles into at most AREA_MAX areas with suggest_areas (deterministic; a model grouping measured
+    no better, docs/EVALUATION.md section 6), then one small model call names them. Without a model, or if its answer
+    does not fit, an area is named after its biggest roles. Stored in the roles store."""
     store = load_store(root)
     if not store:
         raise LookupError("no roles yet")
     v = view(root, graph)
     role_of = {f: r["id"] for r in v["roles"] for f in r["files"] if f not in v["kinds"]}
-    imports = role_imports(graph, role_of)
-    suggestion = suggest_areas(role_of, imports, change_sets(root, set(role_of)))
-    rids = sorted(set(role_of.values()) | {r["id"] for r in v["roles"]})
+    groups = suggest_areas(role_of, role_imports(graph, role_of), change_sets(root, set(role_of)))
+    rest = sorted({r["id"] for r in v["roles"]} - set(role_of.values()))  # roles left with no own files
+    groups += [rest] if rest else []
+    names, cost, how = [], None, "grouped by imports, change history and folders"
     try:
         if not claude:
             raise RuntimeError("no Claude Code CLI")
         from . import purpose
-        answer, cost = purpose._ask(claude, area_prompt(graph, store, role_of, imports, suggestion), system=AREA_SYSTEM, model=model)
-        areas, how = apply_areas(store, rids, answer), f"grouped and named by a model ({model}), imports as evidence"
+        answer, cost = purpose._ask(claude, area_prompt(store, role_of, groups), system=AREA_SYSTEM, model=model)
+        names = [(tidy(str(a.get("name") or "")), str(a.get("purpose") or "")[:200]) for a in answer.get("areas") or []]
+        if len(names) != len(groups) or not all(n for n, _ in names):
+            raise ValueError("the names do not match the areas")
+        how += f"; named by a model ({model})"
     except (RuntimeError, OSError, ValueError) as e:
-        cost, how = None, f"imports only ({e})"
-        rest = [r for r in rids if r not in role_of]  # roles left with no own files (all entry points, doors, config)
-        groups = suggestion + ([rest] if rest else [])
-        areas = {f"a{i}": {"name": tidy(" ".join(store["roles"][r]["name"] for r in g[:2])), "purpose": "", "roles": g}
-                 for i, g in enumerate(groups, 1)}
+        names, how = [], how + f"; named after their biggest roles ({e})"
+    areas = {}
+    for i, g in enumerate(groups, 1):
+        name, purpose_ = names[i - 1] if names else (tidy(" ".join(store["roles"][r]["name"] for r in g[:2])), "")
+        while any(a["name"].casefold() == name.casefold() for a in areas.values()):
+            name = tidy(f"{name} {i}")
+        areas[f"a{i}"] = {"name": name, "purpose": purpose_, "roles": g}
     store["areas"], store["areas_how"], store["areas_cost_usd"] = areas, how, cost
     save_store(root, store)
     return store

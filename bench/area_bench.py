@@ -160,6 +160,44 @@ METHODS = {
 }
 
 
+GROUP_SYSTEM = (
+    "You group the functional roles of a software system into at most 7 areas, for a developer who will pick one area, "
+    "then one role, and ask a coding agent to change it. A good area is one place a typical change stays inside: roles "
+    "that import each other a lot and change together belong together; a role that most others use but that changes on "
+    "its own can stay alone. No area should hold more than 40% of the files: a huge area fences nothing. Folders are "
+    "hints, not rules. You get each role with its purpose, size and main folders, the imports between roles, and a "
+    "suggested grouping computed from imports, the change history and folders. Keep that grouping unless the purposes "
+    "show a clearly better one. Name each area in 1 to 3 lowercase words, in the project's own vocabulary, with one plain "
+    "sentence of at most 20 words. Every role goes in exactly one area. Reply with JSON only: "
+    "{\"areas\": [{\"name\": \"...\", \"purpose\": \"...\", \"roles\": [\"<role name>\", ...]}]}")
+
+
+def group_prompt(store, role_of, imports, suggestion):
+    rn = lambda rid: store["roles"][rid]["name"]
+    lines = ["ROLES", roles.area_prompt(store, role_of, [[r] for r in sorted(set(role_of.values()))]).replace("AREA ", "#")]
+    lines += ["", "IMPORT LINES BETWEEN ROLES (strongest first)"]
+    lines += [f"- {' <-> '.join(sorted(rn(r) for r in k))}: {v}" for k, v in imports.most_common(40)]
+    lines += ["", "SUGGESTED GROUPING (imports, change history, folders)"] + [f"- {', '.join(rn(r) for r in g)}" for g in suggestion]
+    return "\n".join(lines)
+
+
+def apply_areas(store, role_ids, answer):
+    """The model's areas as {"a1": {name, purpose, roles}}, or ValueError when they are not a partition of role_ids
+    into at most MAX named areas."""
+    by_name = {store["roles"][r]["name"].casefold(): r for r in role_ids}
+    areas, seen = {}, set()
+    for i, a in enumerate((answer or {}).get("areas") or [], 1):
+        rs = [by_name.get(str(n).casefold()) for n in a.get("roles") or []]
+        if None in rs or seen & set(rs) or not rs:
+            raise ValueError("the areas name an unknown role or a role twice")
+        seen |= set(rs)
+        areas[f"a{i}"] = {"name": roles.tidy(str(a.get("name") or f"area {i}")), "purpose": str(a.get("purpose") or "")[:200], "roles": rs}
+    if seen != set(role_ids) or not 1 <= len(areas) <= MAX:
+        raise ValueError(f"the areas must hold every role once, in at most {MAX} areas")
+    return areas
+
+
+
 def m_model(root, graph, unit, claude, model, evidence):
     """roles.propose_areas' model step on these units, with the import grouping as evidence. (box map, cost)."""
     from modfence import purpose
@@ -177,9 +215,8 @@ def m_model(root, graph, unit, claude, model, evidence):
     for u, b in evidence.items():
         groups[b].append(u)
     suggestion = sorted(groups.values(), key=lambda g: (-len(g), g))
-    answer, cost = purpose._ask(claude, roles.area_prompt(graph, store, unit, imports, suggestion),
-                                system=roles.AREA_SYSTEM, model=model)
-    areas = roles.apply_areas(store, sorted(names), answer)
+    answer, cost = purpose._ask(claude, group_prompt(store, unit, imports, suggestion), system=GROUP_SYSTEM, model=model)
+    areas = apply_areas(store, sorted(names), answer)
     return {u: aid for aid, a in areas.items() for u in a["roles"]}, cost
 
 
@@ -229,7 +266,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("repos", nargs="+")
     ap.add_argument("--json")
-    ap.add_argument("--model", default="", help="also ask this model (sonnet, haiku) to group, as roles.propose_areas does")
+    ap.add_argument("--model", default="", help="also ask this model (sonnet, haiku) to group the roles (an experiment; modfence ships the deterministic grouping)")
     a = ap.parse_args()
     from modfence import runner
     claude = runner.find_claude() if a.model else None

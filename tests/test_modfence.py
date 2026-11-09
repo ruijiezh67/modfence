@@ -159,14 +159,6 @@ class RolesTest(unittest.TestCase):
         self.assertLessEqual(max(sizes), roles.AREA_CAP * len(role_of) + 3, "no blob")
         together = roles.suggest_areas(role_of, Counter(), [{"a/f0.py", "j/f0.py"}] * 5)
         self.assertTrue(any({"a", "j"} <= set(g) for g in together), "roles that change together share an area")
-        store = {"roles": {r: {"name": r} for r in "abc"}}
-        ok = roles.apply_areas(store, list("abc"), {"areas": [{"name": "Front", "roles": ["a", "B"]}, {"name": "x", "roles": ["c"]}]})
-        self.assertEqual([a["roles"] for a in ok.values()], [["a", "b"], ["c"]])
-        for bad in ({"areas": [{"name": "x", "roles": ["a", "b"]}]},  # c missing
-                    {"areas": [{"name": "x", "roles": ["a", "b"]}, {"name": "y", "roles": ["b", "c"]}]},  # b twice
-                    {"areas": [{"name": str(i), "roles": [r]} for i, r in enumerate("abc")] * 3}):  # over 7 and twice
-            with self.assertRaises(ValueError):
-                roles.apply_areas(store, list("abc"), bad)
 
     def test_imports_resolve_from_a_subfolder_root(self):
         d = tempfile.mkdtemp(prefix="modfence-test-")
