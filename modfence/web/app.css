@@ -668,3 +668,9 @@ body[data-view="history"] :is(.crumbs, .legend, .zoom, .hint) { display: none; }
 .route.fast b { color: var(--ok); }
 .route.full b { color: var(--fence-ink); }
 .route:hover, .route:focus-visible { border-color: var(--ink); }
+
+/* inside a function: its frame; the other functions outside; boxes with no link as chips */
+.frame { fill: var(--fence-soft); fill-opacity: 0.35; stroke: var(--line-2); stroke-width: 1.5; stroke-dasharray: 6 4; }
+.frame-name { font: 650 13px var(--font); fill: var(--text-2); letter-spacing: 0.02em; text-transform: uppercase; }
+.lone-cap { font: 12px var(--font); fill: var(--text-3); }
+.node.chip .name { font-size: 12.5px; }

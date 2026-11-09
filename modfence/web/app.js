@@ -181,7 +181,14 @@ function usersOf(files) { // roles whose code imports any of these files
   S.full.edges.forEach((e) => e.receipts.forEach((r) => { if (fs.has(r.target_file) && !fs.has(r.file) && fr[r.file] && !kindOf(r.file)) out.add(fr[r.file]); }));
   return [...out];
 }
-const GHOSTS = 4;
+// Golden rule 2: a role named like its function ("recorder" in recorder) reads as that function's core, so the two
+// levels never show two different boxes with one name.
+function boxName(m) {
+  const n = m.label || label(m.id);
+  if (!m.role || !S.roles?.areas) return n;
+  const a = (S.roles.areas || []).find((x) => x.roles.includes(m.role));
+  return a && a.name.toLowerCase() === n.toLowerCase() ? `${n} core` : n;
+}
 function roleGraph() {
   const fr = fileRoles(), rs = [...S.roles.roles];
   if (S.roles.unassigned.length) rs.push({ id: "?", name: "not placed yet", purpose: "New files: place them in a role.", files: S.roles.unassigned });
@@ -190,17 +197,27 @@ function roleGraph() {
   // labelled with their area), so every box shows what it is tied to. Click one to go there.
   const all = rs.filter((r) => ownFiles(r).length).map((r) => roleNode(r));
   const nodeOf = (f) => { const r = S.roles.doors?.[f] || fr[f]; return r && "role:" + r; };
-  const edges = linked(all, prune(aggregate((f) => !kindOf(f) && nodeOf(f))), nodeOf, (r) => "role:" + r);
+  const raw = aggregate((f) => !kindOf(f) && nodeOf(f));
+  const edges = linked(all, inArea ? raw : prune(raw), nodeOf, (r) => "role:" + r); // inside a function: few boxes, every link
   if (!inArea) return { ...S.full, modules: all, edges };
-  const mine = new Set(all.filter((b) => inArea.has(b.role)).map((b) => b.id));
-  const touching = edges.filter((e) => mine.has(e.source) || mine.has(e.target)), weight = new Map();
-  touching.forEach((e) => [e.source, e.target].filter((id) => !mine.has(id)).forEach((id) => weight.set(id, (weight.get(id) || 0) + e.receipts.length)));
-  // ponytail: the GHOSTS most linked outside roles only; the side bar still lists every link
-  const ghosts = new Set([...weight].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).slice(0, GHOSTS).map(([id]) => id)), ar = areaOf();
-  const keep = touching.filter((e) => (mine.has(e.source) || ghosts.has(e.source)) && (mine.has(e.target) || ghosts.has(e.target)));
-  const aname = (aid) => ((S.roles.areas || []).find((x) => x.id === aid) || {}).name || "another area";
-  return { ...S.full, edges: keep, modules: all.filter((b) => mine.has(b.id) || ghosts.has(b.id))
-    .map((b) => (ghosts.has(b.id) ? { ...b, ghost: true, meta: `in ${aname(ar[b.role])}` } : b)) };
+  // The outside is drawn at the level the user came from: each other function (first level) is one faded box, and
+  // every link from a role here to anything in it is merged into one line. The function itself is a frame around
+  // its roles (drawFrame), so inside and outside read at a glance.
+  const mine = new Set(all.filter((b) => inArea.has(b.role)).map((b) => b.id)), ar = areaOf();
+  const outer = (id) => (mine.has(id) ? id : ar[id.slice(5)] && ar[id.slice(5)] !== S.area ? "area:" + ar[id.slice(5)] : null);
+  const merged = new Map();
+  edges.forEach((e) => {
+    const a = outer(e.source), b = outer(e.target);
+    if (!a || !b || a === b || (!mine.has(a) && !mine.has(b))) return;
+    const k = `${a}\n${b}\n${e.kind || ""}`;
+    if (!merged.has(k)) merged.set(k, { source: a, target: b, kind: e.kind, n: e.n, receipts: [] });
+    merged.get(k).receipts.push(...e.receipts);
+  });
+  const fns = new Map(areaBoxes().map((b) => [b.id, b]));
+  const ghosts = [...new Set([...merged.values()].flatMap((e) => [e.source, e.target]).filter((id) => !mine.has(id)))]
+    .filter((id) => fns.has(id)).map((id) => ({ ...fns.get(id), ghost: true, meta: "another function" }));
+  return { ...S.full, edges: [...merged.values()].filter((e) => mine.has(e.source) || fns.has(e.source)),
+    modules: [...all.filter((b) => mine.has(b.id)), ...ghosts], frame: area.name };
 }
 function partGraph(rid) {
   const fr = fileRoles(), mine = new Set(Object.keys(fr).filter((f) => fr[f] === rid && !kindOf(f)));
@@ -285,15 +302,17 @@ async function proposeAreas() { // the first level: at most 7 areas of roles, on
 const areaOf = () => Object.fromEntries((S.roles?.areas || []).flatMap((a) => a.roles.map((r) => [r, a.id])));
 function openArea(aid) { S.area = aid; S.level = "roles"; regroup(); fitView(); }
 function areaGraph() { // level 1: the areas, each the own files of its roles
-  const fr = fileRoles(), ar = areaOf();
-  const boxes = S.roles.areas.map((a) => {
+  const fr = fileRoles(), ar = areaOf(), boxes = areaBoxes();
+  const nodeOf = (f) => { const a = ar[S.roles.doors?.[f] || fr[f]]; return a && "area:" + a; };
+  return { ...S.full, modules: boxes, edges: linked(boxes, aggregate((f) => !kindOf(f) && nodeOf(f)), nodeOf, (r) => ar[r] && "area:" + ar[r]) };
+}
+function areaBoxes() {
+  return S.roles.areas.map((a) => {
     const rs = a.roles.map((rid) => S.roles.roles.find((r) => r.id === rid)).filter(Boolean), files = rs.flatMap(ownFiles);
     return { id: "area:" + a.id, area: a.id, kind: "group", label: a.name, meta: plural(files.length, "file") + docTag(rs.map((r) => r.id)),
       files, lines: files.reduce((n, f) => n + (S.full.files[f]?.lines || 0), 0), names: [], doc: a.purpose || "",
       roles: rs, members: [...new Set(files.map((f) => S.full.files[f].module))] };
   }).filter((b) => b.files.length);
-  const nodeOf = (f) => { const a = ar[S.roles.doors?.[f] || fr[f]]; return a && "area:" + a; };
-  return { ...S.full, modules: boxes, edges: linked(boxes, aggregate((f) => !kindOf(f) && nodeOf(f)), nodeOf, (r) => ar[r] && "area:" + ar[r]) };
 }
 // Imports are not the only way boxes talk: programs call each other over HTTP or start each other (roles.runtime_links,
 // dashed), and a box with no link at all is tied to the box it most often changed with in git (dotted). Every link
@@ -442,20 +461,32 @@ function layout() {
 // ends, scripts) below, in at most BANDS rows, so the picture reads top to bottom yet never becomes one tall column.
 // Inside a row, boxes keep the left-to-right order the stress layout gave them, so linked boxes stay near.
 const BANDS = 4;
-function placeFree(g, all, ids, rank) {
-  const P = stressLayout(ids, g.edges, rank), maxR = Math.max(0, ...ids.map((i) => rank[i] || 0));
+function placeFree(g, all, ids0, rank) {
+  // Boxes with no link at all are not part of the structure: they go to a row of chips under it (drawChip).
+  const linkedIds = new Set(g.edges.flatMap((e) => [e.source, e.target]));
+  const lone = ids0.filter((i) => !linkedIds.has(i)), ids = ids0.filter((i) => linkedIds.has(i));
+  // Inside a function, the other functions sit outside its frame: those its roles use above, those using them below.
+  const ghost = new Set(ids.filter((i) => mod(i)?.ghost)), inner = ids.filter((i) => !ghost.has(i));
+  const P = stressLayout(ids, g.edges, rank), maxR = Math.max(0, ...inner.map((i) => rank[i] || 0));
   const B = Math.min(BANDS, maxR + 1), rows = Array.from({ length: B }, () => []);
   const directed = new Set(g.edges.filter((e) => !e.kind || e.kind === "runtime").flatMap((e) => [e.source, e.target]));
   // a box with no directed link is a program on its own: it sits with the users at the bottom, not with the cores
-  ids.forEach((i) => rows[!directed.has(i) ? B - 1 : maxR ? Math.round(((rank[i] || 0) / maxR) * (B - 1)) : 0].push(i));
+  inner.forEach((i) => rows[!directed.has(i) ? B - 1 : maxR ? Math.round(((rank[i] || 0) / maxR) * (B - 1)) : 0].push(i));
+  if (ghost.size) {
+    const usedHere = new Set(g.edges.filter((e) => ghost.has(e.target) && !ghost.has(e.source)).map((e) => e.target));
+    rows.unshift([...ghost].filter((i) => usedHere.has(i)));
+    rows.push([...ghost].filter((i) => !usedHere.has(i)));
+  }
   rows.forEach((row, b) => {
     row.sort((a, c) => P[a].x - P[c].x || a.localeCompare(c));
     const mean = row.reduce((t, i) => t + P[i].x, 0) / (row.length || 1);
     for (let k = 1; k < row.length; k++) P[row[k]].x = Math.max(P[row[k]].x, P[row[k - 1]].x + NODE_W + GAP_X);
     const shift = mean - row.reduce((t, i) => t + P[i].x, 0) / (row.length || 1);
-    row.forEach((i) => { P[i].x = Math.round(P[i].x + shift); P[i].y = b * (NODE_H + GAP_Y * 1.6); });
+    row.forEach((i) => { P[i].x = Math.round(P[i].x + shift); P[i].y = b * (NODE_H + GAP_Y * 1.6) + (ghost.size && b > 0 ? 40 : 0) + (ghost.size && b === rows.length - 1 && b > 0 ? 40 : 0); });
   });
-  S.pos = P; S.rows = rows.filter((r) => r.length);
+  const ys = ids.map((i) => P[i].y), xs = ids.map((i) => P[i].x), x0 = xs.length ? Math.min(...xs) : 0, y1 = ys.length ? Math.max(...ys) + NODE_H : 0;
+  lone.forEach((i, k) => (P[i] = { x: x0 + k * (CHIP_W + 12), y: y1 + GAP_Y + 34, chip: true }));
+  S.pos = P; S.rows = rows.filter((r) => r.length); S.lone = lone;
 }
 // Stress majorization (Gansner, Koren and North 2004), the per-node update with weights d^-2: boxes that import each
 // other sit close, the drawing comes nearest to a hand-made one on small graphs. Distance = import hops. Start from the
@@ -543,9 +574,35 @@ function edgePath(e, spread) {
   return `M${sx},${sy} C${sx + bulge},${sy} ${tx + bulge},${ty} ${tx},${ty}`;
 }
 
+const CHIP_W = 170, CHIP_H = 40;
+function drawFrame(eg) { // the function around its roles, so inside and outside read at a glance
+  const ids = S.graph.modules.filter((m) => !m.ghost && !S.pos[m.id]?.chip).map((m) => m.id);
+  if (!S.graph.frame || !ids.length) return;
+  const xs = ids.map((i) => S.pos[i].x), ys = ids.map((i) => S.pos[i].y), pad = 26;
+  const x = Math.min(...xs) - pad, y = Math.min(...ys) - pad - 18, w = Math.max(...xs) + NODE_W + pad - x, h = Math.max(...ys) + NODE_H + pad - y;
+  el("rect", { class: "frame", x, y, width: w, height: h, rx: 14 }, eg);
+  el("text", { class: "frame-name", x: x + 14, y: y + 20 }, eg).textContent = S.graph.frame;
+}
+function drawChip(m, ng) { // a box with no link: a small chip under the map, not a vertex of it
+  const { x, y } = S.pos[m.id];
+  const n = el("g", { class: "node chip", transform: `translate(${x},${y})`, tabindex: 0, role: "button", "data-id": m.id }, ng);
+  el("rect", { class: "ring", x: -3, y: -3, width: CHIP_W + 6, height: CHIP_H + 6, rx: 8 }, n);
+  el("rect", { class: "card", width: CHIP_W, height: CHIP_H, rx: 6 }, n);
+  el("rect", { class: "fill", width: CHIP_W, height: CHIP_H, rx: 6 }, n);
+  el("text", { class: "name", x: 10, y: 25 }, n).textContent = clip(boxName(m), 18);
+  el("text", { class: "tag", x: CHIP_W - 8, y: 12, "text-anchor": "end", "data-tag": "" }, n);
+  el("title", {}, n).textContent = `${boxName(m)}: no import, call, copy or shared history with the rest`;
+  n.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+  n.addEventListener("click", (ev) => onNodeClick(m.id, ev));
+}
 function drawGraph() {
   const g = S.graph, eg = $("#edges"), ng = $("#nodes"), mx = maxLines();
   eg.innerHTML = ""; ng.innerHTML = "";
+  if (S.free) drawFrame(eg);
+  if (S.lone?.length) {
+    const x0 = Math.min(...S.lone.map((i) => S.pos[i].x)), y0 = S.pos[S.lone[0]].y;
+    el("text", { class: "lone-cap", x: x0, y: y0 - 10 }, eg).textContent = "Standalone: no import, call, copy or shared history with the rest";
+  }
   const outs = {}, ins = {};
   g.edges.forEach((e) => { (outs[e.source] ||= []).push(e); (ins[e.target] ||= []).push(e); });
   const spread = new Map();
@@ -573,6 +630,7 @@ function drawGraph() {
     hit.addEventListener("click", () => pick(e.target));
   });
   g.modules.forEach((m) => {
+    if (S.pos[m.id]?.chip) return drawChip(m, ng);
     const { x, y } = S.pos[m.id];
     const n = el("g", { class: `node${m.kind === "tests" ? " tests" : ""}`, transform: `translate(${x},${y})`, tabindex: 0, role: "button", "data-id": m.id }, ng);
     el("rect", { class: "ring", x: -3, y: -3, width: NODE_W + 6, height: NODE_H + 6, rx: 10 }, n);
@@ -581,7 +639,7 @@ function drawGraph() {
     el("rect", { class: "card", width: NODE_W, height: NODE_H, rx: 7 }, n);
     el("rect", { class: "fill", width: NODE_W, height: NODE_H, rx: 7 }, n);
     const name = el("text", { class: "name", x: 12, y: 25 }, n);
-    name.textContent = clip(m.label || label(m.id), 22);
+    name.textContent = clip(boxName(m), 22);
     const meta = el("text", { class: "meta", x: 12, y: 45 }, n);
     meta.textContent = clip(m.meta ? m.meta : m.group ? plural(m.members.length, "module") : `${parent(m.id) ? parent(m.id) + "/ · " : ""}${plural(m.files.length, "file")}`, 30);
     el("rect", { class: "bar-bg", x: 12, y: 57, width: NODE_W - 24, height: 5, rx: 2.5 }, n);

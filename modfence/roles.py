@@ -391,7 +391,8 @@ NAME_SYSTEM = (
     "history; do not move files or merge groups. You get each group's files with docstrings, the imports between groups, "
     "and the project's own vocabulary from its docs. For every group write a short lowercase name of 1 to 3 words in "
     "the project's own words (e.g. observer, segmenter, inference, memory, api), different from the other names, and one "
-    "plain sentence of at most 20 words on what it does for the system. Reply with JSON only: "
+    "plain sentence of at most 20 words on what it does for the system. A group id that starts with a function name "
+    "and a colon (observer:...) belongs to that function: never give the role the function's own name. Reply with JSON only: "
     "{\"roles\": {\"<group id>\": {\"name\": \"...\", \"purpose\": \"...\"}}}")
 
 
