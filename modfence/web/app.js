@@ -173,7 +173,7 @@ const doorsOf = (rid) => Object.keys(S.roles?.doors || {}).filter((f) => S.roles
 function roleNode(r, kind = "group") {
   const files = ownFiles(r), doors = doorsOf(r.id), lines = files.reduce((a, f) => a + (S.full.files[f]?.lines || 0), 0);
   return { id: "role:" + r.id, role: r.id, kind: r.name === "shared" ? "tests" : kind, label: r.name,
-    meta: plural(files.length, "file") + docTag([r.id]), doors, // doors and roles are in the side bar: the box stays short
+    meta: plural(files.length, "file"), doors, // doors and roles are in the side bar: the box stays short
     files, lines, names: [], doc: r.purpose || "", members: [...new Set(files.map((f) => S.full.files[f].module))] };
 }
 function usersOf(files) { // roles whose code imports any of these files
@@ -241,8 +241,7 @@ function pick(id) { // a click only selects; the card below says what it is and 
   const name = m.label || shown(id);
   // a side bar, read top to bottom: what it is, what to do, then the facts behind it (uses, used by, files)
   // each link in a few plain words, strongest first; the names behind it are in the hover text, not here
-  const link = (e, other) => `<li><button type="button" class="lk" data-go="${esc(other)}">${esc(shown(other))}</button><span>${esc(linkPhrase(e))}${linkDocs(e).length ? ` · ${plural(linkDocs(e).length, "doc")}` : ""}</span>`
-    + `<button type="button" class="btn quiet mini" data-linkdoc="${esc(linkKey(e))}" title="Put a project doc on this link">+ doc</button></li>`;
+  const link = (e, other) => `<li><button type="button" class="lk" data-go="${esc(other)}">${esc(shown(other))}</button><span>${esc(linkPhrase(e))}</span></li>`;
   const strong = (a, b) => b.receipts.length - a.receipts.length;
   const out = (S.graph.edges || []).filter((e) => e.source === id).sort(strong), inn = (S.graph.edges || []).filter((e) => e.target === id).sort(strong);
   const mine = new Set(m.files), shared = [...new Set(S.full.edges.flatMap((e) => e.receipts).filter((r) => mine.has(r.file) && kindOf(r.target_file) === "shared").map((r) => r.target_file))].sort();
@@ -251,28 +250,36 @@ function pick(id) { // a click only selects; the card below says what it is and 
   card.innerHTML = `<div class="pk"><b>${esc(name)}</b><button type="button" class="btn quiet" data-x aria-label="Close">${X_ICON}</button></div>`
     + `<div class="pm mono">${plural(m.files.length, "file")} · ${m.lines.toLocaleString()} ln</div>`
     + (doc ? `<p>${esc(doc)}</p>` : `<p class="none">No description in the code.</p>`)
-    + `<div class="pa">` + (role || folder ? `<button type="button" class="btn primary" data-open>${area ? "Open roles" : role ? "Open parts" : "Open folder"} ▸</button>` : "")
-    + (folder || id === "role:?" ? "" : `<button type="button" class="btn${role ? "" : " primary"}" data-ask>Ask / edit</button>`) + `</div>`
+    // golden rule 2: say what to change right here; the box is the fence, the map stays where it is
+    + (folder || id === "role:?" ? "" : `<div class="ask"><textarea data-q rows="3" placeholder="What should change in ${esc(name)}?"></textarea>`
+      + `<div class="route" data-route></div><div class="pa"><button type="button" class="btn primary" data-run>Build</button><span class="meta">Ctrl Enter</span></div></div>`)
+    + (role || folder ? `<div class="pa"><button type="button" class="btn" data-open>${area ? "Open roles" : role ? "Open parts" : "Open folder"} ▸</button></div>` : "")
     + (out.length ? `<h4>Uses <i>${out.length}</i></h4><ul class="pl">${out.map((e) => link(e, e.target)).join("")}</ul>` : "")
     + (inn.length ? `<h4>Used by <i>${inn.length}</i></h4><ul class="pl">${inn.map((e) => link(e, e.source)).join("")}</ul>` : "")
     + (area ? `<h4>Roles <i>${m.roles.length}</i></h4><ul class="pf">${m.roles.map((r) => `<li><span class="mono">${esc(r.name)}</span><span>${esc(r.purpose || "")}</span></li>`).join("")}</ul>` : "")
-    + (id.startsWith("role:") && S.roles.areas?.length ? `<h4>Area</h4><select data-area aria-label="Area of ${esc(name)}">${S.roles.areas.filter((a) => a.id !== "?").map((a) => `<option value="${esc(a.id)}"${areaOf()[id.slice(5)] === a.id ? " selected" : ""}>${esc(a.name)}</option>`).join("")}</select>` : "")
     + (m.doors?.length ? `<h4>Start files and routes <i>${m.doors.length}</i></h4><ul class="pf">${m.doors.map((f) => `<li><span class="mono">${esc(f)}</span><span>${kindOf(f) === "entry" ? "starts the program" : "HTTP routes into it"} · read-only by default</span></li>`).join("")}</ul>` : "")
     + (shared.length ? `<h4>Shared config it reads <i>${shared.length}</i></h4><ul class="pf">${shared.map((f) => `<li><span class="mono">${esc(f)}</span><span>${esc(S.full.files[f]?.doc || "")} · read-only by default</span></li>`).join("")}</ul>` : "")
-    + docsSection(m)
-    + `<h4>Files <i>${m.files.length}</i></h4>` + fileGroups(m).map(([title, fs]) => `<details class="fg"><summary>${esc(title)} <i>${fs.length}</i></summary>`
-      + `<ul class="pf">${fs.map((f) => `<li><span class="mono">${esc(f.split("/").pop())}</span>${fdoc(f) ? `<span>${esc(fdoc(f))}</span>` : ""}</li>`).join("")}</ul></details>`).join("");
+    + `<h4>Files <i>${m.files.length}</i></h4>` + (m.files.length <= 8 ? fileList(m.files, fdoc) : fileGroups(m).map(([title, fs]) => `<details class="fg"><summary>${esc(title)} <i>${fs.length}</i></summary>`
+      + fileList(fs, fdoc) + `</details>`).join(""));
   const opening = card.hidden;
   card.hidden = false; card.scrollTop = 0;
   if (opening && !S.userCam) fitView();
   card.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => pick(b.dataset.go)));
-  wireDocs(card, m, id);
+  const files = plain ? [id] : m.files, label = role ? "role " + name : name, qbox = $("[data-q]", card);
+  const showRoute = () => { const r = route(files), el = $("[data-route]", card), b = $("[data-run]", card); if (!el || !r) return;
+    el.className = `route ${r.full ? "full" : "fast"}`;
+    el.innerHTML = r.full ? `<b>Plans first</b>: the box ${esc(r.why.join("; ") || "is set to plan")}.` : `<b>Builds now</b>: one role, nothing outside depends on it.`;
+    b.textContent = r.full ? "Plan" : "Build"; };
+  showRoute();
+  $("[data-route]", card)?.addEventListener("click", () => { const r = route(files); S.forceRoute = r && r.full ? "fast" : "full"; showRoute(); });
+  const go = async () => { const prompt = qbox.value.trim(); if (!prompt || !S.claude) return; const r = route(files);
+    openFence(files, label, m.doc); unpick();
+    await startRun(prompt, files, false, r && !r.full ? "build" : "plan"); };
+  $("[data-run]", card)?.addEventListener("click", go);
+  qbox?.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(); } });
   $("[data-open]", card)?.addEventListener("click", () => { unpick(); area ? openArea(id.slice(5)) : role ? openRole(id.slice(5)) : select(id); });
-  $("[data-area]", card)?.addEventListener("change", (ev) => rolesDo("area_move", { role: id.slice(5), id: ev.target.value }, `Moved to ${ev.target.selectedOptions[0].text}.`));
-  // Ask / edit fences the box itself: a role or part fences its files, a module fences the module
-  $("[data-ask]", card)?.addEventListener("click", () => { unpick(); plain ? select(id) : fenceFiles(m.files, role ? "role " + name : name, m.doc); });
   $("[data-x]", card).onclick = unpick;
-  ($("[data-open]", card) || $("[data-ask]", card) || $("[data-x]", card)).focus();
+  (qbox || $("[data-open]", card) || $("[data-x]", card)).focus();
   paintSelection();
 }
 function unpick() { const was = !$("#pick").hidden; S.picked = null; $("#pick").hidden = true; paintSelection(); if (was && !S.userCam && !document.body.classList.contains("panel-open")) fitView(); }
@@ -309,7 +316,7 @@ function areaGraph() { // level 1: the areas, each the own files of its roles
 function areaBoxes() {
   return S.roles.areas.map((a) => {
     const rs = a.roles.map((rid) => S.roles.roles.find((r) => r.id === rid)).filter(Boolean), files = rs.flatMap(ownFiles);
-    return { id: "area:" + a.id, area: a.id, kind: "group", label: a.name, meta: plural(files.length, "file") + docTag(rs.map((r) => r.id)),
+    return { id: "area:" + a.id, area: a.id, kind: "group", label: a.name, meta: plural(files.length, "file"),
       files, lines: files.reduce((n, f) => n + (S.full.files[f]?.lines || 0), 0), names: [], doc: a.purpose || "",
       roles: rs, members: [...new Set(files.map((f) => S.full.files[f].module))] };
   }).filter((b) => b.files.length);
@@ -354,6 +361,16 @@ function roleFiles(rid) { // a sheet: every file of the role, each with a role p
   showSheet(true);
 }
 function fenceRole(rid) { const r = S.roles.roles.find((x) => x.id === rid); fenceFiles(ownFiles(r), "role " + r.name, r.purpose); }
+// The fence for a box without leaving the map: the run panel opens beside it and the level stays as it is.
+function openFence(files, label, doc) {
+  S.fenceLabel = label; S.fenceDoc = doc || "";
+  S.selected = S.full.files[files[0]]?.module || files[0]; S.scope = new Set(files);
+  document.body.classList.add("panel-open"); $("#panel").inert = false;
+  renderHeader(); renderOverview(); afterFenceChange(); setTab("talk", false);
+}
+function fileList(files, fdoc) {
+  return `<ul class="pf">${files.map((f) => `<li><span class="mono">${esc(f.split("/").pop())}</span>${fdoc(f) ? `<span>${esc(fdoc(f))}</span>` : ""}</li>`).join("")}</ul>`;
+}
 function fenceFiles(files, label, doc) { // a role or part as the fence: its files, under one name
   S.fenceLabel = label; S.fenceDoc = doc || ""; // set first: select() renders the panel for the fence, not one module
   select(S.full.files[files[0]].module, true);
@@ -1267,66 +1284,7 @@ function newRun(prompt, scope, at, readOnly, phase) {
 /* ---------------- the project's own docs on the map (golden rules 1, 2, 7) ----------------
    Docs stay the project's markdown files; modfence places each on the boxes it is about (docs.py) and the user can
    add or remove a place, on a box or on a link. A run fenced to a box gets pointers to its docs, not their text. */
-const boxKeys = (m) => (m.area ? m.roles.map((r) => "role:" + r.id) : m.role ? ["role:" + m.role] : []);
 const docsOn = (keys) => (S.docs?.docs || []).filter((d) => d.boxes.some((b) => keys.includes(b)));
-const docTag = (rids) => { const n = docsOn(rids.map((r) => "role:" + r)).length; return n ? ` · ${plural(n, "doc")}` : ""; };
-const roleKeyOf = (id) => (id.startsWith("role:") ? [id] : (mod(id)?.roles || []).map((r) => "role:" + r.id));
-const linkKey = (e) => "link:" + [...roleKeyOf(e.source).slice(0, 1), ...roleKeyOf(e.target).slice(0, 1)].sort().join("|");
-const linkDocs = (e) => (S.docs?.links || {})[linkKey(e)] || [];
-function docLine(d) {
-  const size = `${d.lines.toLocaleString()} lines · ~${d.tokens >= 1000 ? Math.round(d.tokens / 1000) + "k" : d.tokens} tokens`;
-  const stale = d.stale ? ` · <span class="stale">${plural(d.stale, "file")} it names changed since</span>` : d.stale === 0 ? " · up to date" : "";
-  return `<li><button type="button" class="lk" data-doc="${esc(d.path)}">${esc(d.title)}</button><span class="mono">${esc(d.path)}</span><span>${size}${stale}</span>`
-    + `<button type="button" class="btn quiet mini" data-undoc="${esc(d.path)}" title="Take it off this box">×</button></li>`;
-}
-function docsSection(m) {
-  const keys = boxKeys(m);
-  if (!keys.length || !S.docs) return "";
-  const on = docsOn(keys), rest = S.docs.docs.filter((d) => !on.includes(d)).sort((a, b) => a.path.localeCompare(b.path));
-  return `<h4>Docs <i>${on.length}</i></h4><ul class="pf docs">${on.map(docLine).join("")}</ul>`
-    + `<select data-adddoc aria-label="Put a project doc on this box"><option value="">+ Put a doc on this box…</option>${rest.map((d) => `<option value="${esc(d.path)}">${esc(d.path)}</option>`).join("")}</select>`;
-}
-async function docsDo(path, box, on) {
-  try { await api(`/api/docs/choose?${q()}`, { path, box, on }); S.docs = await api(`/api/docs?${q()}`); }
-  catch (e) { toast(e.message, false); return; }
-  regroup(); toast(on ? "Doc placed. Runs fenced here get a pointer to it." : "Doc taken off.");
-}
-function wireDocs(card, m, id) {
-  const key = boxKeys(m)[0];
-  card.querySelectorAll("[data-doc]").forEach((b) => (b.onclick = () => openDoc(b.dataset.doc)));
-  card.querySelectorAll("[data-undoc]").forEach((b) => (b.onclick = () => key && docsDo(b.dataset.undoc, key, false)));
-  $("[data-adddoc]", card)?.addEventListener("change", (ev) => ev.target.value && key && docsDo(ev.target.value, key, true));
-  card.querySelectorAll("[data-linkdoc]").forEach((b) => (b.onclick = () => {
-    const path = prompt(`Put a project doc on this link. Path of the markdown file (it may be new):\n\n${(S.docs?.docs || []).slice(0, 12).map((d) => d.path).join("\n")}`);
-    if (path) docsDo(path.trim(), b.dataset.linkdoc, true);
-  }));
-}
-async function openDoc(path) { // the project's own file, edited in place
-  let text;
-  try { ({ text } = await api(`/api/docs/read?${q("&path=" + encodeURIComponent(path))}`)); }
-  catch (e) { toast(e.message, false); return; }
-  $("#stitle").textContent = path;
-  $("#scode").innerHTML = `<p class="sub">The project's own file. Saving writes it to disk; git keeps its history.</p><textarea class="docedit" spellcheck="false">${esc(text)}</textarea><div class="pa"><button class="btn primary" type="button" data-savedoc>Save</button></div>`;
-  $("[data-savedoc]", $("#scode")).onclick = async () => {
-    try { await api(`/api/docs/save?${q()}`, { path, text: $(".docedit", $("#scode")).value }); S.docs = await api(`/api/docs?${q()}`); toast("Saved."); showSheet(false); }
-    catch (e) { toast(e.message, false); }
-  };
-  showSheet(true);
-}
-// An optional second look (off by default, golden rule 1): a read-only run that reads only what this run changed and
-// reports real bugs and broken contracts, nothing about style.
-function renderReview(root, job, c) {
-  const files = c && c.files ? c.files.map((f) => f.path) : [];
-  if (!files.length || job.readOnly || job.phase === "plan") return;
-  const b = document.createElement("button");
-  b.className = "btn quiet review"; b.type = "button"; b.textContent = "Review this run";
-  b.title = "A read-only run reads the changed files and reports real bugs or broken contracts (costs a run)";
-  root.appendChild(b);
-  b.onclick = () => { b.disabled = true; startRun(`Review the last change for bugs, nothing else. Changed files: ${files.join(", ")}. Task it did: ${job.prompt}. `
-    + `Read only those files and what they call. Report at most 5 real problems (wrong behaviour, broken callers, missing edge cases), each with file:line and why. No style comments. If none, say so in one line.`, job.scope, true, null); };
-}
-// Find skills, built in (golden rule 1: the right skill saves the agent from working it out). Matched to this
-// project's own libraries (skills.py); added to this project only, on a click, never to the user's global setup.
 async function openSkills(refresh) {
   $("#stitle").textContent = "Skills for this project";
   $("#scode").innerHTML = `<p class="sub">Reading the project's libraries and searching skills.sh…</p>`;
@@ -1544,9 +1502,9 @@ function autosize() { const t = $("#prompt"); t.style.height = "auto"; t.style.h
 // Golden rule 1: the pipeline routes by what the fence touches. A task inside one role that nothing outside depends
 // on through copies, HTTP or shared history takes the fast path (build at once, lean rule, tests). Anything else takes
 // the full path (plan first; questions only where the task is unclear), and the reasons are shown. One click switches.
-function route() {
-  if (!S.scope.size || S.readOnly) return null;
-  const fr = fileRoles(), sc = [...S.scope].map((s) => s.split("::")[0]);
+function route(scope = [...S.scope]) {
+  if (!scope.length || S.readOnly) return null;
+  const fr = fileRoles(), sc = scope.map((s) => s.split("::")[0]);
   const mine = new Set(Object.keys(S.full.files).filter((f) => sc.some((s) => f === s || f.startsWith(s + "/") || s === "." && !f.includes("/"))));
   const rids = new Set([...mine].map((f) => fr[f]).filter(Boolean)), links = S.roles?.links || [], why = [];
   if (rids.size > 1) why.push(`spans ${rids.size} roles`);
