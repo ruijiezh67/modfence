@@ -656,6 +656,68 @@ class RunnerTest(unittest.TestCase):
         rec = [json.loads(l) for l in analyze.read_text(os.path.join(d, ".modfence/runs/r1/checks.jsonl")).splitlines()]
         self.assertEqual([(r["ok"], r["blocked"]) for r in rec], [(False, 1), (False, 0)])
 
+    def test_done_check_runs_the_tests_of_the_fence_and_its_users(self):
+        d = project()
+        ok = "import unittest\n{imp}\nclass T(unittest.TestCase):\n    def test_x(self):\n        pass\n"
+        write(os.path.join(d, "tests/__init__.py"), "")  # unittest discover needs a package since Python 3.11
+        write(os.path.join(d, "tests/test_api.py"), ok.format(imp="from app.api.handlers import handle"))
+        write(os.path.join(d, "tests/test_cli.py"), ok.format(imp="from app.cli.main import Cli"))
+        write(os.path.join(d, "tests/test_fail.py"), "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.fail('no')\n")
+        g = analyze.analyze(d)
+        self.assertEqual(runner.select_tests(g, ["app/core"]), {"files": ["tests/test_api.py", "tests/test_cli.py"],
+                                                                 "fence": ["app/core"], "users": ["app/api", "app/cli"]})
+        self.assertIsNone(runner.select_tests(g, ["app/broken"]), "no test imports it: the full suite runs")
+        self.assertFalse(runner.run_tests(d)[0], "the full suite fails")
+        self.assertTrue(runner.run_tests(d, files=["tests/test_api.py", "tests/test_cli.py"])[0])
+        env = dict(os.environ, MODFENCE_ROOT=d, MODFENCE_RUN="r1", MODFENCE_SCOPE="app/core")
+        hook = os.path.join(os.path.dirname(HERE), "modfence", "done_check.py")
+        p = subprocess.run([sys.executable, hook], input="{}", capture_output=True, text=True, env=env)
+        self.assertEqual(p.stdout.strip(), "", "the selected tests pass")
+        rec = json.loads(analyze.read_text(os.path.join(d, ".modfence/runs/r1/checks.jsonl")))
+        self.assertEqual((rec["ok"], rec["selected"]["files"], rec["selected"]["users"]),
+                         (True, ["tests/test_api.py", "tests/test_cli.py"], ["app/api", "app/cli"]))
+
+    def test_done_check_asks_once_for_a_test_of_new_branching_code(self):
+        d = project()
+        write(os.path.join(d, "tests/__init__.py"), "")
+        write(os.path.join(d, "tests/test_api.py"), "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        pass\n")
+        start = runner.fence_texts(d, ["app/core"])
+        self.assertIn("tests/test_api.py", start, "tests are in the baseline even outside the fence")
+        os.makedirs(os.path.join(d, ".modfence/runs/r2"))
+        write(os.path.join(d, ".modfence/runs/r2/start.json"), json.dumps(start))
+        write(os.path.join(d, "app/core/values.py"), "def clamp(x):\n    return x if x < LIMIT else LIMIT\n\ndef plain():\n    return 1\n", "a")
+        now = runner.fence_texts(d, ["app/core"])
+        self.assertEqual(runner.untested(start, now), ["app/core/values.py::clamp"], "plain() does not branch")
+        env = dict(os.environ, MODFENCE_ROOT=d, MODFENCE_RUN="r2", MODFENCE_SCOPE="app/core")
+        hook = os.path.join(os.path.dirname(HERE), "modfence", "done_check.py")
+        first = subprocess.run([sys.executable, hook], input='{"stop_hook_active": false}', capture_output=True, text=True, env=env)
+        self.assertIn("app/core/values.py::clamp", json.loads(first.stdout)["reason"])
+        second = subprocess.run([sys.executable, hook], input='{"stop_hook_active": true}', capture_output=True, text=True, env=env)
+        self.assertEqual(second.stdout.strip(), "", "a second stop is let through")
+        rec = [json.loads(l) for l in analyze.read_text(os.path.join(d, ".modfence/runs/r2/checks.jsonl")).splitlines()]
+        self.assertEqual([(r["ok"], r["blocked"], r["untested"]) for r in rec],
+                         [(True, 1, ["app/core/values.py::clamp"]), (True, 0, ["app/core/values.py::clamp"])])
+        write(os.path.join(d, "tests/test_api.py"), "# covers clamp\n", "a")
+        self.assertEqual(runner.untested(start, runner.fence_texts(d, ["app/core"])), [], "a test changed: no gate")
+
+    def test_a_run_drafts_its_commit_message(self):
+        files = [{"path": "app/observer/cam.py", "status": "modified", "funcs": [
+                     {"name": "frame_rate", "kind": "def", "status": "added"}, {"name": "capture", "kind": "def", "status": "changed"}]},
+                 {"path": "app/ui/view.py", "status": "modified", "funcs": [{"name": "View.draw", "kind": "method", "status": "changed"}]},
+                 {"path": "README.md", "status": "modified", "funcs": None}]
+        self.assertEqual(runner.commit_message(files),
+                         "observer: add frame_rate(); change capture()\n\n- app/ui/view.py: change View.draw()\n- README.md: modified")
+        many = [{"path": "a/b.py", "status": "modified", "funcs": [{"name": f"function_{i}", "kind": "def", "status": "added"} for i in range(9)]}]
+        subject = runner.commit_message(many)
+        self.assertLessEqual(len(subject), 72)
+        self.assertTrue(subject.startswith("a: add function_0(), ") and subject.endswith(" ..."))
+        self.assertIsNone(runner.commit_message([]))
+        d = project()
+        job = run_job(d, ["app/core"], "edit app/core/values.py and edit README.md")
+        ch = next(e for e in job.events if e["kind"] == "changes")
+        self.assertEqual(ch["commit_message"], "core: update values.py\n\n- README.md: modified")
+        self.assertEqual(runner.load_run(d, ch["run"])["commit_message"], ch["commit_message"])
+
     def test_reading_state_creates_nothing(self):
         d = project()
         self.assertEqual(runner.load_history(d, ["app/core"]), [])

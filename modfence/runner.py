@@ -9,7 +9,7 @@ After the run the project is re-scanned. Files changed outside the scope (for ex
 which the hook cannot see) are reported as a scope breach. Modules that import hashlib, a changed module are the
 ripple of the change.
 """
-import difflib, glob, hashlib, itertools, json, os, re, shutil, subprocess, sys, threading, time
+import ast, difflib, glob, hashlib, itertools, json, os, re, shutil, subprocess, sys, threading, time
 
 from . import analyze, brief
 
@@ -274,6 +274,9 @@ class Job:
             if p not in self.before_bytes and _in_scope(p, self.editable):
                 self.before_bytes[p] = _read_or_none(os.path.join(self.root, p))
         try:
+            if self.phase == "build":  # the test gate's baseline: the done check runs in another process
+                os.makedirs(run_dir(self.root, self.id), exist_ok=True)
+                write_text(os.path.join(run_dir(self.root, self.id), "start.json"), json.dumps(fence_texts(self.root, self.editable)))
             if not self.claude or not os.path.exists(self.claude) and not shutil.which(self.claude):
                 raise RuntimeError("Claude Code CLI not found. Install it, log in, or set CLAUDE_BIN.")
             settings = self._settings_file()
@@ -389,7 +392,8 @@ class Job:
             changed_mods = sorted({analyze.module_of(p, split) for p in changed if p.endswith(".py")})
             ripple = analyze.dependents(graph, changed_mods)
             checks = _read_jsonl(os.path.join(run_dir(self.root, self.id), "checks.jsonl"))
-            check = dict(ok=checks[-1]["ok"], summary=checks[-1]["summary"], blocked=sum(c["blocked"] for c in checks)) if checks else None
+            check = dict(ok=checks[-1]["ok"], summary=checks[-1]["summary"], blocked=sum(c["blocked"] for c in checks),
+                         selected=checks[-1].get("selected"), untested=checks[-1].get("untested") or []) if checks else None
             res = next((e for e in reversed(self.events) if e["kind"] == "result"), {})
             requests = self.requests()
             if requests:
@@ -400,16 +404,22 @@ class Job:
                                                           for p in modified + deleted if p.endswith(".py")})
             files = save_run(self, changed, set(added), set(deleted), set(outside),
                              dict(prompt=self.prompt, phase=self.phase, modules=changed_mods, ripple=ripple, check=check,
-                                  cost_usd=res.get("cost_usd"), turns=res.get("turns"), contract=contract, requests=requests))
+                                  cost_usd=res.get("cost_usd"), turns=res.get("turns"), contract=contract, requests=requests),
+                             split)
             out_fns = [f"{f['path']}::{u['name']}" for f in files if f["path"] in self.fn_fence for u in f["funcs"] or []
                        if u["name"] != "(module level)" and not any(u["name"] == n or u["name"].startswith(n + ".")
                                                                    for n in self.fn_fence[f["path"]])]
             if check:
                 self.emit("check", **check)
             self.emit("changes", added=added, modified=modified, deleted=deleted, outside_scope=outside, outside_functions=out_fns,
-                      modules=changed_mods, ripple=ripple, run=self.id, files=files, contract=contract)
+                      modules=changed_mods, ripple=ripple, run=self.id, files=files, contract=contract,
+                      commit_message=commit_message(files, split))
         except Exception as e:
             self.emit("error", text=f"rescan failed: {e}")
+        try:  # only the done check reads it
+            os.remove(os.path.join(run_dir(self.root, self.id), "start.json"))
+        except OSError:
+            pass
         with self.cond:
             done = dict(kind="done", i=len(self.events), t=round(time.time() - self.started, 2))
             # History is written before "done" goes out, so a client that reloads on "done" sees this run.
@@ -459,7 +469,7 @@ def _stat(before, after):
     return plus, minus
 
 
-def save_run(job, changed, added, deleted, outside, extra=None):
+def save_run(job, changed, added, deleted, outside, extra=None, split=()):
     """Store the before and after bytes of every changed file, so the run can be shown as a diff and reverted."""
     d = run_dir(job.root, job.id)
     files = []
@@ -480,8 +490,43 @@ def save_run(job, changed, added, deleted, outside, extra=None):
                       "revertible": revertible, "funcs": funcs})
     os.makedirs(d, exist_ok=True)
     write_text(os.path.join(d, "run.json"), json.dumps(dict(extra or {}, run=job.id, scope=job.scope, editable=job.editable,
-                                                            at=job.started, files=files), indent=1, ensure_ascii=False))
+                                                            at=job.started, files=files, commit_message=commit_message(files, split)),
+                                                       indent=1, ensure_ascii=False))
     return files
+
+
+VERBS = (("added", "add"), ("changed", "change"), ("removed", "remove"))
+
+
+def _unit_words(funcs):
+    """'add a(); change B' from one file's function changes; '(module level)' is not named."""
+    out = []
+    for status, verb in VERBS:
+        names = [u["name"] + ("()" if u["kind"] in ("def", "method") else "") for u in funcs
+                 if u["status"] == status and u["name"] != "(module level)"]
+        if names:
+            out.append(verb + " " + ", ".join(names))
+    return "; ".join(out)
+
+
+def commit_message(files, split=()):
+    """Golden rule 7: a commit message drafted from the run's changes, with no model call. The subject (at most 72
+    chars) names the module with the most changed functions and what happened to them; the body lists the other files."""
+    if not files:
+        return None
+    mod = lambda p: analyze.module_of(p, split)
+    count = {}
+    for f in files:
+        count[mod(f["path"])] = count.get(mod(f["path"]), 0) + len(f["funcs"] or [])
+    top = min(count, key=lambda m: (-count[m], m))
+    mine = [f for f in files if mod(f["path"]) == top]
+    words = "; ".join(w for w in (_unit_words(f["funcs"] or []) for f in mine) if w)
+    name = "root" if top == "." else os.path.basename(top).removesuffix(".py")
+    subject = f"{name}: " + (words or "update " + ", ".join(os.path.basename(f["path"]) for f in mine))
+    if len(subject) > 72:  # ponytail: cut at a word; the run's file list still names everything
+        subject = subject[:68].rsplit(" ", 1)[0].rstrip(",;") + " ..."
+    body = [f"- {f['path']}: " + (_unit_words(f["funcs"] or []) or f["status"]) for f in files if mod(f["path"]) != top]
+    return subject + ("\n\n" + "\n".join(body) if body else "")
 
 
 def versions(root):
@@ -621,12 +666,63 @@ def test_command(root):
     return None
 
 
-def run_tests(root, timeout=270):
-    """Run the project's tests. Returns (ok, summary line, tail of output); ok is None when nothing could be
-    checked (no tests, no pytest, too slow), so the done check never blocks on that."""
+def is_test(path):
+    """A file the test runners collect: test*.py or *_test.py."""
+    b = path.rsplit("/", 1)[-1]
+    return b.endswith(".py") and (b.startswith("test") or b.endswith("_test.py"))
+
+
+def select_tests(graph, editable):
+    """Golden rule 4: the test files most likely to catch a regression of this fence: those that import the fenced
+    modules or the modules that use them (the ripple), or sit inside them. {files, fence, users}, or None when no
+    test file does, so the full suite runs."""
+    kind = {m["id"]: m["kind"] for m in graph["modules"]}
+    code = lambda m: kind.get(m) != "tests" and not is_test(m)  # a root test file is a module of its own
+    fence = sorted({f["module"] for p, f in graph["files"].items() if _in_scope(p, editable) and code(f["module"])})
+    users = [m for m in analyze.dependents(graph, fence) if code(m)]
+    targets = set(fence) | set(users)
+    files = sorted({r["file"] for e in graph["edges"] if e["target"] in targets for r in e["receipts"] if is_test(r["file"])}
+                   | {p for p, f in graph["files"].items() if f["module"] in targets and is_test(p)})
+    return {"files": files, "fence": fence, "users": users} if files else None
+
+
+def fence_texts(root, editable):
+    """{path: text} of the .py files a build run may edit, and of every test file: the test gate's baseline."""
+    return {p: analyze.read_text(os.path.join(root, p)) for p in analyze.walk(root) if _in_scope(p, editable) or is_test(p)}
+
+
+BRANCHES = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.Match, ast.BoolOp, ast.IfExp, ast.comprehension)
+
+
+def untested(start, now):
+    """Golden rule 4: ["path::function"] added or changed between two fence_texts that branch or loop, when no test
+    file changed; [] when one did."""
+    changed = sorted(p for p in set(start) | set(now) if start.get(p) != now.get(p))
+    if any(is_test(p) for p in changed):
+        return []
+    out = []
+    for p in changed:
+        funcs = analyze.function_changes(start[p].encode("utf-8") if p in start else None, now[p].encode("utf-8")) if p in now else None
+        names = {u["name"] for u in funcs or [] if u["status"] != "removed" and u["kind"] in ("def", "method")}
+        if not names:
+            continue
+        tree = ast.parse(now[p])  # function_changes parsed it already
+        defs = [(n.name, n) for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        defs += [(f"{c.name}.{n.name}", n) for c in tree.body if isinstance(c, ast.ClassDef)
+                 for n in c.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        out += [f"{p}::{name}" for name, n in defs if name in names and any(isinstance(x, BRANCHES) for x in ast.walk(n))]
+    return out
+
+
+def run_tests(root, timeout=270, files=None):
+    """Run the project's tests, or only the given test files. Returns (ok, summary line, tail of output); ok is None
+    when nothing could be checked (no tests, no pytest, too slow), so the done check never blocks on that."""
     cmd = test_command(root)
     if not cmd:
         return None, "No tests found (tests/, test/ or a pytest config).", ""
+    if files and isinstance(cmd, list):  # MODFENCE_TEST_CMD, a shell string, always runs whole
+        # ponytail: unittest takes dotted names; files under test/ would clash with the stdlib test package
+        cmd = cmd + files if "pytest" in cmd else cmd[:3] + [f[:-3].replace("/", ".") for f in files]
     try:
         p = subprocess.run(cmd, cwd=root, shell=isinstance(cmd, str), capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=timeout)
