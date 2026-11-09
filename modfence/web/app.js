@@ -899,7 +899,7 @@ function closePanel() {
   if (wasOpen) requestAnimationFrame(() => S.view === "graph" && !S.userCam && fitView());
   paintSelection();
 }
-function afterFenceChange() { renderFence(); renderHeader(); paintSelection(); loadTalk(); }
+function afterFenceChange() { S.forceRoute = null; renderFence(); renderHeader(); paintSelection(); loadTalk(); syncSend(); }
 function setTab(t, focus) {
   S.tab = t;
   document.querySelectorAll("#seg [role=tab]").forEach((b) => {
@@ -1439,11 +1439,38 @@ function md(src) {
 
 /* ---------------- composer & runs ---------------- */
 function autosize() { const t = $("#prompt"); t.style.height = "auto"; t.style.height = Math.min(200, Math.max(54, t.scrollHeight)) + "px"; syncSend(); }
+// Golden rule 1: the pipeline routes by what the fence touches. A task inside one role that nothing outside depends
+// on through copies, HTTP or shared history takes the fast path (build at once, lean rule, tests). Anything else takes
+// the full path (plan first; questions only where the task is unclear), and the reasons are shown. One click switches.
+function route() {
+  if (!S.scope.size || S.readOnly) return null;
+  const fr = fileRoles(), sc = [...S.scope].map((s) => s.split("::")[0]);
+  const mine = new Set(Object.keys(S.full.files).filter((f) => sc.some((s) => f === s || f.startsWith(s + "/") || s === "." && !f.includes("/"))));
+  const rids = new Set([...mine].map((f) => fr[f]).filter(Boolean)), links = S.roles?.links || [], why = [];
+  if (rids.size > 1) why.push(`spans ${rids.size} roles`);
+  const copies = new Set(links.filter((l) => l.kind === "copy" && mine.has(l.file) !== mine.has(l.target_file)).map((l) => (mine.has(l.file) ? l.file : l.target_file)));
+  if (copies.size) why.push(`${plural(copies.size, "file")} here ${copies.size === 1 ? "has a copy" : "have copies"} outside the fence`);
+  const http = new Set(links.filter((l) => l.kind === "http" && mine.has(l.target_file) && !mine.has(l.file)).map((l) => l.name));
+  if (http.size) why.push(`${plural(http.size, "HTTP route")} served here ${http.size === 1 ? "is" : "are"} called from outside`);
+  const co = (S.roles?.cochange || []).filter(([a, b, n]) => n >= 5 && rids.has(a) !== rids.has(b)).sort((x, y) => y[2] - x[2]);
+  if (co.length) why.push(`usually changes together with ${co.slice(0, 2).map(([a, b]) => rname(rids.has(a) ? b : a)).join(" and ")}`);
+  const full = S.forceRoute ? S.forceRoute === "full" : why.length > 0;
+  return { full, why };
+}
+function renderRoute() {
+  const r = route(), el = $("#route");
+  el.hidden = !r;
+  if (!r) return;
+  el.className = `route ${r.full ? "full" : "fast"}`;
+  el.innerHTML = r.full ? `<b>Full path</b>: plan first${r.why.length ? `, because the fence ${esc(r.why.join("; "))}` : " (your choice)"}.`
+    : `<b>Fast path</b>: build now with the lean rule and the tests${r.why.length ? ` (your choice; the fence ${esc(r.why.join("; "))})` : ": one role, nothing outside depends on it"}.`;
+}
 function syncSend() {
   const running = S.job && !S.job.done;
-  const b = $("#send");
+  const b = $("#send"), r = route();
+  renderRoute();
   b.classList.toggle("stop", !!running);
-  b.textContent = running ? "Stop" : S.readOnly ? "Explain" : "Plan";
+  b.textContent = running ? "Stop" : S.readOnly ? "Explain" : r && !r.full ? "Build" : "Plan";
   b.disabled = !running && (!$("#prompt").value.trim() || !S.claude);
 }
 
@@ -1452,7 +1479,8 @@ async function send() {
   if (S.job && !S.job.done) { await api("/api/cancel", { job: S.job.id }).catch(() => {}); return; }
   const prompt = $("#prompt").value.trim();
   if (!prompt || !S.scope.size || !S.claude) return;
-  if (await startRun(prompt, [...S.scope], S.readOnly, S.readOnly ? null : "plan")) { $("#prompt").value = ""; autosize(); }
+  const r = route();
+  if (await startRun(prompt, [...S.scope], S.readOnly, S.readOnly ? null : r && !r.full ? "build" : "plan")) { $("#prompt").value = ""; autosize(); }
 }
 async function startRun(prompt, scope, readOnly, phase, approve) {
   let res;
@@ -1660,6 +1688,7 @@ function wire() {
   $("#seg").addEventListener("click", (e) => { const b = e.target.closest("[data-tab]"); if (b) setTab(b.dataset.tab, true); });
   $("#seg").addEventListener("keydown", (e) => { if (e.key === "ArrowRight" || e.key === "ArrowLeft") { setTab(S.tab === "over" ? "talk" : "over", true); e.preventDefault(); } });
   $("#prompt").addEventListener("input", autosize);
+  $("#route").addEventListener("click", () => { const r = route(); S.forceRoute = r && r.full ? "fast" : "full"; syncSend(); });
   $("#prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } });
   $("#send").onclick = send;
   $("#forget").onclick = async () => {
