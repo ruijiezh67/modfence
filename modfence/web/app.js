@@ -1194,7 +1194,7 @@ function newRun(prompt, scope, at, readOnly, phase) {
         st.className = `st ${r && r.ok ? (view.check && !view.check.ok ? "bad" : "ok") : "bad"}`;
         st.textContent = r ? (r.ok ? `${phase === "plan" ? "Planned" : view.check && !view.check.ok ? "Done, check failed" : "Done"}${r.duration_s ? ` · ${r.duration_s}s` : ""}` : "Stopped with an error") : "Stopped";
         if (quiet) { const f = document.createElement("div"); f.className = "rfoot"; f.innerHTML = r ? `<span class="meta">${r.turns ? plural(r.turns, "turn") : ""}${r.cost_usd != null ? ` · $${r.cost_usd.toFixed(3)}` : ""}</span>` : ""; root.appendChild(f); }
-        else { renderChanges(root, view.changes, r, view.check, !replay); if (!replay && view.job) renderLesson(root, view.job); }
+        else { renderChanges(root, view.changes, r, view.check, !replay); if (!replay && view.job) { renderReview(root, view.job, view.changes); renderLesson(root, view.job); } }
         if (view.requests?.length) renderRequests(root, view.requests, view.job, replay);
       }
       if (!replay) scrollTalk();
@@ -1253,6 +1253,18 @@ async function openDoc(path) { // the project's own file, edited in place
     catch (e) { toast(e.message, false); }
   };
   showSheet(true);
+}
+// An optional second look (off by default, golden rule 1): a read-only run that reads only what this run changed and
+// reports real bugs and broken contracts, nothing about style.
+function renderReview(root, job, c) {
+  const files = c && c.files ? c.files.map((f) => f.path) : [];
+  if (!files.length || job.readOnly || job.phase === "plan") return;
+  const b = document.createElement("button");
+  b.className = "btn quiet review"; b.type = "button"; b.textContent = "Review this run";
+  b.title = "A read-only run reads the changed files and reports real bugs or broken contracts (costs a run)";
+  root.appendChild(b);
+  b.onclick = () => { b.disabled = true; startRun(`Review the last change for bugs, nothing else. Changed files: ${files.join(", ")}. Task it did: ${job.prompt}. `
+    + `Read only those files and what they call. Report at most 5 real problems (wrong behaviour, broken callers, missing edge cases), each with file:line and why. No style comments. If none, say so in one line.`, job.scope, true, null); };
 }
 function renderLesson(root, job) { // golden rule 7: what this run taught goes into the docs of the box it changed
   const fr = fileRoles(), keys = [...new Set(job.scope.flatMap((s) => Object.keys(fr).filter((f) => f === s || f.startsWith(s + "/")).map((f) => "role:" + fr[f])))];
