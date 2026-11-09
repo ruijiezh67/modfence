@@ -740,6 +740,9 @@ class SkillsTest(unittest.TestCase):
         write(os.path.join(self.d, "app/core/img.py"), "import PIL.Image\nimport numpy as np\nimport os, json\nfrom app.core import values\n")
         write(os.path.join(self.d, "app/api/web.py"), "from fastapi import FastAPI\nimport numpy\nfrom . import handlers\n")
         write(os.path.join(self.d, "requirements.txt"), "# deps\nfastapi>=0.100\nrequests==2.0  # http\n-e .\n")
+        os.makedirs(os.path.join(self.d, "app/kernel"), exist_ok=True)
+        write(os.path.join(self.d, "app/kernel/__init__.py"), "")
+        write(os.path.join(self.d, "app/run.py"), "import kernel  # app/ on sys.path: the project's own package, not a library\n")
         self.saved = skills.search, skills.stars
 
     def tearDown(self):
