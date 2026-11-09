@@ -385,10 +385,12 @@ const inSet = (set, id) => set.has(id) || !!(mod(id)?.members && mod(id).members
 /* ---------------- layout: layered, foundations at the bottom ---------------- */
 function layout() {
   const g = S.graph, all = g.modules.map((m) => m.id), ids = all;
-  // Rank on the imports left once loop edges are set aside (loopEdges): an acyclic graph, so every other edge points down.
-  S.back = loopEdges(g.edges);
+  // Rank on the directed links left once loop edges are set aside (loopEdges): an acyclic graph. A layered map puts high
+  // ranks (importers) on top; the free levels put rank 0 (used by others) on top, as a tree from back end to front end.
+  const directed = g.edges.filter((e) => !e.kind || e.kind === "runtime"); // copies and co-change have no direction
+  S.back = loopEdges(directed);
   const deps = {};
-  g.edges.forEach((e) => { if (!S.back.has(e)) (deps[e.source] ||= new Set()).add(e.target); });
+  directed.forEach((e) => { if (!S.back.has(e)) (deps[e.source] ||= new Set()).add(e.target); });
   const crank = {};
   const r = (c) => (c in crank ? crank[c] : (crank[c] = deps[c] ? 1 + Math.max(...[...deps[c]].map(r)) : 0));
   const rank = Object.fromEntries(ids.map((i) => [i, r(i)]));
@@ -426,7 +428,25 @@ function layout() {
   }));
 }
 
-function placeFree(g, all, ids, rank) { S.pos = stressLayout(ids, g.edges, rank); S.rows = []; }
+// A tree's logic on top of the stress layout: what others use (back ends, cores) sits on top, what uses them (front
+// ends, scripts) below, in at most BANDS rows, so the picture reads top to bottom yet never becomes one tall column.
+// Inside a row, boxes keep the left-to-right order the stress layout gave them, so linked boxes stay near.
+const BANDS = 4;
+function placeFree(g, all, ids, rank) {
+  const P = stressLayout(ids, g.edges, rank), maxR = Math.max(0, ...ids.map((i) => rank[i] || 0));
+  const B = Math.min(BANDS, maxR + 1), rows = Array.from({ length: B }, () => []);
+  const directed = new Set(g.edges.filter((e) => !e.kind || e.kind === "runtime").flatMap((e) => [e.source, e.target]));
+  // a box with no directed link is a program on its own: it sits with the users at the bottom, not with the cores
+  ids.forEach((i) => rows[!directed.has(i) ? B - 1 : maxR ? Math.round(((rank[i] || 0) / maxR) * (B - 1)) : 0].push(i));
+  rows.forEach((row, b) => {
+    row.sort((a, c) => P[a].x - P[c].x || a.localeCompare(c));
+    const mean = row.reduce((t, i) => t + P[i].x, 0) / (row.length || 1);
+    for (let k = 1; k < row.length; k++) P[row[k]].x = Math.max(P[row[k]].x, P[row[k - 1]].x + NODE_W + GAP_X);
+    const shift = mean - row.reduce((t, i) => t + P[i].x, 0) / (row.length || 1);
+    row.forEach((i) => { P[i].x = Math.round(P[i].x + shift); P[i].y = b * (NODE_H + GAP_Y * 1.6); });
+  });
+  S.pos = P; S.rows = rows.filter((r) => r.length);
+}
 // Stress majorization (Gansner, Koren and North 2004), the per-node update with weights d^-2: boxes that import each
 // other sit close, the drawing comes nearest to a hand-made one on small graphs. Distance = import hops. Start from the
 // import ranks (deterministic, upstream on top); a light pull keeps each import pointing down unless it closes a loop.
@@ -443,7 +463,7 @@ function stressLayout(ids, edges, rank) {
   });
   const far = 1.4; // boxes with no import path between them sit just beyond a neighbour, not across the screen
   d.forEach((row) => row.forEach((v, j) => (row[j] = (Number.isFinite(v) ? v : far) * U)));
-  const P = ids.map((id, i) => ({ x: Math.cos(i * 2.39996) * U * 0.7 * Math.sqrt(i + 1), y: -(rank[id] || 0) * U * 0.8 + Math.sin(i * 2.39996) * 20 }));
+  const P = ids.map((id, i) => ({ x: Math.cos(i * 2.39996) * U * 0.7 * Math.sqrt(i + 1), y: (rank[id] || 0) * U * 0.8 + Math.sin(i * 2.39996) * 20 }));
   for (let it = 0; it < 300; it++) {
     let moved = 0;
     for (let i = 0; i < n; i++) {
@@ -457,10 +477,10 @@ function stressLayout(ids, edges, rank) {
       moved += Math.abs(sx / sw - P[i].x) + Math.abs(sy / sw - P[i].y);
       P[i].x = sx / sw; P[i].y = sy / sw;
     }
-    edges.forEach((e) => { // downward flow, light: an import that does not close a loop points down by half a hop
-      if (S.back.has(e) || !(e.source in ix) || !(e.target in ix)) return;
-      const a = P[ix[e.source]], b = P[ix[e.target]], gap = U * 0.5 - (b.y - a.y);
-      if (gap > 0) { a.y -= gap * 0.2; b.y += gap * 0.2; }
+    edges.forEach((e) => { // light flow: a directed link that does not close a loop has its caller half a hop below
+      if (e.kind === "copy" || e.kind === "cochange" || S.back.has(e) || !(e.source in ix) || !(e.target in ix)) return;
+      const a = P[ix[e.source]], b = P[ix[e.target]], gap = U * 0.5 - (a.y - b.y);
+      if (gap > 0) { a.y += gap * 0.2; b.y -= gap * 0.2; }
     });
     if (moved < 0.5) break;
   }
