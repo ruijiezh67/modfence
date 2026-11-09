@@ -541,6 +541,175 @@ def confirm(root):
     return store
 
 
+# ---------- areas: the first level, at most AREA_MAX boxes of roles ----------
+# A model groups the roles (it knows what "capture" or "evaluation" means); the deterministic grouping that measured
+# best for vibe coding (bench/area_bench.py, docs/EVALUATION.md) is its evidence and the fallback when it fails.
+AREA_MAX = 7
+AREA_SYSTEM = (
+    "You group the functional roles of a software system into at most 7 areas, for a developer who will pick one area, "
+    "then one role, and ask a coding agent to change it. A good area is one place a typical change stays inside: roles "
+    "that import each other a lot and change together belong together; a role that most others use but that changes on "
+    "its own can stay alone. No area should hold more than 40% of the files: a huge area fences nothing. Folders are "
+    "hints, not rules. You get each role with its purpose, size and main folders, the imports between roles, and a "
+    "suggested grouping computed from imports, the change history and folders. Keep that grouping unless the purposes "
+    "show a clearly better one. Name each area in 1 to 3 lowercase words, in the project's own vocabulary, with one plain "
+    "sentence of at most 20 words. Every role goes in exactly one area. Reply with JSON only: "
+    "{\"areas\": [{\"name\": \"...\", \"purpose\": \"...\", \"roles\": [\"<role name>\", ...]}]}")
+
+
+def role_imports(graph, role_of):
+    """{frozenset((role a, role b)): import lines between them}, entry points, doors and shared config left out."""
+    out = Counter()
+    for t, ps in importers(graph, list(role_of)).items():
+        for p in ps:
+            if t in role_of and role_of[p] != role_of[t]:
+                out[frozenset((role_of[p], role_of[t]))] += 1
+    return out
+
+
+AREA_CAP = 0.4  # no area may hold more than this share of the code: a blob fits every change and fences nothing
+
+
+def change_sets(root, files, limit=2000, big=30):
+    """The files each recent git commit changed (newest `limit`), keeping commits of 1 to `big` known files; [] when
+    the project has no git history. Read-only."""
+    import subprocess
+    try:
+        out = subprocess.run(["git", "-C", root, "log", "--no-merges", f"-{limit}", "--name-only", "--format=%x1e"],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    sets = ({l for l in chunk.splitlines() if l in files} for chunk in out.split("")[1:])
+    return [c for c in sets if 1 <= len(c) <= big]
+
+
+def _cos(a, b):
+    n = math.sqrt(sum(x * x for x in a.values())) * math.sqrt(sum(x * x for x in b.values()))
+    return sum(a[k] * b[k] for k in a) / n if n else 0.0
+
+
+def agglomerate(names, size, sim, most=AREA_MAX, cap=AREA_CAP):
+    """Average-linkage merging of `names` into `most` groups. A merge is worth less the bigger its result, and no group
+    may pass `cap` of the total size while another merge is possible. Pair sums are updated per merge. Deterministic."""
+    groups = {i: [u] for i, u in enumerate(sorted(names))}
+    n = sum(size[u] for u in names) or 1
+    gsize = {i: size[g[0]] for i, g in groups.items()}
+    tot = {(i, j): sim(groups[i][0], groups[j][0]) for i in groups for j in groups if i < j}
+    while len(groups) > most:
+        score = lambda p: tot[p] / (len(groups[p[0]]) * len(groups[p[1]])) * (1 - (gsize[p[0]] + gsize[p[1]]) / n)
+        ok = [p for p in tot if gsize[p[0]] + gsize[p[1]] <= cap * n] or list(tot)
+        i, j = max(ok, key=lambda p: (score(p), -p[0], -p[1]))
+        groups[i] += groups.pop(j)
+        gsize[i] += gsize.pop(j)
+        for x in groups:
+            if x != i:
+                tot[(min(i, x), max(i, x))] = tot.get((min(i, x), max(i, x)), 0) + tot.get((min(j, x), max(j, x)), 0)
+        tot = {p: v for p, v in tot.items() if j not in p}
+    return sorted((sorted(g) for g in groups.values()), key=lambda g: (-sum(size[u] for u in g), g))
+
+
+def suggest_areas(role_of, imports, changes=(), most=AREA_MAX, cap=AREA_CAP):
+    """[[role, ...], ...], at most `most` areas, none over `cap` of the files: roles that change together (git history),
+    import each other (per file pair) and share folders (a hint) are merged first. Of the groupings measured in
+    bench/area_bench.py this one fitted the most multi-role commits into one area at a capped area size."""
+    size = Counter(role_of.values())
+    together, alone = Counter(), Counter()
+    for c in changes:
+        rs = sorted({role_of[f] for f in c if f in role_of})
+        alone.update(rs)
+        together.update(frozenset(p) for i, a in enumerate(rs) for p in ((a, b) for b in rs[i + 1:]))
+    fold = defaultdict(Counter)
+    for f, r in role_of.items():
+        fold[r]["/".join(f.split("/")[:2])] += 1
+
+    def sim(a, b):
+        k = frozenset((a, b))
+        co = together[k] / math.sqrt(alone[a] * alone[b]) if alone[a] and alone[b] else 0.0
+        return co + min(1.0, imports[k] / math.sqrt(size[a] * size[b])) + 0.5 * _cos(fold[a], fold[b])
+    return agglomerate(list(size), size, sim, most, cap)
+
+
+def area_prompt(graph, store, role_of, imports, suggestion):
+    rn = lambda rid: store["roles"][rid]["name"]
+    size = Counter(role_of.values())
+    lines = ["ROLES"]
+    for rid in sorted(size, key=lambda r: (-size[r], r)):
+        folders = Counter(os.path.dirname(f) or "." for f, r in role_of.items() if r == rid).most_common(3)
+        lines.append(f"- {rn(rid)} ({size[rid]} files; folders: {', '.join(f'{d}/ ({n})' for d, n in folders)}): "
+                     f"{store['roles'][rid].get('purpose', '')}")
+    lines += ["", "IMPORT LINES BETWEEN ROLES (strongest first)"]
+    lines += [f"- {' <-> '.join(sorted(rn(r) for r in k))}: {v}" for k, v in imports.most_common(40)]
+    lines += ["", "SUGGESTED GROUPING (imports, change history, folders)"] + [f"- {', '.join(rn(r) for r in g)}" for g in suggestion]
+    return "\n".join(lines)
+
+
+def apply_areas(store, role_ids, answer):
+    """The model's areas as {"a1": {name, purpose, roles}}, or ValueError when they are not a partition of role_ids
+    into at most AREA_MAX named areas."""
+    by_name = {store["roles"][r]["name"].casefold(): r for r in role_ids}
+    areas, seen = {}, set()
+    for i, a in enumerate((answer or {}).get("areas") or [], 1):
+        rs = [by_name.get(str(n).casefold()) for n in a.get("roles") or []]
+        if None in rs or seen & set(rs) or not rs:
+            raise ValueError("the areas name an unknown role or a role twice")
+        seen |= set(rs)
+        areas[f"a{i}"] = {"name": tidy(str(a.get("name") or f"area {i}")), "purpose": str(a.get("purpose") or "")[:200], "roles": rs}
+    if seen != set(role_ids) or not 1 <= len(areas) <= AREA_MAX:
+        raise ValueError(f"the areas must hold every role once, in at most {AREA_MAX} areas")
+    return areas
+
+
+def propose_areas(root, graph, claude, model="sonnet"):
+    """Group the stored roles into at most AREA_MAX areas: one model call with the import grouping as evidence;
+    on any failure the import grouping itself, named after its biggest roles. Stored in the roles store."""
+    store = load_store(root)
+    if not store:
+        raise LookupError("no roles yet")
+    v = view(root, graph)
+    role_of = {f: r["id"] for r in v["roles"] for f in r["files"] if f not in v["kinds"]}
+    imports = role_imports(graph, role_of)
+    suggestion = suggest_areas(role_of, imports, change_sets(root, set(role_of)))
+    rids = sorted(set(role_of.values()) | {r["id"] for r in v["roles"]})
+    try:
+        if not claude:
+            raise RuntimeError("no Claude Code CLI")
+        from . import purpose
+        answer, cost = purpose._ask(claude, area_prompt(graph, store, role_of, imports, suggestion), system=AREA_SYSTEM, model=model)
+        areas, how = apply_areas(store, rids, answer), f"grouped and named by a model ({model}), imports as evidence"
+    except (RuntimeError, OSError, ValueError) as e:
+        cost, how = None, f"imports only ({e})"
+        rest = [r for r in rids if r not in role_of]  # roles left with no own files (all entry points, doors, config)
+        groups = suggestion + ([rest] if rest else [])
+        areas = {f"a{i}": {"name": tidy(" ".join(store["roles"][r]["name"] for r in g[:2])), "purpose": "", "roles": g}
+                 for i, g in enumerate(groups, 1)}
+    store["areas"], store["areas_how"], store["areas_cost_usd"] = areas, how, cost
+    save_store(root, store)
+    return store
+
+
+def rename_area(root, aid, name):
+    store = load_store(root)
+    if not store or aid not in (store.get("areas") or {}):
+        raise LookupError("no such area")
+    store["areas"][aid]["name"] = tidy(str(name or "")) or store["areas"][aid]["name"]
+    save_store(root, store)
+    return store
+
+
+def move_role(root, rid, aid):
+    """Put a role in another area (an area left empty disappears)."""
+    store = load_store(root)
+    areas = (store or {}).get("areas") or {}
+    if aid not in areas or not store or rid not in store["roles"]:
+        raise LookupError("no such area or role")
+    for a in areas.values():
+        a["roles"] = [r for r in a["roles"] if r != rid]
+    areas[aid]["roles"].append(rid)
+    store["areas"] = {k: a for k, a in areas.items() if a["roles"]}
+    save_store(root, store)
+    return store
+
+
 PART_MAX = 8  # ponytail: about what a person holds in mind at once (Miller); one number, not a setting
 
 
@@ -592,5 +761,11 @@ def view(root, graph):
     roles_ = [dict(id=rid, files=sorted(members[rid]), parts=role_parts(sorted(members[rid])), **r) for rid, r in store["roles"].items()]
     roles_.sort(key=lambda r: (r["name"] == SHARED, -len(r["files"]), r["name"]))
     kind, door_of = kinds(graph, {f: rid for rid, fs in members.items() for f in fs})
+    areas = [dict(id=aid, **a) for aid, a in (store.get("areas") or {}).items()]
+    placed = {r for a in areas for r in a["roles"]}
+    if areas and any(r["id"] not in placed for r in roles_):  # roles added since the areas were made
+        areas.append({"id": "?", "name": "not placed yet", "purpose": "Roles added since the areas were made.",
+                      "roles": [r["id"] for r in roles_ if r["id"] not in placed]})
     return {"status": store["status"], "how": store.get("how"), "cost_usd": store.get("cost_usd"), "roles": roles_,
-            "unassigned": sorted(code - set(store["files"])), "kinds": kind, "doors": door_of}
+            "unassigned": sorted(code - set(store["files"])), "kinds": kind, "doors": door_of,
+            "areas": areas, "areas_how": store.get("areas_how"), "areas_cost_usd": store.get("areas_cost_usd")}

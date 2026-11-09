@@ -212,6 +212,13 @@ def make_handler(app, port):
                     roles.add_role(root, b.get("name"), b.get("purpose", ""))
                 elif action == "confirm":
                     roles.confirm(root)
+                elif action == "areas":
+                    with app.lock:  # one model call at a time
+                        roles.propose_areas(root, graph, app.claude)
+                elif action == "area_rename":
+                    roles.rename_area(root, b.get("id"), b.get("name"))
+                elif action == "area_move":
+                    roles.move_role(root, b.get("role"), b.get("id"))
                 else:
                     raise LookupError("no such action")
             except ValueError as e:  # a name that cannot be used: say why, change nothing

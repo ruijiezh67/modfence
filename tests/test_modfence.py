@@ -146,6 +146,28 @@ class RolesTest(unittest.TestCase):
         self.assertEqual(door_of, {"routers/memory_routes.py": "mem"}, "a door serves the file named like it")
         self.assertEqual(roles.kinds(g, role_of), (kind, door_of))  # deterministic
 
+    def test_areas_hold_every_role_once_in_at_most_seven(self):
+        from collections import Counter
+        from modfence import roles
+        role_of = {f"{r}/f{i}.py": r for r in "abcdefghij" for i in range(3)}
+        imports = Counter({frozenset(p): 9 for p in (("a", "b"), ("c", "d"), ("e", "f"), ("g", "h"))})
+        groups = roles.suggest_areas(role_of, imports)
+        self.assertLessEqual(len(groups), roles.AREA_MAX)
+        self.assertEqual(sorted(r for g in groups for r in g), list("abcdefghij"))
+        self.assertEqual(groups, roles.suggest_areas(dict(reversed(list(role_of.items()))), imports))  # deterministic
+        sizes = [sum(1 for r in role_of.values() if r in g) for g in groups]
+        self.assertLessEqual(max(sizes), roles.AREA_CAP * len(role_of) + 3, "no blob")
+        together = roles.suggest_areas(role_of, Counter(), [{"a/f0.py", "j/f0.py"}] * 5)
+        self.assertTrue(any({"a", "j"} <= set(g) for g in together), "roles that change together share an area")
+        store = {"roles": {r: {"name": r} for r in "abc"}}
+        ok = roles.apply_areas(store, list("abc"), {"areas": [{"name": "Front", "roles": ["a", "B"]}, {"name": "x", "roles": ["c"]}]})
+        self.assertEqual([a["roles"] for a in ok.values()], [["a", "b"], ["c"]])
+        for bad in ({"areas": [{"name": "x", "roles": ["a", "b"]}]},  # c missing
+                    {"areas": [{"name": "x", "roles": ["a", "b"]}, {"name": "y", "roles": ["b", "c"]}]},  # b twice
+                    {"areas": [{"name": str(i), "roles": [r]} for i, r in enumerate("abc")] * 3}):  # over 7 and twice
+            with self.assertRaises(ValueError):
+                roles.apply_areas(store, list("abc"), bad)
+
     def test_imports_resolve_from_a_subfolder_root(self):
         d = tempfile.mkdtemp(prefix="modfence-test-")
         _dirs.append(d)

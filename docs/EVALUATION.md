@@ -215,6 +215,37 @@ The real flags on rich include a moved class (`CellTable`, 23 user files), a cha
 
 Recall, that is breaks the check misses, is N/A: it needs labelled breaks, which these histories do not have. Known blind spots: uses through `getattr` or re-exported facades, and behaviour changes that keep the signature.
 
+## 6. Building the first level: which grouping fits vibe coding (golden rules 2, 4, 6)
+
+The first level holds at most 7 areas; you pick one, then a role in it, and fence it. A grouping is good for that when a real change fits one area (one fence covers it) and areas are small (a tight fence). `bench/area_bench.py` measures both on each project's own git history, at zero model cost except the model row:
+
+- **one area**: share of held-out commits whose files all lie in one area;
+- **cover**: mean share of the code inside the areas a commit touches (lower is tighter);
+- **largest**: share of the code in the biggest area.
+
+Units are roles: a private project's 14 model-named roles, and for public projects the deterministic `roles.DEFAULT` groups (62 to 166 units, no model). Entry points, doors and shared config are left out as on the map. The newest 30% of commits are held out; co-change methods learn only from the older 70%. A commit counts if it changes 1 to 30 unit files. Only commits touching 2 or more units are scored: in a first run that also scored one-unit commits, random groupings did as well as most methods, because a one-unit change fits any grouping. Random rows are the mean of 20 seeds. Repositories at: celery `3a109cc`, rich `1a48583d4`, scrapy `2aefa609`, textual `5e5b7ef58`.
+
+Cells are one area / cover / largest. Scored commits: private 52, celery 393, rich 65, scrapy 386, textual 630.
+
+| Grouping (at most 7 areas) | private | celery | rich | scrapy | textual |
+|---|---|---|---|---|---|
+| random (floor) | .09 / .49 / .36 | .10 / .41 / .26 | .10 / .38 / .32 | .06 / .49 / .31 | .08 / .44 / .29 |
+| top folders | .04 / .47 / .36 | .32 / .42 / .35 | .80 / .55 / .53 | .11 / .45 / .27 | .27 / .36 / .28 |
+| imports, Louvain | .06 / .41 / .25 | .93 / .96 / **.96** | .18 / .38 / .33 | .20 / .58 / .45 | .13 / .50 / .45 |
+| co-change only | .06 / .52 / .44 | .82 / .91 / **.91** | .83 / .83 / **.82** | .92 / .95 / **.95** | 1.00 / .98 / **.98** |
+| co-change + imports + folders, no cap | .12 / .46 / .42 | .48 / .57 / .40 | .91 / .69 / **.74** | .52 / .74 / **.62** | .95 / .47 / .55 |
+| **co-change + imports + folders, areas capped at 40% (shipped)** | .15 / .45 / .30 | .44 / .48 / .39 | .60 / .51 / .40 | .22 / .60 / .36 | .30 / .40 / .33 |
+| imports + folders + file names, capped at 40% | .13 / .45 / .30 | .32 / .53 / .34 | .57 / .47 / .36 | .19 / .57 / .30 | .40 / .36 / .29 |
+| a model (Sonnet) grouping, the shipped grouping as evidence | .15 / .45 / .30 | .18 / .34 / .32 | .38 / .30 / .24 | .22 / .60 / .36 | .30 / .40 / .33 |
+
+What this says:
+- **Uncapped methods cheat with a blob.** Co-change alone and imports alone often make one area of 80 to 98% of the code: every change then fits "one area", and the fence covers almost everything. The bold cells mark these. So areas are capped at 40% of the code.
+- **Capped, the combined signal beats folders on 4 of 5 projects** (one-area share .15 vs .04, .44 vs .32, .22 vs .11, .30 vs .27) at a somewhat larger cover; on rich, where most code sits in one folder, folders win (.80 vs .60). Folders are one input, not the rule.
+- **The model adds little.** Given the shipped grouping as evidence, Sonnet returned the same areas on 3 of 5 projects; on celery and rich its areas were tighter (cover .34, .30) but fitted fewer changes. Cost $0.02 to $0.05 per project. With weaker evidence (Louvain imports) it copied that too, and on celery (71 units) it once returned an invalid grouping, which `roles.apply_areas` rejects (the shipped fallback is the deterministic grouping).
+- **A first level is a signpost, not a fence.** Even the best capped grouping fits only 15 to 60% of the changes that cross roles into one of 7 areas. The fence you set is usually a role or a part; an area is where you look first.
+
+Limits: one held-out split per project; public units are deterministic groups, not model-named roles; whether people find these areas easier to pick from is N/A (no user study).
+
 ## How modfence compares with popular tools
 
 Star counts are from the GitHub API on 2026-11-06. Feature cells come from each project's README and docs ([research notes](../../research_notes/Modmap%20next%20step%20priorities/competitor_tools.md)); N/A means not found in their docs.

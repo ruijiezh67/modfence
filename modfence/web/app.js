@@ -51,9 +51,10 @@ async function loadGraph(fit) {
   S.full = await api(`/api/graph?${q()}`);
   S.fn = {};
   try { S.roles = await api(`/api/roles?${q()}`); } catch { S.roles = null; }
-  if (!S.level) S.level = S.roles && S.roles.roles.length ? "roles" : "modules";
+  if (!S.level) S.level = S.roles?.areas?.length ? "areas" : S.roles && S.roles.roles.length ? "roles" : "modules";
   regroup();
   if (S.roles && S.roles.status === "none" && S.full.modules.length > ROLE_AT && S.claude && !S.proposed) { S.proposed = true; proposeRoles(); }
+  else if (S.roles?.roles.length && !S.roles.areas?.length && S.claude && !S.proposedAreas) { S.proposedAreas = true; proposeAreas(); }
   renderAltView();
   updateStats();
   if (fit) fitView(false);
@@ -65,7 +66,7 @@ async function loadGraph(fit) {
 function mod(id) { return S.graph && (S.graph.modules.find((m) => m.id === id) || S.full.modules.find((m) => m.id === id)); }
 const label = (id) => (id === "." ? "(root)" : id.endsWith("/") ? id.slice(0, -1).split("/").pop() + "/" : id.split("/").pop());
 const parent = (id) => (id.includes("/") ? id.slice(0, id.lastIndexOf("/")) : "");
-const shown = (id) => (id === "." ? "(root)" : id.startsWith("role:") ? rname(id.slice(5)) : id.startsWith("part:") || id.startsWith("dir:") ? (mod(id)?.label || id.slice(id.indexOf(":") + 1)) : id);
+const shown = (id) => (id === "." ? "(root)" : id.startsWith("role:") ? rname(id.slice(5)) : id.startsWith("area:") ? ((S.roles?.areas || []).find((a) => a.id === id.slice(5)) || {}).name || id : id.startsWith("part:") || id.startsWith("dir:") ? (mod(id)?.label || id.slice(id.indexOf(":") + 1)) : id);
 const moduleOf = (p) => { // mirrors analyze.module_of
   const d = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
   const own = p.endsWith(".py") && !p.endsWith("/__init__.py") && p !== "__init__.py";
@@ -113,10 +114,11 @@ function viewGraph(full, focus) {
   return { ...full, modules: modules.sort((x, y) => x.id.localeCompare(y.id)), edges: [...edges.values()] };
 }
 function regroup() {
-  if (!(S.roles && S.roles.roles.length) && (S.level === "roles" || S.level === "parts")) S.level = "modules";
+  if (!(S.roles && S.roles.roles.length) && ["areas", "roles", "parts"].includes(S.level)) S.level = "modules";
+  if (S.level === "areas" && !S.roles.areas?.length) S.level = "roles";
   S.hiddenLinks = 0; S.outside = 0;
   if (S.picked) unpick();
-  S.graph = S.level === "roles" ? roleGraph() : S.level === "parts" ? partGraph(S.role) : viewGraph(S.full, S.focus);
+  S.graph = S.level === "areas" ? areaGraph() : S.level === "roles" ? roleGraph() : S.level === "parts" ? partGraph(S.role) : viewGraph(S.full, S.focus);
   document.body.dataset.level = S.level;
   layout();
   drawGraph();
@@ -188,9 +190,10 @@ function usersOf(files) { // roles whose code imports any of these files
 function roleGraph() {
   const fr = fileRoles(), rs = [...S.roles.roles];
   if (S.roles.unassigned.length) rs.push({ id: "?", name: "not placed yet", purpose: "New files: place them in a role.", files: S.roles.unassigned });
-  const boxes = rs.filter((r) => ownFiles(r).length).map((r) => roleNode(r));
-  return { ...S.full, modules: [railNode("entry"), ...boxes, railNode("shared")].filter(Boolean),
-    edges: prune(aggregate((f) => !kindOf(f) && fr[f] && "role:" + fr[f])) };
+  const area = S.area && (S.roles.areas || []).find((a) => a.id === S.area), inArea = area && new Set(area.roles);
+  const boxes = rs.filter((r) => (!inArea || inArea.has(r.id)) && ownFiles(r).length).map((r) => roleNode(r));
+  return { ...S.full, modules: (inArea ? boxes : [railNode("entry"), ...boxes, railNode("shared")]).filter(Boolean),
+    edges: prune(aggregate((f) => !kindOf(f) && fr[f] && (!inArea || inArea.has(fr[f])) && "role:" + fr[f])) };
 }
 function partGraph(rid) {
   const fr = fileRoles(), mine = new Set(Object.keys(fr).filter((f) => fr[f] === rid && !kindOf(f)));
@@ -210,7 +213,7 @@ function partGraph(rid) {
 }
 function pick(id) { // a click only selects; the card below says what it is and opens it on purpose
   S.picked = id;
-  const m = mod(id), card = $("#pick"), role = id.startsWith("role:"), folder = !!m.group, plain = S.level === "modules";
+  const m = mod(id), card = $("#pick"), area = id.startsWith("area:"), role = id.startsWith("role:") || area, folder = !!m.group, plain = S.level === "modules";
   const name = m.label || shown(id);
   // a side bar, read top to bottom: what it is, what to do, then the facts behind it (uses, used by, files)
   const link = (e, other) => { const n = takes(e); return `<li><button type="button" class="lk" data-go="${esc(other)}">${esc(shown(other))}</button>`
@@ -222,10 +225,12 @@ function pick(id) { // a click only selects; the card below says what it is and 
   card.innerHTML = `<div class="pk"><b>${esc(name)}</b><button type="button" class="btn quiet" data-x aria-label="Close">${X_ICON}</button></div>`
     + `<div class="pm mono">${plural(m.files.length, "file")} · ${m.lines.toLocaleString()} ln</div>`
     + (doc ? `<p>${esc(doc)}</p>` : `<p class="none">No description in the code.</p>`)
-    + `<div class="pa">` + (role || folder ? `<button type="button" class="btn primary" data-open>${role ? "Open parts" : "Open folder"} ▸</button>` : "")
+    + `<div class="pa">` + (role || folder ? `<button type="button" class="btn primary" data-open>${area ? "Open roles" : role ? "Open parts" : "Open folder"} ▸</button>` : "")
     + (folder || id === "role:?" ? "" : `<button type="button" class="btn${role ? "" : " primary"}" data-ask>Ask / edit</button>`) + `</div>`
     + (out.length ? `<h4>Uses <i>${out.length}</i></h4><ul class="pl">${out.map((e) => link(e, e.target)).join("")}</ul>` : "")
     + (inn.length ? `<h4>Used by <i>${inn.length}</i></h4><ul class="pl">${inn.map((e) => link(e, e.source)).join("")}</ul>` : "")
+    + (area ? `<h4>Roles <i>${m.roles.length}</i></h4><ul class="pf">${m.roles.map((r) => `<li><span class="mono">${esc(r.name)}</span><span>${esc(r.purpose || "")}</span></li>`).join("")}</ul>` : "")
+    + (id.startsWith("role:") && S.roles.areas?.length ? `<h4>Area</h4><select data-area aria-label="Area of ${esc(name)}">${S.roles.areas.filter((a) => a.id !== "?").map((a) => `<option value="${esc(a.id)}"${areaOf()[id.slice(5)] === a.id ? " selected" : ""}>${esc(a.name)}</option>`).join("")}</select>` : "")
     + (m.doors?.length ? `<h4>Doors <i>${m.doors.length}</i></h4><ul class="pf">${m.doors.map((f) => `<li><span class="mono">${esc(f)}</span><span>HTTP routes into this role · read-only by default</span></li>`).join("")}</ul>` : "")
     + (rail ? `<h4>Used by <i>${reach.length}</i></h4><ul class="pl">${reach.map((r) => `<li><button type="button" class="lk" data-go="role:${esc(r)}">${esc(rname(r))}</button></li>`).join("")}</ul>` : "")
     + `<h4>Files <i>${m.files.length}</i></h4><ul class="pf">${m.files.map((f) => `<li><span class="mono">${esc(f)}</span>${fdoc(f) ? `<span>${esc(fdoc(f))}</span>` : ""}</li>`).join("")}</ul>`;
@@ -233,7 +238,8 @@ function pick(id) { // a click only selects; the card below says what it is and 
   card.hidden = false; card.scrollTop = 0;
   if (opening && !S.userCam) fitView();
   card.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => pick(b.dataset.go)));
-  $("[data-open]", card)?.addEventListener("click", () => { unpick(); role ? openRole(id.slice(5)) : select(id); });
+  $("[data-open]", card)?.addEventListener("click", () => { unpick(); area ? openArea(id.slice(5)) : role ? openRole(id.slice(5)) : select(id); });
+  $("[data-area]", card)?.addEventListener("change", (ev) => rolesDo("area_move", { role: id.slice(5), id: ev.target.value }, `Moved to ${ev.target.selectedOptions[0].text}.`));
   // Ask / edit fences the box itself: a role or part fences its files, a module fences the module
   $("[data-ask]", card)?.addEventListener("click", () => { unpick(); plain ? select(id) : fenceFiles(m.files, role ? "role " + name : name, m.doc); });
   $("[data-x]", card).onclick = unpick;
@@ -244,7 +250,7 @@ function unpick() { const was = !$("#pick").hidden; S.picked = null; $("#pick").
 function openRole(rid) {
   if (rid === "?" || !S.roles) { S.level = "parts"; S.role = rid; regroup(); fitView(); return; }
   const r = S.roles.roles.find((x) => x.id === rid);
-  S.role = rid;
+  S.role = rid; S.area = areaOf()[rid] || S.area;
   S.level = "parts"; regroup(); fitView();
 }
 async function rolesDo(action, body, okText) {
@@ -257,7 +263,25 @@ async function rolesDo(action, body, okText) {
 async function proposeRoles() {
   $("#crumbs").hidden = false;
   $("#crumbs").innerHTML = `<em>Grouping the project into roles: folders and file names first, then one small-model call names them…</em>`;
-  if (await rolesDo("propose", {}, null)) { S.level = "roles"; regroup(); fitView(); toast(`Roles proposed (${S.roles.how}${S.roles.cost_usd != null ? `, $${S.roles.cost_usd.toFixed(3)}` : ""}). Rename, move files, then confirm.`); }
+  if (await rolesDo("propose", {}, null)) { S.level = "roles"; regroup(); fitView(); toast(`Roles proposed (${S.roles.how}${S.roles.cost_usd != null ? `, $${S.roles.cost_usd.toFixed(3)}` : ""}). Rename, move files, then confirm.`); proposeAreas(); }
+}
+async function proposeAreas() { // the first level: at most 7 areas of roles, one model call with the imports as evidence
+  $("#crumbs").hidden = false;
+  $("#crumbs").innerHTML = `<em>Grouping the roles into at most 7 areas…</em>`;
+  if (await rolesDo("areas", {}, null)) { S.level = "areas"; S.area = null; regroup(); fitView(); toast(`Areas proposed (${S.roles.areas_how}${S.roles.areas_cost_usd != null ? `, $${S.roles.areas_cost_usd.toFixed(3)}` : ""}). Rename an area or move a role any time.`); }
+}
+const areaOf = () => Object.fromEntries((S.roles?.areas || []).flatMap((a) => a.roles.map((r) => [r, a.id])));
+function openArea(aid) { S.area = aid; S.level = "roles"; regroup(); fitView(); }
+function areaGraph() { // level 1: the areas, each the own files of its roles; entry strip and shared rail around them
+  const fr = fileRoles(), ar = areaOf();
+  const boxes = S.roles.areas.map((a) => {
+    const rs = a.roles.map((rid) => S.roles.roles.find((r) => r.id === rid)).filter(Boolean), files = rs.flatMap(ownFiles);
+    return { id: "area:" + a.id, area: a.id, kind: "group", label: a.name, meta: `${plural(rs.length, "role")} · ${plural(files.length, "file")}`,
+      files, lines: files.reduce((n, f) => n + (S.full.files[f]?.lines || 0), 0), names: [], doc: a.purpose || "",
+      roles: rs, members: [...new Set(files.map((f) => S.full.files[f].module))] };
+  }).filter((b) => b.files.length);
+  return { ...S.full, modules: [railNode("entry"), ...boxes, railNode("shared")].filter(Boolean),
+    edges: aggregate((f) => !kindOf(f) && ar[fr[f]] && "area:" + ar[fr[f]]) };
 }
 function renameRole(rid) {
   const r = S.roles.roles.find((x) => x.id === rid);
@@ -289,16 +313,22 @@ function renderCrumbs() {
   if (S.level === "modules") {
     if (!big && !has && S.full.modules.length <= ROLE_AT) { c.hidden = true; return; }
     const parts = S.focus ? S.focus.split("/") : [];
-    h = (has ? step(1, "Roles", 'data-lv="roles"') + `<span>/</span>` : "") + `<button type="button" data-f="" aria-current="${!S.focus}">${esc(S.full.name)}</button>`
+    h = (has ? step(1, S.roles.areas?.length ? "Areas" : "Roles", `data-lv="${S.roles.areas?.length ? "areas" : "roles"}"`) + `<span>/</span>` : "") + `<button type="button" data-f="" aria-current="${!S.focus}">${esc(S.full.name)}</button>`
       + parts.map((p, i) => `<span>/</span><button type="button" data-f="${esc(parts.slice(0, i + 1).join("/"))}">${esc(p)}</button>`).join("")
       + (big ? `<em>${plural(S.full.modules.length, "module")}, grouped by folder</em>` : "")
       + (!has && S.claude ? `<button type="button" class="act" data-propose>Group into roles</button>` : "");
   } else {
-    const r = S.roles.roles.find((x) => x.id === S.role);
-    h = step(1, "Roles", 'data-lv="roles"', S.level === "roles");
-    if (S.level !== "roles") h += `<span>/</span>` + step(2, S.role === "?" ? "not placed yet" : rname(S.role), `data-role="${esc(S.role)}"`, S.level === "parts");
+    const r = S.roles.roles.find((x) => x.id === S.role), A = (S.roles.areas || []).find((a) => a.id === S.area);
+    let n = 1;
+    if (S.roles.areas?.length) {
+      h = step(n++, "Areas", 'data-lv="areas"', S.level === "areas");
+      if (S.level !== "areas" && A) h += `<span>/</span>` + step(n++, A.name, `data-area="${esc(A.id)}"`, S.level === "roles");
+    } else h = step(n++, "Roles", 'data-lv="roles"', S.level === "roles");
+    if (S.level === "parts") h += `<span>/</span>` + step(n, S.role === "?" ? "not placed yet" : rname(S.role), `data-role="${esc(S.role)}"`, true);
+    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "area")}</em><button type="button" class="act q" data-regroup>Regroup areas</button><button type="button" class="act q" data-lv="modules">All modules</button>`;
+    if (S.level === "roles" && A) h += `<button type="button" class="act q" data-arename>Rename area</button>`;
     if (S.hiddenLinks && !S.dense) h += `<em title="Strongest ${KEEP_LINKS} links per box">${S.hiddenLinks} weak links hidden</em>`;
-    if (S.level === "roles") h += `<em title="${esc(S.roles.how || "")}">${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}</em>`
+    if (S.level === "roles" && !A) h += `<em title="${esc(S.roles.how || "")}">${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}</em>`
       + (S.roles.status !== "confirmed" ? `<button type="button" class="act" data-confirm>Confirm roles</button>` : "") + `<button type="button" class="act q" data-propose>Propose again</button><button type="button" class="act q" data-lv="modules">All modules</button>`;
     if (S.level === "parts" && r && S.outside) h += `<em title="${esc(r.purpose || "")}">${S.outside} imports to other roles</em>`;
     if (r && S.level !== "roles") h += `<button type="button" class="act q" data-rename>Rename</button><button type="button" class="act q" data-files>Files</button><button type="button" class="act" data-fence>Fence this role</button>`;
@@ -309,6 +339,9 @@ function renderCrumbs() {
   c.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => { S.focus = b.dataset.f; regroup(); fitView(); }));
   c.querySelectorAll("[data-lv]").forEach((b) => (b.onclick = () => { S.level = b.dataset.lv; regroup(); fitView(); }));
   c.querySelectorAll("[data-role]").forEach((b) => (b.onclick = () => openRole(b.dataset.role)));
+  c.querySelectorAll("[data-area]").forEach((b) => (b.onclick = () => openArea(b.dataset.area)));
+  $("[data-regroup]", c)?.addEventListener("click", () => confirm("Group the roles into areas again? Your area names and moves are replaced.") && proposeAreas());
+  $("[data-arename]", c)?.addEventListener("click", () => { const a = S.roles.areas.find((x) => x.id === S.area), n = prompt(`Rename the area "${a.name}":`, a.name); if (n && n.trim() !== a.name) rolesDo("area_rename", { id: a.id, name: n }, "Renamed."); });
   $("[data-propose]", c)?.addEventListener("click", () => (!has || confirm("Propose roles again? Your renames and moves are replaced.")) && proposeRoles());
   $("[data-confirm]", c)?.addEventListener("click", () => rolesDo("confirm", {}, "Roles confirmed. Rename or move files any time."));
   $("[data-rename]", c)?.addEventListener("click", () => renameRole(S.role));
@@ -354,9 +387,9 @@ function layout() {
   }
   const WRAP = 10; // ponytail: a wide rank wraps onto extra rows, so a 40-function rank stays on screen
   rows = rows.flatMap((row) => Array.from({ length: Math.ceil(row.length / WRAP) }, (_, i) => row.slice(i * WRAP, (i + 1) * WRAP)));
-  // A dense map (roles that all import each other) layers into a tall tower that says little; it is a place to pick
-  // what to change, so it becomes a compact grid in the same upstream-to-downstream order, edges drawn on focus only.
-  S.dense = g.edges.length > DENSE;
+  // Areas, roles and parts are where you pick what to change, and a dense module map layers into a tall tower that
+  // says little: both become a compact grid in the same upstream-to-downstream order, edges drawn on focus only.
+  S.dense = g.edges.length > DENSE || ["areas", "roles", "parts"].includes(S.level); // places to pick, not structure
   if (S.dense) { const order = rows.flat(), cols = Math.ceil(Math.sqrt(order.length * 1.8)); rows = Array.from({ length: Math.ceil(order.length / cols) }, (_, i) => order.slice(i * cols, (i + 1) * cols)); }
   if (all.includes("rail:entry")) rows.unshift(["rail:entry"]);
   if (all.includes("rail:shared")) rows.push(["rail:shared"]);
@@ -671,7 +704,7 @@ function hideTip() { $("#tip").classList.remove("show"); }
 
 /* ---------------- selection, fence & panel ---------------- */
 function onNodeClick(id, ev) {
-  if (id.startsWith("role:") || id.startsWith("dir:") || id.startsWith("part:") || id.startsWith("rail:")) { pick(id); return; }
+  if (/^(role|dir|part|rail|area):/.test(id)) { pick(id); return; }
   // a click only picks (the card opens it on purpose); shift-click with a module open grows the fence
   if (!((ev.shiftKey || ev.metaKey || ev.ctrlKey) && S.selected) || mod(id)?.group) { pick(id); return; }
   if (S.scope.has(id) && S.scope.size > 1) S.scope.delete(id); else S.scope.add(id);
@@ -681,7 +714,7 @@ function onNodeClick(id, ev) {
 function select(id, keepLabel) {
   if (id.endsWith("/")) { S.focus = id.slice(0, -1); regroup(); fitView(); return; } // a grouped folder: open it
   if (!keepLabel) S.fenceLabel = null;
-  if (S.level === "roles" || (S.level === "parts" && !S.graph.modules.some((m) => m.id === id))) { // show the module among its role's parts
+  if (S.level === "areas" || S.level === "roles" || (S.level === "parts" && !S.graph.modules.some((m) => m.id === id))) { // show the module among its role's parts
     const fr = fileRoles(), f = (S.full.modules.find((m) => m.id === id) || { files: [] }).files.find((x) => fr[x]);
     if (f) { S.level = "parts"; S.role = fr[f]; regroup(); } else { S.level = "modules"; regroup(); }
   }
@@ -1358,7 +1391,7 @@ function wire() {
   $("#panel").inert = true;
   $("#picker").onchange = async (e) => {
     S.p = Number(e.target.value); store.set("modfence.project", S.p);
-    closePanel(); S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; S.userCam = false; S.focus = ""; S.level = null; S.role = null; S.proposed = false;
+    closePanel(); S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; S.userCam = false; S.focus = ""; S.level = null; S.role = null; S.area = null; S.proposed = false; S.proposedAreas = false;
     const b = $("#tests"); b.classList.remove("ok", "bad"); $(".lbl", b).textContent = "Run tests";
     await loadGraph(true);
   };
