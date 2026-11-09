@@ -116,7 +116,13 @@ def show_command():
     return f'"{fwd(sys.executable)}" "{fwd(SHOW)}"'
 
 
-def context_note(graph, scope, read_only=False, phase=None, sealed=False):
+# Golden rule 1, built in: the laziest change that works (the ponytail ladder), in a few words every edit run carries.
+LEAN_RULE = ("Lean: make the smallest change that does the task. Reuse what the fence and the brief already have before "
+             "writing new code; add no dependency, and no file, option or abstraction the task did not ask for. Do not "
+             "restate code in your answer.")
+
+
+def context_note(graph, scope, read_only=False, phase=None, sealed=False, lean=True):
     """System note telling the agent which modules it works on and how they connect to the rest. Sealed (golden
     rule 4): the rest of the project is the brief, not code it may read."""
     mods = {m["id"]: m for m in graph["modules"]}
@@ -164,6 +170,8 @@ def context_note(graph, scope, read_only=False, phase=None, sealed=False):
     if in_edges and not sealed:
         lines.append("Used by (outside the scope; changing a public name breaks them): " + "; ".join(
             f"`{e['source']}` via " + ", ".join(f"{r['file']}:{r['line']}" for r in e["receipts"][:3]) for e in in_edges))
+    if lean and not read_only and phase != "plan":
+        lines.append(LEAN_RULE)
     pointers = fence_docs(graph, scope)
     if pointers:
         lines.append("Project docs about this fence (read one only if your change touches what it covers; edit docs only "
@@ -199,7 +207,7 @@ def fence_docs(graph, scope):
 class Job:
     """phase: None (a plain run), "plan" (read-only, answers with questions and a plan as JSON) or "build" (edits, and
     a Stop hook runs the project's tests before the agent may finish)."""
-    def __init__(self, root, scope, prompt, graph, claude_bin, read_only=False, phase=None, seal=True, resume=None):
+    def __init__(self, root, scope, prompt, graph, claude_bin, read_only=False, phase=None, seal=True, resume=None, lean=True):
         self.id = f"r{int(time.time() * 1000)}{next(_ids)}"  # unique across restarts: runs are stored on disk
         self.root, self.scope, self.prompt, self.graph, self.claude = root, list(scope), prompt, graph, claude_bin
         self.phase = phase if phase in ("plan", "build") else None
@@ -215,6 +223,7 @@ class Job:
         self.events, self.cond, self.done, self.proc = [], threading.Condition(), False, None
         self.started = time.time()
         self.resume = resume  # a session to continue, after the user approved a request to edit outside the fence
+        self.lean = lean
 
     # ----- event log -----
     def emit(self, kind, **data):
@@ -243,7 +252,7 @@ class Job:
             self.emit("status", text="Cancelled.")
 
     def system_note(self):
-        return context_note(self.graph, self.scope, self.read_only, self.phase, self.sealed)
+        return context_note(self.graph, self.scope, self.read_only, self.phase, self.sealed, self.lean)
 
     def _settings_file(self):
         p = os.path.join(state_dir(self.root), f"settings-{self.id}.json")

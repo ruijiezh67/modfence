@@ -34,7 +34,7 @@ class BenchJob(runner.Job):
     condition = "modfence"
 
     def system_note(self):
-        return runner.context_note(self.graph, self.scope, sealed=self.sealed) if self.condition == "modfence" else ""
+        return runner.context_note(self.graph, self.scope, sealed=self.sealed, lean=self.lean) if self.condition == "modfence" else ""
 
     def _settings_file(self):
         if self.condition == "modfence":

@@ -4,7 +4,8 @@ rich tasks in bench/token_tasks.py (golden rules 1 and 4; the experiment the sur
   vibe    Claude Code alone, the task spec only: "just ask the model".
   plain   Claude Code alone. Prompt: the task spec plus "The change belongs in `<module>`." No note, no hooks.
   sealed  modfence: the same prompt; fence = the module; the system note carries the brief; other modules' code is
-          hidden. (Round 1 also fenced the tests and its note invited test writing; see docs/EVALUATION.md.)
+          hidden. Without the lean rule (runner.LEAN_RULE), as measured before it existed.
+  lean    sealed plus the lean rule (golden rule 1, built in since 2026-11-09). (Round 1 also fenced the tests and its note invited test writing; see docs/EVALUATION.md.)
 
 Same prompt text, same fresh copy of rich (no .git) per attempt, CLAUDE_CODE_DISABLE_CLAUDE_MDS=1, no plan step and no
 done check in either arm (so only the context differs). After the run, the hidden acceptance tests and rich's own test
@@ -40,8 +41,8 @@ def attempt(rich, name, arm, rep, workdir, claude):
     shutil.copytree(rich, root, ignore=shutil.ignore_patterns(".git", "__pycache__", ".modfence"))
     prompt = t["spec"] + ("" if arm == "vibe" else f"\n\nThe change belongs in `{t['module']}`.")
     graph = analyze.analyze(root)
-    job = BenchJob(root, [t["module"]], prompt, graph, claude, seal=(arm == "sealed"))
-    job.condition = "modfence" if arm == "sealed" else "plain"
+    job = BenchJob(root, [t["module"]], prompt, graph, claude, seal=(arm in ("sealed", "lean")), lean=(arm == "lean"))
+    job.condition = "modfence" if arm in ("sealed", "lean") else "plain"
     t0 = time.time()
     job._run()
     ev = job.events

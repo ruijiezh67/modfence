@@ -498,6 +498,9 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("`app/core/`", note)
         self.assertIn("Used by", note)
         self.assertIn("app/api/handlers.py:1", note)
+        self.assertIn(runner.LEAN_RULE, note, "edit runs carry the lean rule (golden rule 1)")
+        self.assertNotIn(runner.LEAN_RULE, runner.context_note(analyze.analyze(d), ["app/core"], read_only=True))
+        self.assertNotIn(runner.LEAN_RULE, runner.context_note(analyze.analyze(d), ["app/core"], lean=False))
 
     def test_a_blocked_edit_becomes_a_request_with_its_reason(self):
         d = project()

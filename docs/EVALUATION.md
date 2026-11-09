@@ -271,6 +271,17 @@ What this says:
 
 Limits: one split per project; 65 to 739 scored commits; the earlier-roles row exists only where such roles were stored; whether people find these roles easier to pick from is N/A.
 
+## 8. The lean rule (golden rule 1, built in)
+
+Every edit run now carries `runner.LEAN_RULE`, three sentences in the spirit of the ponytail skill: the smallest change that does the task, reuse what the fence and brief have, no new dependency, file, option or abstraction, no code restated in the answer. Measured with `bench/token_bench.py --only sealed,lean` on the four rich tasks, 3 runs each, Claude Code with its default model, 2026-11-09 (`bench/results/token_bench_lean.jsonl`):
+
+| Arm | Runs | Mean cost | Mean output tokens | Acceptance | Regression tests |
+|---|---|---|---|---|---|
+| sealed | 12 | $0.281 | 1,757 | 27/27 | 12/12 |
+| sealed + lean rule | 12 | $0.278 | 1,596 | 27/27 | 12/12 |
+
+Cost moved by 1% (within run-to-run noise at n = 12); output tokens fell 9%; nothing got worse. These tasks are small and fully specified, so there was little to over-build: the ponytail authors' 26% cost saving comes from a benchmark where agents tend to over-engineer. Whether the rule saves cost on open-ended or multi-file tasks here is N/A. It stays on because it costs about 60 tokens and measured no harm. Spend: $6.70.
+
 ## How modfence compares with popular tools
 
 Star counts are from the GitHub API on 2026-11-06. Feature cells come from each project's README and docs ([research notes](../../research_notes/Modmap%20next%20step%20priorities/competitor_tools.md)); N/A means not found in their docs.
