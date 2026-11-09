@@ -1420,7 +1420,11 @@ function renderChanges(root, c, r, check, live) {
       : `<p class="none" style="padding:8px 10px">No files changed.</p>`);
   const foot = document.createElement("div");
   foot.className = "rfoot";
-  foot.innerHTML = (check ? `<div class="chk ${check.ok ? "ok" : "bad"}">${check.ok ? "Done check passed" : "Done check failed"}: ${esc(check.summary || "project tests")}${check.blocked ? `. The agent was sent back ${plural(check.blocked, "time")}.` : "."}</div>` : "")
+  const sel = check && check.selected, which = sel ? `${plural(sel.files.length, "test file")} covering the fence${sel.users?.length ? ` and ${plural(sel.users.length, "module")} using it` : ""}` : "the whole suite";
+  foot.innerHTML = (check ? `<div class="chk ${check.ok ? "ok" : "bad"}">${check.ok ? "Done check passed" : "Done check failed"} (ran ${which}): ${esc(check.summary || "project tests")}${check.blocked ? `. The agent was sent back ${plural(check.blocked, "time")}.` : "."}</div>` : "")
+    + (check && check.untested?.length ? `<div class="chk bad">Changed without a test: <span class="mono">${esc(check.untested.join(", "))}</span></div>` : "")
+    + (c && c.commit_message ? `<div class="commit"><span class="mono">${esc(c.commit_message.split("
+")[0])}</span><button class="btn quiet mini" type="button" data-copy title="Copy the drafted commit message">Copy commit message</button></div>` : "")
     + (c && c.ripple.length ? `<div class="ripple">Uses the changed code: ${c.ripple.map((m) => `<button type="button" data-go="${esc(m)}">${esc(shown(m))}</button>`).join("")} run the tests to check them.</div>` : "")
     + (files.length ? `<button class="btn" type="button" data-tests>Run tests</button>` : "")
     + (rev ? `<button class="btn" type="button" data-rev>Revert this run</button>` : "")
@@ -1430,6 +1434,7 @@ function renderChanges(root, c, r, check, live) {
   box.querySelectorAll("[data-diff]").forEach((b) => (b.onclick = () => toggleDiff(b, c.run, files[+b.dataset.diff].path)));
   foot.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => select(b.dataset.go)));
   $("[data-tests]", foot)?.addEventListener("click", runTests);
+  $("[data-copy]", foot)?.addEventListener("click", () => navigator.clipboard?.writeText(c.commit_message).then(() => toast("Commit message copied."), () => toast("Copy failed: select the text instead.", false)));
   $("[data-rev]", foot)?.addEventListener("click", () => revert(root, c.run, null, files.length));
   $("[data-rev-out]", box)?.addEventListener("click", () => revert(root, c.run, outside.map((f) => f.path), outside.length));
   // What the changed functions do now. A live run asks for summaries of the new code; a replay shows what is cached.

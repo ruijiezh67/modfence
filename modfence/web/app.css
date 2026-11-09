@@ -680,3 +680,4 @@ body[data-view="history"] :is(.crumbs, .legend, .zoom, .hint) { display: none; }
 .skills li.weak { opacity: 0.6; }
 .skills .pa { display: flex; gap: 10px; align-items: center; }
 .sub.bad { color: var(--bad); }
+.rfoot .commit { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12.5px; margin: 4px 0; }
