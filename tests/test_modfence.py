@@ -472,6 +472,17 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("Used by", note)
         self.assertIn("app/api/handlers.py:1", note)
 
+    def test_a_blocked_edit_becomes_a_request_with_its_reason(self):
+        d = project()
+        g = analyze.analyze(d)
+        job = runner.Job(d, ["app/core"], "x", g, None)
+        other = "app/api/handlers.py"
+        job.events = [{"kind": "tool", "id": "t1", "name": "Edit", "detail": os.path.join(d, other)},
+                      {"kind": "tool_result", "id": "t1", "denied": True, "text": f"modfence scope: {other} is outside"},
+                      {"kind": "text", "text": f"Done inside.\nNEED {other}: pass the new field through\n"}]
+        self.assertEqual(job.requests(), [{"path": other, "why": "pass the new field through"}])
+        self.assertIn("NEED <path>", scope_guard.decide({"tool_name": "Edit", "tool_input": {"file_path": os.path.join(d, other)}}, d, ["app/core"]))
+
     def test_run_streams_events_and_reports_changes(self):
         d = project()
         job = run_job(d, ["app/core"], "please edit app/core/values.py and edit app/api/handlers.py")
@@ -692,6 +703,13 @@ class ServerTest(unittest.TestCase):
         s, data = self.req("POST", "/api/revert?p=0", {"run": ch["run"]}, {"X-Modfence": "1"})
         self.assertEqual(json.loads(data)["reverted"], ["app/cli/main.py"])
         self.assertFalse(os.path.exists(os.path.join(self.d, ".claude")), "a discarded run clears the fence")
+        s, data = self.req("POST", "/api/approve?p=0", {"job": job, "paths": ["app/core/values.py"]}, {"X-Modfence": "1"})
+        self.assertEqual(s, 200, data)
+        s, stream = self.req("GET", f"/api/events?job={json.loads(data)['job']}&from=0")
+        self.assertIn('"kind": "done"', stream)
+        self.assertEqual(load(os.path.join(self.d, ".modfence", "fence.json"))["files"], ["app/cli", "app/core/values.py"],
+                         "an approved request widens the fence and the run goes on")
+        self.assertEqual(self.req("POST", "/api/approve?p=0", {"job": "nope", "paths": ["x"]}, {"X-Modfence": "1"})[0], 404)
         scope_guard.arm(self.d, ["app/cli"], True)
         self.assertEqual(self.req("POST", "/api/fence/clear?p=0", {}, {"X-Modfence": "1"})[0], 200)
         self.assertFalse(os.path.exists(os.path.join(self.d, ".modfence", "fence.json")))

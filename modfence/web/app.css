@@ -638,3 +638,15 @@ body[data-view="history"] :is(.crumbs, .legend, .zoom, .hint) { display: none; }
 .fseal[aria-pressed="false"] { background: none; color: var(--text-2); border-style: dashed; }
 .broke { margin: 4px 0 0; padding-left: 18px; }
 .broke .u { color: var(--text-3); font-size: 12px; }
+
+/* golden rule 4: requests to edit outside the fence */
+.requests { margin: 10px 0; padding: 10px 12px; border: 1.5px solid var(--fence); border-radius: var(--r); background: var(--fence-soft); }
+.requests h4 { margin: 0 0 6px; font-size: 13px; }
+.requests .req { padding: 8px 0; border-top: 1px solid var(--fence-line); }
+.requests .req p { margin: 4px 0 6px; font-size: 13px; }
+.requests .rr { color: var(--text-3); font-size: 12px; }
+.requests .req.refused { opacity: 0.6; }
+.requests .pa { display: flex; flex-wrap: wrap; gap: 6px; }
+.node.asks .card { stroke: var(--fence); stroke-width: 3; animation: asks 1.2s ease-in-out infinite alternate; }
+@keyframes asks { to { stroke-opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .node.asks .card { animation: none; } }

@@ -106,8 +106,9 @@ def decide(event, root, scope, fence=None):
         if path is None:
             return None
         return (f"modfence scope: {path} is outside the modules you may edit ({', '.join(scope) or '(nothing)'}). Do not try "
-                "another way to change it. Finish what you can inside the scope, then tell the user which module needs "
-                "this change and why, so they can widen the scope.")
+                "another way to change it. Finish what you can inside the scope, then end your turn with one line per file "
+                "you need, exactly: NEED <path>: <the change and why>. The user approves or refuses each; if approved, "
+                "you continue in this same conversation with the file in your scope.")
     if fence is None or tool not in SEAL_TOOLS:
         return None
     if tool == "Read":

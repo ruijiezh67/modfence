@@ -178,7 +178,7 @@ def context_note(graph, scope, read_only=False, phase=None, sealed=False):
 class Job:
     """phase: None (a plain run), "plan" (read-only, answers with questions and a plan as JSON) or "build" (edits, and
     a Stop hook runs the project's tests before the agent may finish)."""
-    def __init__(self, root, scope, prompt, graph, claude_bin, read_only=False, phase=None, seal=True):
+    def __init__(self, root, scope, prompt, graph, claude_bin, read_only=False, phase=None, seal=True, resume=None):
         self.id = f"r{int(time.time() * 1000)}{next(_ids)}"  # unique across restarts: runs are stored on disk
         self.root, self.scope, self.prompt, self.graph, self.claude = root, list(scope), prompt, graph, claude_bin
         self.phase = phase if phase in ("plan", "build") else None
@@ -193,6 +193,7 @@ class Job:
                 self.fn_fence.setdefault(s.split("::")[0], set()).add(s.split("::")[1])
         self.events, self.cond, self.done, self.proc = [], threading.Condition(), False, None
         self.started = time.time()
+        self.resume = resume  # a session to continue, after the user approved a request to edit outside the fence
 
     # ----- event log -----
     def emit(self, kind, **data):
@@ -247,7 +248,7 @@ class Job:
                 raise RuntimeError("Claude Code CLI not found. Install it, log in, or set CLAUDE_BIN.")
             settings = self._settings_file()
             key = scope_key(self.scope)
-            session = load_sessions(self.root).get(key)
+            session = self.resume or load_sessions(self.root).get(key)
             exe = [sys.executable, self.claude] if self.claude.endswith(".py") else [self.claude]  # .py: a test double
             cmd = exe + ["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                    "--permission-mode", "acceptEdits", "--allowedTools", ALLOWED_TOOLS, "--settings", settings]
@@ -331,6 +332,22 @@ class Job:
                           usage=ev.get("usage"), model=getattr(self, "model", None),
                           text=(ev.get("result") or "")[-4000:] if ev.get("is_error") else "")
 
+    def requests(self):
+        """Golden rules 4 and 7: the files the agent needed outside the fence, each with its reason. A blocked edit is a
+        request; a line "NEED <path>: <why>" in its answer says why (or asks without trying)."""
+        rel = lambda p: os.path.relpath(p, self.root).replace("\\", "/") if os.path.isabs(p) else p.replace("\\", "/").removeprefix("./")
+        paths = {e["id"]: e.get("detail") or "" for e in self.events if e["kind"] == "tool"}
+        blocked = [rel(paths.get(e.get("id"), "")) for e in self.events
+                   if e["kind"] == "tool_result" and e.get("denied") and "modfence scope:" in (e.get("text") or "")]
+        text = "".join(e.get("text") or "" for e in self.events if e["kind"] == "text")
+        why = {rel(m.group(1).strip()): m.group(2).strip() for m in re.finditer(r"^[ \t*>-]*NEED\s+`?([^`:\n]+?)`?\s*:\s*(.+)$", text, re.M)}
+        seen, out = set(), []
+        for p in blocked + list(why):
+            if p and p not in seen and not _in_scope(p, self.editable):
+                seen.add(p)
+                out.append({"path": p, "why": why.get(p, "")})
+        return out
+
     def _finish(self, before):
         try:
             after = analyze.snapshot(self.root)
@@ -344,13 +361,16 @@ class Job:
             checks = _read_jsonl(os.path.join(run_dir(self.root, self.id), "checks.jsonl"))
             check = dict(ok=checks[-1]["ok"], summary=checks[-1]["summary"], blocked=sum(c["blocked"] for c in checks)) if checks else None
             res = next((e for e in reversed(self.events) if e["kind"] == "result"), {})
+            requests = self.requests()
+            if requests:
+                self.emit("requests", items=requests)
             # golden rule 3: names other modules used before the run, whose signature the run broke
             contract = brief.contract_breaks(self.graph, {p: (None if p in added else self.before_bytes.get(p),
                                                               None if p in deleted else _read_or_none(os.path.join(self.root, p)))
                                                           for p in modified + deleted if p.endswith(".py")})
             files = save_run(self, changed, set(added), set(deleted), set(outside),
                              dict(prompt=self.prompt, phase=self.phase, modules=changed_mods, ripple=ripple, check=check,
-                                  cost_usd=res.get("cost_usd"), turns=res.get("turns"), contract=contract))
+                                  cost_usd=res.get("cost_usd"), turns=res.get("turns"), contract=contract, requests=requests))
             out_fns = [f"{f['path']}::{u['name']}" for f in files if f["path"] in self.fn_fence for u in f["funcs"] or []
                        if u["name"] != "(module level)" and not any(u["name"] == n or u["name"].startswith(n + ".")
                                                                    for n in self.fn_fence[f["path"]])]

@@ -1181,6 +1181,8 @@ function newRun(prompt, scope, at, readOnly, phase) {
         view.check = e;
       } else if (e.kind === "changes") {
         view.changes = e;
+      } else if (e.kind === "requests") {
+        view.requests = e.items;
       } else if (e.kind === "done") {
         if (textEl) { renderText(); textEl = null; }
         body.querySelectorAll(".step .st").forEach((x) => { if (x.textContent === "…") x.textContent = "stopped"; });
@@ -1189,6 +1191,7 @@ function newRun(prompt, scope, at, readOnly, phase) {
         st.textContent = r ? (r.ok ? `${phase === "plan" ? "Planned" : view.check && !view.check.ok ? "Done, check failed" : "Done"}${r.duration_s ? ` · ${r.duration_s}s` : ""}` : "Stopped with an error") : "Stopped";
         if (quiet) { const f = document.createElement("div"); f.className = "rfoot"; f.innerHTML = r ? `<span class="meta">${r.turns ? plural(r.turns, "turn") : ""}${r.cost_usd != null ? ` · $${r.cost_usd.toFixed(3)}` : ""}</span>` : ""; root.appendChild(f); }
         else renderChanges(root, view.changes, r, view.check, !replay);
+        if (view.requests?.length) renderRequests(root, view.requests, view.job, replay);
       }
       if (!replay) scrollTalk();
     },
@@ -1196,6 +1199,31 @@ function newRun(prompt, scope, at, readOnly, phase) {
   };
   scrollTalk();
   return view;
+}
+
+/* Golden rules 4 and 7: the agent stopped at the fence. Each file it needs is a card: the change it wants and why, and
+   the user's choice. Approving continues the same conversation with the file (or its whole role) inside the fence. */
+function renderRequests(root, items, job, replay) {
+  const fr = fileRoles(), box = document.createElement("div");
+  box.className = "requests";
+  box.innerHTML = `<h4>The agent asks to edit outside the fence</h4>` + items.map((it, k) => {
+    const rid = fr[it.path], role = rid && S.roles?.roles.find((r) => r.id === rid);
+    return `<div class="req" data-k="${k}"><div class="rp"><span class="mono">${esc(it.path)}</span>${role ? ` <span class="rr">in ${esc(role.name)}</span>` : ""}</div>`
+      + `<p>${it.why ? esc(it.why) : "It tried to edit this file; no reason given."}</p>`
+      + (replay || !job ? "" : `<div class="pa"><button class="btn primary" type="button" data-file>Allow this file</button>`
+        + (role ? `<button class="btn" type="button" data-role>Allow all of ${esc(role.name)}</button>` : "")
+        + `<button class="btn quiet" type="button" data-no>Refuse</button></div>`) + `</div>`;
+  }).join("");
+  root.appendChild(box);
+  items.forEach((it) => { const n = [...document.querySelectorAll(".node")].find((x) => mod(x.dataset.id)?.files?.includes(it.path)); n?.classList.add("asks"); });
+  box.querySelectorAll(".req").forEach((el) => {
+    const it = items[el.dataset.k], role = S.roles?.roles.find((r) => r.id === fr[it.path]);
+    const go = (paths) => { box.querySelectorAll("button").forEach((b) => (b.disabled = true)); document.querySelectorAll(".node.asks").forEach((n) => n.classList.remove("asks"));
+      startRun(`Approved: ${paths.length > 1 ? (role ? role.name : plural(paths.length, "file")) : paths[0]}`, [...new Set([...job.scope, ...paths])], false, job.phase, { job: job.id, paths }); };
+    $("[data-file]", el)?.addEventListener("click", () => go([it.path]));
+    $("[data-role]", el)?.addEventListener("click", () => go(ownFiles(role)));
+    $("[data-no]", el)?.addEventListener("click", () => { el.classList.add("refused"); el.querySelector(".pa").innerHTML = `<span class="meta">Refused. The fence stays as it was.</span>`; document.querySelectorAll(".node.asks").forEach((n) => n.classList.remove("asks")); });
+  });
 }
 
 /* A run's changes, read as functions: what was added, changed or removed, and what each now does. The line diff
@@ -1352,9 +1380,9 @@ async function send() {
   if (!prompt || !S.scope.size || !S.claude) return;
   if (await startRun(prompt, [...S.scope], S.readOnly, S.readOnly ? null : "plan")) { $("#prompt").value = ""; autosize(); }
 }
-async function startRun(prompt, scope, readOnly, phase) {
+async function startRun(prompt, scope, readOnly, phase, approve) {
   let res;
-  try { res = await api(`/api/ask?${q()}`, { prompt, scope, read_only: readOnly, phase, unsealed: !!S.unsealed }); }
+  try { res = approve ? await api(`/api/approve?${q()}`, approve) : await api(`/api/ask?${q()}`, { prompt, scope, read_only: readOnly, phase, unsealed: !!S.unsealed }); }
   catch (e) { toast(e.message, false); return false; }
   if (phase !== "plan") { S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; paintSelection(); }
   const key = [...scope].sort().join("+");
@@ -1363,6 +1391,7 @@ async function startRun(prompt, scope, readOnly, phase) {
   S.job = job;
   setTab("talk");
   job.view = newRun(prompt, scope, job.at, readOnly, phase);
+  job.view.job = job;
   syncSend(); showRunbar();
   listen(job);
   return true;

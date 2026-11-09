@@ -172,6 +172,15 @@ def make_handler(app, port):
                     reverted, skipped = runner.revert_run(app.project(q), b.get("run") or "", b.get("paths") or None)
                     scope_guard.disarm(app.project(q))  # the run was discarded
                     return self.send_json({"reverted": reverted, "skipped": skipped})
+                if u.path == "/api/approve":  # golden rule 4: the user widened the fence; the same conversation goes on
+                    old, paths = app.jobs.get(b.get("job")), [p for p in b.get("paths") or [] if isinstance(p, str) and p]
+                    if not old or not paths:
+                        return self.send_json({"error": "no such run or nothing approved"}, 404)
+                    note = b.get("note") or ""
+                    return self.ask(app.project(q), {
+                        "prompt": f"The user approved edits to {', '.join(paths)}.{' ' + note if note else ''} Continue the task: {old.prompt}",
+                        "scope": sorted(set(old.scope) | set(paths)), "phase": old.phase, "unsealed": not old.sealed,
+                        "resume": runner.load_sessions(old.root).get(runner.scope_key(old.scope))})
                 if u.path == "/api/fence/clear":
                     with app.lock:
                         running = app.active.get(app.project(q))
@@ -238,7 +247,7 @@ def make_handler(app, port):
                 if running and not running.done:
                     return self.send_json({"error": "a run is already in progress in this project", "job": running.id}, 409)
                 job = runner.Job(root, scope, prompt, graph, app.claude, read_only=bool(b.get("read_only")), phase=b.get("phase"),
-                                 seal=not b.get("unsealed"))
+                                 seal=not b.get("unsealed"), resume=b.get("resume"))
                 app.jobs[job.id] = job
                 app.active[root] = job
             if not job.read_only or job.phase == "plan":  # Explain fences nothing
