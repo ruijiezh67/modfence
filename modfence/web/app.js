@@ -880,6 +880,18 @@ function wireCanvas() {
 // What one module takes from another, by name: the functions and classes behind an import arrow.
 const takes = (e) => [...new Set(e.receipts.map((r) => r.name).filter(Boolean))];
 // Golden rule 2: hovering a line says in plain words what the link is and what it means for a change, with its
+// An optional second look (off by default, golden rule 1): a read-only run that reads only what this run changed and
+// reports real bugs and broken contracts, nothing about style.
+function renderReview(root, job, c) {
+  const files = c && c.files ? c.files.map((f) => f.path) : [];
+  if (!files.length || job.readOnly || job.phase === "plan") return;
+  const b = document.createElement("button");
+  b.className = "btn quiet review"; b.type = "button"; b.textContent = "Review this run";
+  b.title = "A read-only run reads the changed files and reports real bugs or broken contracts (costs a run)";
+  root.appendChild(b);
+  b.onclick = () => { b.disabled = true; startRun(`Review the last change for bugs, nothing else. Changed files: ${files.join(", ")}. Task it did: ${job.prompt}. `
+    + `Read only those files and what they call. Report at most 5 real problems (wrong behaviour, broken callers, missing edge cases), each with file:line and why. No style comments. If none, say so in one line.`, job.scope, true, null); };
+}
 // evidence counted; the line and its two boxes light up. No lists of names to decode.
 function readEdge(e) {
   const a = `<b>${esc(shown(e.source))}</b>`, b = `<b>${esc(shown(e.target))}</b>`, r = e.receipts;
@@ -1018,19 +1030,19 @@ function relRows(ids, other, dir) {
    one-sentence summary that the server asks a small model for the first time a module is opened. */
 const describing = new Set();
 async function moduleFns(id, describe) {
-  if (!S.fn[id]) { try { S.fn[id] = await api(`/api/module?${q("&m=" + encodeURIComponent(id))}`); } catch { return null; } }
-  const v = S.fn[id];
+  let v = S.fn[id]; // read into a local: a reload during the wait replaces S.fn
+  if (!v) { try { v = await api(`/api/module?${q("&m=" + encodeURIComponent(id))}`); } catch { return null; } S.fn[id] = v; }
   if (describe && S.claude && !describing.has(id) && (v.undescribed || !v.purpose)) {
     describing.add(id); paintFns(id);
     try {
       const r = await api(`/api/describe?${q()}`, { module: id });
-      S.fn[id] = r;
+      S.fn[id] = v = r;
       if (r.purpose_source === "ai") { (S.full.ai_purposes ||= {})[id] = r.purpose; }
       if (r.error) toast(`Could not describe the functions: ${r.error}`, false);
     } catch (e) { toast(`Could not describe the functions: ${e.message}`, false); }
     describing.delete(id);
   }
-  return S.fn[id];
+  return S.fn[id] || v;
 }
 const AI_TAG = '<i class="ai" title="Written by a small model from the code; the author wrote no docstring">AI</i>';
 const testsIds = () => new Set(S.full.modules.filter((m) => m.kind === "tests").map((m) => m.id));
