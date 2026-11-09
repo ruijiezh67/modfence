@@ -271,12 +271,24 @@ body.panel-open .pick { display: none; }
 .pick li .mono { color: var(--text-2); font-size: 11.5px; overflow-wrap: anywhere; }
 .pick li > span:not(.mono) { color: var(--text-3); }
 .pick select { width: 100%; height: 32px; border: 1.5px solid var(--line-2); border-radius: var(--r); background: var(--surface); color: var(--text); padding: 0 8px; font: 13px var(--font); }
+.pick details.fg { border-top: 1px solid var(--line); }
+.pick details.fg summary { cursor: pointer; padding: 6px 0; font-size: 13px; font-weight: 600; list-style: none; }
+.pick details.fg summary::before { content: "▸ "; color: var(--text-3); }
+.pick details.fg[open] summary::before { content: "▾ "; }
+.pick details.fg summary i { font-style: normal; font-family: var(--mono); color: var(--text-3); margin-left: 4px; }
+.pick li > span:not(.mono) { overflow-wrap: anywhere; }
 .pick .lk { all: unset; cursor: pointer; font-weight: 650; color: var(--text); }
 .pick .lk:hover, .pick .lk:focus-visible { text-decoration: underline; text-decoration-color: var(--fence); text-decoration-thickness: 2px; }
 
 .tip { position: fixed; z-index: 60; max-width: 520px; padding: 8px 10px; border-radius: 6px; pointer-events: none; background: var(--text); color: var(--surface); font-size: 12px; opacity: 0; }
 .tip.show { opacity: 1; }
 .tip .h { font-weight: 650; margin-bottom: 4px; }
+.tip { max-width: 380px; padding: 10px 12px; font-size: 13px; line-height: 1.45; }
+.tip p { margin: 0; }
+.tip p.so { margin-top: 6px; opacity: 0.78; font-size: 12.5px; }
+.tip code { font: 12px var(--mono); padding: 0 3px; border-radius: 3px; background: rgba(255, 72, 176, 0.28); }
+.edge.hot { stroke: var(--ink); stroke-opacity: 1; opacity: 1; }
+.node.hot .card { stroke: var(--ink); stroke-width: 2; }
 .tip .tn { font: 12px/1.7 var(--mono); }
 .tip .tn b { font-weight: 500; margin-right: 6px; box-shadow: inset 0 -0.45em 0 rgba(255, 72, 176, 0.5); }
 .tip .tk { margin-top: 4px; opacity: 0.65; font-size: 11.5px; }

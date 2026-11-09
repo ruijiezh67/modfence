@@ -222,9 +222,10 @@ function pick(id) { // a click only selects; the card below says what it is and 
   const m = mod(id), card = $("#pick"), area = id.startsWith("area:"), role = id.startsWith("role:") || area, folder = !!m.group, plain = S.level === "modules";
   const name = m.label || shown(id);
   // a side bar, read top to bottom: what it is, what to do, then the facts behind it (uses, used by, files)
-  const link = (e, other) => { const n = takes(e); return `<li><button type="button" class="lk" data-go="${esc(other)}">${esc(shown(other))}</button>`
-    + `<span class="mono">${n.length ? esc(clip(n.join(", "), 80)) : "the whole module"}</span></li>`; };
-  const out = (S.graph.edges || []).filter((e) => e.source === id), inn = (S.graph.edges || []).filter((e) => e.target === id);
+  // each link in a few plain words, strongest first; the names behind it are in the hover text, not here
+  const link = (e, other) => `<li><button type="button" class="lk" data-go="${esc(other)}">${esc(shown(other))}</button><span>${esc(linkPhrase(e))}</span></li>`;
+  const strong = (a, b) => b.receipts.length - a.receipts.length;
+  const out = (S.graph.edges || []).filter((e) => e.source === id).sort(strong), inn = (S.graph.edges || []).filter((e) => e.target === id).sort(strong);
   const mine = new Set(m.files), shared = [...new Set(S.full.edges.flatMap((e) => e.receipts).filter((r) => mine.has(r.file) && kindOf(r.target_file) === "shared").map((r) => r.target_file))].sort();
   const doc = folder ? "" : m.doc || mdoc(m);
   const fdoc = (f) => S.full.files[f]?.doc || "";
@@ -239,7 +240,8 @@ function pick(id) { // a click only selects; the card below says what it is and 
     + (id.startsWith("role:") && S.roles.areas?.length ? `<h4>Area</h4><select data-area aria-label="Area of ${esc(name)}">${S.roles.areas.filter((a) => a.id !== "?").map((a) => `<option value="${esc(a.id)}"${areaOf()[id.slice(5)] === a.id ? " selected" : ""}>${esc(a.name)}</option>`).join("")}</select>` : "")
     + (m.doors?.length ? `<h4>Start files and routes <i>${m.doors.length}</i></h4><ul class="pf">${m.doors.map((f) => `<li><span class="mono">${esc(f)}</span><span>${kindOf(f) === "entry" ? "starts the program" : "HTTP routes into it"} · read-only by default</span></li>`).join("")}</ul>` : "")
     + (shared.length ? `<h4>Shared config it reads <i>${shared.length}</i></h4><ul class="pf">${shared.map((f) => `<li><span class="mono">${esc(f)}</span><span>${esc(S.full.files[f]?.doc || "")} · read-only by default</span></li>`).join("")}</ul>` : "")
-    + `<h4>Files <i>${m.files.length}</i></h4><ul class="pf">${m.files.map((f) => `<li><span class="mono">${esc(f)}</span>${fdoc(f) ? `<span>${esc(fdoc(f))}</span>` : ""}</li>`).join("")}</ul>`;
+    + `<h4>Files <i>${m.files.length}</i></h4>` + fileGroups(m).map(([title, fs]) => `<details class="fg"><summary>${esc(title)} <i>${fs.length}</i></summary>`
+      + `<ul class="pf">${fs.map((f) => `<li><span class="mono">${esc(f.split("/").pop())}</span>${fdoc(f) ? `<span>${esc(fdoc(f))}</span>` : ""}</li>`).join("")}</ul></details>`).join("");
   const opening = card.hidden;
   card.hidden = false; card.scrollTop = 0;
   if (opening && !S.userCam) fitView();
@@ -309,7 +311,7 @@ function linked(boxes, edges, nodeOf, roleBox) {
       if (!a || !c || a === c || ![a, c].includes(b.id) || !ids.has(a) || !ids.has(c)) return;
       if (!best || n > best.n) best = { n, other: a === b.id ? c : a };
     });
-    if (best) all.push({ source: b.id, target: best.other, kind: "cochange", receipts: [{ name: `changed together in ${best.n} commits` }] });
+    if (best) all.push({ source: b.id, target: best.other, kind: "cochange", n: best.n, receipts: [{ name: `changed together in ${best.n} commits` }] });
   });
   return all;
 }
@@ -557,12 +559,13 @@ function drawGraph() {
     e._back = !S.free && S.back.has(e); // closes a loop: drawn red, the cheapest import to cut (layered maps only)
     e._base = (mod(e.source).kind === "tests" ? "edge from-tests" : "edge") + (e._back ? " back" : "") + (e.kind ? " " + e.kind : "") + (S.free && !e.kind && e.receipts.length < weak ? " weak" : "");
     const sw = S.free ? 1 + 3 * Math.sqrt(e.receipts.length / wmax) : 1.3 + Math.min(2, Math.log2(e.receipts.length)); // free: grows with every import
+    e._sw = sw;
     e._el = el("path", { d, class: e._base, "marker-end": "url(#ah)", style: `stroke-width:${sw.toFixed(2)}px` }, eg); // inline: the .edge CSS rule would override an attribute
     const hit = (e._hit = el("path", { d, class: "edge-hit" }, eg));
     hit.addEventListener("pointerdown", (ev) => ev.stopPropagation());
     hit.addEventListener("pointerenter", (ev) => showEdgeTip(ev, e));
     hit.addEventListener("pointermove", moveTip);
-    hit.addEventListener("pointerleave", hideTip);
+    hit.addEventListener("pointerleave", () => { hideTip(); hotEdge(e, false); });
     hit.addEventListener("click", () => pick(e.target));
   });
   g.modules.forEach((m) => {
@@ -670,6 +673,7 @@ function paintSelection(hover) {
   });
   document.querySelectorAll("#edges .flow").forEach((f) => f.remove());
   S.graph.edges.forEach((e) => {
+    if (!e._el) return; // a graph not drawn yet (a project switch repaints before its first draw)
     const k = !focus ? "" : e.source === focus ? "dep" : e.target === focus ? "use" : "faded";
     // a dense map draws only the focused box's edges; a loop edge among them stays red (the cheapest import to cut)
     const quiet = S.dense && (k === "" || k === "faded");
@@ -795,13 +799,59 @@ function wireCanvas() {
 /* ---------------- edge tooltip (keyboard users get the same receipts in the panel) ---------------- */
 // What one module takes from another, by name: the functions and classes behind an import arrow.
 const takes = (e) => [...new Set(e.receipts.map((r) => r.name).filter(Boolean))];
+// Golden rule 2: hovering a line says in plain words what the link is and what it means for a change, with its
+// evidence counted; the line and its two boxes light up. No lists of names to decode.
+function readEdge(e) {
+  const a = `<b>${esc(shown(e.source))}</b>`, b = `<b>${esc(shown(e.target))}</b>`, r = e.receipts;
+  const few = (xs) => xs.slice(0, 3).map((x) => `<code>${esc(x)}</code>`).join(", ") + (xs.length > 3 ? ` and ${xs.length - 3} more` : "");
+  const uniq = (xs) => [...new Set(xs)];
+  if (e.kind === "runtime") {
+    const http = uniq(r.filter((x) => x.name.startsWith("HTTP ")).map((x) => x.name.slice(5)));
+    const runs = uniq(r.filter((x) => x.name.startsWith("runs ")).map((x) => x.name.slice(5)));
+    return [http.length && `${a} calls ${plural(http.length, "HTTP route")} of ${b}: ${few(http)}.`,
+      runs.length && `${a} starts ${few(runs)} from ${b}.`,
+      `If ${b} changes them, ${a} breaks with no import error to warn you. Fence both, or keep them as they are.`].filter(Boolean);
+  }
+  if (e.kind === "copy") {
+    const files = uniq(r.map((x) => x.file.split("/").pop()));
+    return [`${a} keeps copies of ${plural(files.length, "file")} from ${b}: ${few(files)}.`, `A fix in one usually belongs in the other too.`];
+  }
+  if (e.kind === "cochange") {
+    const n = e.n || 0;
+    return [`${a} and ${b} were changed in the same commit ${n === 1 ? "once" : `${n} times`}.`,
+      n < 3 ? "Weak evidence: no import or call links them, so they mostly change apart." : "They tend to change together: consider fencing both."];
+  }
+  const names = takes(e);
+  return [`${a} uses ${names.length ? `${plural(names.length, "name")} from ${b}: ${few(names)}` : `${b} as a whole`} (${plural(r.length, "import line")}).`,
+    `Editing ${b} can break ${a}. Fencing ${a} keeps ${b} read-only, so the agent sees only its interface.`];
+}
 function showEdgeTip(ev, e) {
-  const t = $("#tip"), names = takes(e);
-  const verb = ({ runtime: "calls or starts", copy: "has copies of code in", cochange: "changes together with" })[e.kind] || "uses";
-  t.innerHTML = `<div class="h">${esc(shown(e.source))} ${verb} ${esc(shown(e.target))}</div>`
-    + (names.length ? `<div class="tn">${names.slice(0, 12).map((n) => `<b class="mono">${esc(n)}</b>`).join(" ")}${names.length > 12 ? ` +${names.length - 12}` : ""}</div>` : `<div class="tn">the whole module</div>`)
-    + `<div class="tk">Click: ${esc(shown(e.target))}</div>`;
+  const t = $("#tip");
+  t.innerHTML = readEdge(e).map((line, k) => `<p${k ? ' class="so"' : ""}>${line}</p>`).join("");
   t.classList.add("show"); moveTip(ev);
+  hotEdge(e, true);
+}
+function linkPhrase(e) { // the side bar's few words for a link: what kind, how much
+  const r = e.receipts, uniq = (xs) => new Set(xs).size;
+  if (e.kind === "runtime") {
+    const http = uniq(r.filter((x) => x.name.startsWith("HTTP ")).map((x) => x.name)), runs = uniq(r.filter((x) => x.name.startsWith("runs ")).map((x) => x.name));
+    return [http && `calls ${plural(http, "HTTP route")}`, runs && `starts ${plural(runs, "file")}`].filter(Boolean).join(" · ");
+  }
+  if (e.kind === "copy") return `copies of ${plural(uniq(r.map((x) => x.file)), "file")}`;
+  if (e.kind === "cochange") return e.n === 1 ? "changed together once" : `changed together ${e.n} times`;
+  const n = takes(e).length;
+  return `${n ? `uses ${plural(n, "name")}` : "imports it"} · ${plural(r.length, "line")}`;
+}
+function fileGroups(m) { // files under the level below: a function by role, a role by part, a part by folder
+  const by = new Map(), add = (k, f) => (by.get(k) || by.set(k, []).get(k)).push(f);
+  const fr = fileRoles(), parts = (S.roles?.roles || []).find((r) => r.id === m.role)?.parts || {};
+  m.files.forEach((f) => add(m.area ? rname(fr[f]) : m.role ? parts[f] || "other" : (f.includes("/") ? f.slice(0, f.lastIndexOf("/") + 1) : "./"), f));
+  return [...by].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0])).map(([k, fs]) => [k, fs.sort()]);
+}
+function hotEdge(e, on) { // the hovered line and its two boxes light up a little
+  e._el.classList.toggle("hot", on);
+  e._el.style.strokeWidth = on ? `${(e._sw || 1.4) + 1.6}px` : `${e._sw || 1.4}px`;
+  [e.source, e.target].forEach((id) => document.querySelector(`.node[data-id="${CSS.escape(id)}"]`)?.classList.toggle("hot", on));
 }
 function moveTip(ev) { const t = $("#tip"); t.style.left = Math.min(ev.clientX + 14, innerWidth - t.offsetWidth - 10) + "px"; t.style.top = Math.min(ev.clientY + 16, innerHeight - t.offsetHeight - 10) + "px"; }
 function hideTip() { $("#tip").classList.remove("show"); }
