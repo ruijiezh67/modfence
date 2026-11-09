@@ -183,6 +183,22 @@ class RolesTest(unittest.TestCase):
         self.assertIn(("mirror/call.py", "mirror/routes.py", "http"), links, "a copy calls its own copy's route")
         self.assertNotIn(("mirror/call.py", "server/routes.py", "http"), links)
 
+    def test_blocks_keep_copies_together(self):
+        from modfence import roles
+        d = tempfile.mkdtemp(prefix="modfence-test-")
+        _dirs.append(d)
+        body = "".join(f"def watch_{i}(x):\n    return x * {i}\n" for i in range(10))
+        for rel, text in {"core/observers/screen.py": body, "win/observers/screen.py": body,
+                          "core/memory/store.py": "X = 1\n", "win/ui/page.py": "Y = 2\n"}.items():
+            os.makedirs(os.path.join(d, os.path.dirname(rel)), exist_ok=True)
+            write(os.path.join(d, rel), text)
+        b = roles.blocks(analyze.analyze(d))
+        self.assertEqual(b["core/observers/screen.py"], b["win/observers/screen.py"], "a copy is the same job")
+        self.assertNotEqual(b["core/memory/store.py"], b["win/ui/page.py"])
+        fn, purposes, cost, how = roles.functions(analyze.analyze(d), b, None)  # no model: the deterministic fallback
+        self.assertEqual(set(fn), set(b.values()))
+        self.assertIsNone(cost)
+
     def test_roles_from_history_keep_what_changes_together(self):
         from modfence import roles
         d = tempfile.mkdtemp(prefix="modfence-test-")

@@ -267,6 +267,8 @@ What this says:
 - **Merging crumbs first costs some lift** (rich .23 to .08, celery .27 to .20) but leaves no one-file boxes; a map of crumbs is not usable, so the shipped method pays that. On the private project the top-folder term in the similarity removed 7 crumbs (lift .70 to .67).
 - Folders alone swing from best (textual, .79, but one folder holds 42% of the code) to below chance (rich, -.04): a hint, not a rule.
 
+**Then the user chose function granularity anyway.** A first level of observer, inference, memory and so on is what people think in (golden rule 2), and those jobs span folders, which the deterministic signals only approximate: the shipped first level is now functions sorted by a model from blocks code cuts (copies always joined), with roles grouped by history inside each function. On the private project that gives 7 functions and 40 roles with lift .30 (21 crumbs, cover .10); these roles used the whole history, so the number is optimistic. That is the measured price of the granularity people asked for, against .67 for history-only roles (15 roles, cover .14). Cost of one proposal there: $0.18 (the function call with Sonnet $0.17).
+
 Limits: one split per project; 65 to 739 scored commits; the earlier-roles row exists only where such roles were stored; whether people find these roles easier to pick from is N/A.
 
 ## How modfence compares with popular tools

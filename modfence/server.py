@@ -214,7 +214,7 @@ def make_handler(app, port):
                     roles.confirm(root)
                 elif action == "areas":
                     with app.lock:  # one model call at a time
-                        roles.propose_areas(root, graph, app.claude)
+                        roles.propose_and_store(root, graph, app.claude)  # functions and their roles, together
                 elif action == "area_rename":
                     roles.rename_area(root, b.get("id"), b.get("name"))
                 elif action == "area_move":

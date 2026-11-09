@@ -199,7 +199,7 @@ def apply_areas(store, role_ids, answer):
 
 
 def m_model(root, graph, unit, claude, model, evidence):
-    """roles.propose_areas' model step on these units, with the import grouping as evidence. (box map, cost)."""
+    """A model groups these units into areas, a grouping as evidence (an experiment; not shipped). (box map, cost)."""
     from modfence import purpose
     stored = roles.load_store(root) if roles.view(root, graph)["roles"] else None
     names = {u: (stored["roles"][u]["name"] if stored and u in stored["roles"] else u) for u in set(unit.values())}

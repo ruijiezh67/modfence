@@ -565,26 +565,127 @@ def to_store(files_to_name, purposes, how, cost=None):
             "files": {f: ids[n] for f, n in sorted(files_to_name.items())}}
 
 
-def propose_and_store(root, graph, claude):
-    """Group with by_history (deterministic), then one small model call names each role. Without a model, or for a
-    group it leaves unnamed, the group keeps its folder or path-word label."""
-    groups = by_history(graph)
+# ---------- functions: the first level, at the granularity people think in (observer, inference, memory ...) ----------
+# A function is a job, and a job spans folders (a platform copy of the observers is still observer), which file
+# words, imports and history only approximate. So code cuts blocks that must stay together and a model, which knows
+# what "observer" means, only sorts whole blocks into functions; inside a function, code groups the roles again.
+FUNC_MAX, ROLES_PER_FUNC = 7, 6
+FUNC_SYSTEM = (
+    "You sort the code of a software system into its functions, for a developer who will pick a function, then a part "
+    "of it, and ask a coding agent to change it. A function is a job the system does, named in the project's own words, "
+    "like observer, segmenter, inference, memory, repair, evaluation, app. A function may span folders and programs: a "
+    "platform copy or a demo's copy of the observer code is still observer. You get blocks of files that must stay "
+    "together (a block already joins copies), with docstrings and the imports between blocks. Put every block in "
+    "exactly one function. Make at most 7 functions, none with more than 40% of the files. Name each in 1 or 2 "
+    "lowercase words and write one plain sentence of at most 20 words on what it does. Reply with JSON only: "
+    "{\"functions\": [{\"name\": \"...\", \"purpose\": \"...\", \"blocks\": [\"<block id>\", ...]}]}")
+
+
+def blocks(graph, files=None, copy_share=0.3):
+    """{file: block}: by_folder_words groups, a group joined with another when at least `copy_share` of the smaller
+    one's files are copies of the other's (a platform or demo copy does the same job). Deterministic."""
+    fw = by_folder_words(graph, files)
+    size, copies = Counter(fw.values()), Counter()
+    for l in runtime_links(graph, sorted(fw)):
+        a, b = fw.get(l["file"]), fw.get(l["target_file"])
+        if l["kind"] == "copy" and a and b and a != b:
+            copies[(min(a, b), max(a, b))] += 1
+    parent = {u: u for u in size}
+
+    def find(u):
+        while parent[u] != u:
+            parent[u] = parent[parent[u]]
+            u = parent[u]
+        return u
+    for (a, b), n in sorted(copies.items()):
+        if n >= copy_share * min(size[a], size[b]):
+            ra, rb = sorted((find(a), find(b)))
+            parent[rb] = ra
+    return {f: find(u) for f, u in fw.items()}
+
+
+def _clean(name, fallback):
+    return re.sub(r"[^a-z0-9 _-]", "", str(name or "").lower()).strip() or fallback
+
+
+def functions(graph, blk, claude, model="sonnet"):
+    """({block: function}, {function: purpose}, cost, how). One model call sorts whole blocks into at most FUNC_MAX
+    functions; a block it leaves out joins the function it imports most from (else the biggest). Without a model, or
+    on a bad answer, the deterministic grouping (suggest_areas) stands in, named after its biggest block."""
+    size = Counter(blk.values())
     try:
         if not claude:
             raise RuntimeError("no Claude Code CLI")
         from . import purpose
-        answer, cost = purpose._ask(claude, name_prompt(graph, groups), system=NAME_SYSTEM)
-        named = {g: v for g, v in (answer.get("roles") or {}).items() if isinstance(v, dict) and str(v.get("name") or "").strip()}
-        how = "folders, path words, imports and change history; named by a model"
+        answer, cost = purpose._ask(claude, name_prompt(graph, blk), system=FUNC_SYSTEM, model=model)
+        fn, purposes = {}, {}
+        for f in (answer.get("functions") or [])[:FUNC_MAX]:
+            n = _clean(f.get("name"), "")
+            if not n or n in purposes:
+                continue
+            purposes[n] = str(f.get("purpose") or "")[:200]
+            for b in f.get("blocks") or []:
+                if b in size and b not in fn:
+                    fn[b] = n
+        if not fn:
+            raise ValueError("the answer named no functions")
+        imp = role_imports(graph, blk)
+        biggest = max(purposes, key=lambda n: (sum(size[b] for b in fn if fn[b] == n), n))
+        for b in sorted(size):
+            if b not in fn:
+                near = Counter()
+                for k, v in imp.items():
+                    if b in k:
+                        o = next(iter(k - {b}), None)
+                        if o in fn:
+                            near[fn[o]] += v
+                fn[b] = max(near, key=lambda n: (near[n], n)) if near else biggest
+        how = f"blocks from folders, file names and copies; sorted into functions by a model ({model})"
     except (RuntimeError, OSError, ValueError) as e:
-        named, cost, how = {}, None, f"folders, path words, imports and change history ({e})"
+        groups = suggest_areas(blk, role_imports(graph, blk), change_sets(graph["root"], set(blk)), FUNC_MAX, AREA_CAP)
+        fn = {b: g[0] for g in groups for b in g}
+        purposes, cost = {g[0]: "" for g in groups}, None
+        how = f"blocks from folders, file names and copies; grouped by imports, history and folders ({e})"
+    return fn, purposes, cost, how
+
+
+def propose_and_store(root, graph, claude):
+    """Functions first (blocks sorted by a model), then inside each function at most ROLES_PER_FUNC roles grouped by
+    co-change, imports and folders (suggest_areas), named by one small model call. Stored with the functions as the
+    areas, the first level of the map."""
+    blk = blocks(graph, code_files(graph))
+    fn, fpurpose, fcost, how = functions(graph, blk, claude)
+    imports, changes = role_imports(graph, blk), change_sets(root, set(blk))
+    groups, role_fn = {}, {}
+    for fname in sorted(set(fn.values())):
+        sub = {f: b for f, b in blk.items() if fn[b] == fname}
+        size = Counter(sub.values())
+        for g in suggest_areas(sub, imports, changes, ROLES_PER_FUNC, 0.6):
+            label = f"{fname}:{max(g, key=lambda b: (size[b], b))}"
+            role_fn[label] = fname
+            groups.update({f: label for f, b in sub.items() if b in g})
+    try:
+        if not claude:
+            raise RuntimeError("no Claude Code CLI")
+        from . import purpose
+        answer, ncost = purpose._ask(claude, name_prompt(graph, groups), system=NAME_SYSTEM)
+        named = {g: v for g, v in (answer.get("roles") or {}).items() if isinstance(v, dict) and str(v.get("name") or "").strip()}
+    except (RuntimeError, OSError, ValueError):
+        named, ncost = {}, None
     name, purposes = {}, {}
     for g in sorted(set(groups.values())):
-        n = re.sub(r"[^a-z0-9 _-]", "", str((named.get(g) or {}).get("name") or g).lower()).strip() or g
-        while n in purposes:  # two groups never share a name, or to_store would merge them
+        n = _clean((named.get(g) or {}).get("name"), g.split(":", 1)[-1])
+        while n in purposes:  # two roles never share a name, or to_store would merge them
             n += "+"
         name[g], purposes[n] = n, str((named.get(g) or {}).get("purpose") or "")[:200]
-    store = to_store({f: name[g] for f, g in groups.items()}, purposes, how, cost)
+    store = to_store({f: name[g] for f, g in groups.items()}, purposes, how + "; roles grouped by history, named by a model",
+                     None if fcost is None and ncost is None else (fcost or 0) + (ncost or 0))
+    files_of = Counter(fn[b] for b in blk.values())
+    store["areas"] = {}
+    for i, fname in enumerate(sorted(files_of, key=lambda n: (-files_of[n], n)), 1):
+        rids = sorted({store["files"][f] for f, g in groups.items() if role_fn[g] == fname})
+        store["areas"][f"a{i}"] = {"name": tidy(fname), "purpose": fpurpose.get(fname, ""), "roles": rids}
+    store["areas_how"], store["areas_cost_usd"] = how, fcost
     save_store(root, store)
     return store
 
@@ -630,11 +731,7 @@ def confirm(root):
 # A model groups the roles (it knows what "capture" or "evaluation" means); the deterministic grouping that measured
 # best for vibe coding (bench/area_bench.py, docs/EVALUATION.md) is its evidence and the fallback when it fails.
 AREA_MAX = 7
-AREA_SYSTEM = (
-    "You name the areas of a software system for a developer who will pick one area, then one role in it, and ask a "
-    "coding agent to change it. Each area is a fixed group of roles; do not move roles. For each area, in the order "
-    "given, write a name of 1 to 3 lowercase words in the project's own vocabulary and one plain sentence of at most 20 "
-    "words on what it does. Reply with JSON only: {\"areas\": [{\"name\": \"...\", \"purpose\": \"...\"}]}")
+# (areas are made by propose_and_store: functions sorted by a model from blocks code cut)
 
 
 def role_imports(graph, role_of):
@@ -723,41 +820,6 @@ def area_prompt(store, role_of, groups):
             lines.append(f"- {store['roles'][rid]['name']} ({size[rid]} files; {', '.join(f'{d}/' for d, _ in folders)}): "
                          f"{store['roles'][rid].get('purpose', '')}")
     return "\n".join(lines)
-
-
-def propose_areas(root, graph, claude, model="haiku"):
-    """Group the stored roles into at most AREA_MAX areas with suggest_areas (deterministic; a model grouping measured
-    no better, docs/EVALUATION.md section 6), then one small model call names them. Without a model, or if its answer
-    does not fit, an area is named after its biggest roles. Stored in the roles store."""
-    store = load_store(root)
-    if not store:
-        raise LookupError("no roles yet")
-    v = view(root, graph)
-    role_of = {f: r["id"] for r in v["roles"] for f in r["files"] if f not in v["kinds"]}
-    groups = suggest_areas(role_of, role_imports(graph, role_of), change_sets(root, set(role_of)))
-    rest = sorted({r["id"] for r in v["roles"]} - set(role_of.values()))  # roles left with no own files
-    groups += [rest] if rest else []
-    names, cost, how = [], None, "grouped by imports, change history and folders"
-    try:
-        if not claude:
-            raise RuntimeError("no Claude Code CLI")
-        from . import purpose
-        answer, cost = purpose._ask(claude, area_prompt(store, role_of, groups), system=AREA_SYSTEM, model=model)
-        names = [(tidy(str(a.get("name") or "")), str(a.get("purpose") or "")[:200]) for a in answer.get("areas") or []]
-        if len(names) != len(groups) or not all(n for n, _ in names):
-            raise ValueError("the names do not match the areas")
-        how += f"; named by a model ({model})"
-    except (RuntimeError, OSError, ValueError) as e:
-        names, how = [], how + f"; named after their biggest roles ({e})"
-    areas = {}
-    for i, g in enumerate(groups, 1):
-        name, purpose_ = names[i - 1] if names else (tidy(" ".join(store["roles"][r]["name"] for r in g[:2])), "")
-        while any(a["name"].casefold() == name.casefold() for a in areas.values()):
-            name = tidy(f"{name} {i}")
-        areas[f"a{i}"] = {"name": name, "purpose": purpose_, "roles": g}
-    store["areas"], store["areas_how"], store["areas_cost_usd"] = areas, how, cost
-    save_store(root, store)
-    return store
 
 
 def rename_area(root, aid, name):

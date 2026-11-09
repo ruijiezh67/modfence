@@ -180,6 +180,7 @@ function usersOf(files) { // roles whose code imports any of these files
   S.full.edges.forEach((e) => e.receipts.forEach((r) => { if (fs.has(r.target_file) && !fs.has(r.file) && fr[r.file] && !kindOf(r.file)) out.add(fr[r.file]); }));
   return [...out];
 }
+const GHOSTS = 4;
 function roleGraph() {
   const fr = fileRoles(), rs = [...S.roles.roles];
   if (S.roles.unassigned.length) rs.push({ id: "?", name: "not placed yet", purpose: "New files: place them in a role.", files: S.roles.unassigned });
@@ -191,8 +192,11 @@ function roleGraph() {
   const edges = linked(all, prune(aggregate((f) => !kindOf(f) && nodeOf(f))), nodeOf, (r) => "role:" + r);
   if (!inArea) return { ...S.full, modules: all, edges };
   const mine = new Set(all.filter((b) => inArea.has(b.role)).map((b) => b.id));
-  const keep = edges.filter((e) => mine.has(e.source) || mine.has(e.target));
-  const ghosts = new Set(keep.flatMap((e) => [e.source, e.target]).filter((id) => !mine.has(id))), ar = areaOf();
+  const touching = edges.filter((e) => mine.has(e.source) || mine.has(e.target)), weight = new Map();
+  touching.forEach((e) => [e.source, e.target].filter((id) => !mine.has(id)).forEach((id) => weight.set(id, (weight.get(id) || 0) + e.receipts.length)));
+  // ponytail: the GHOSTS most linked outside roles only; the side bar still lists every link
+  const ghosts = new Set([...weight].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).slice(0, GHOSTS).map(([id]) => id)), ar = areaOf();
+  const keep = touching.filter((e) => (mine.has(e.source) || ghosts.has(e.source)) && (mine.has(e.target) || ghosts.has(e.target)));
   const aname = (aid) => ((S.roles.areas || []).find((x) => x.id === aid) || {}).name || "another area";
   return { ...S.full, edges: keep, modules: all.filter((b) => mine.has(b.id) || ghosts.has(b.id))
     .map((b) => (ghosts.has(b.id) ? { ...b, ghost: true, meta: `in ${aname(ar[b.role])}` } : b)) };
