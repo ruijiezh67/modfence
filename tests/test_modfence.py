@@ -143,7 +143,7 @@ class RolesTest(unittest.TestCase):
                    "routers/memory_routes.py": "core", "app.py": "core", "main.py": "core"}
         kind, door_of = roles.kinds(g, role_of)
         self.assertEqual(kind, {"main.py": "entry", "settings.py": "shared", "routers/memory_routes.py": "door"})
-        self.assertEqual(door_of, {"routers/memory_routes.py": "mem"}, "a door serves the file named like it")
+        self.assertEqual(door_of, {"routers/memory_routes.py": "mem", "main.py": "core"}, "a door serves the file named like it; an entry, what it imports")
         self.assertEqual(roles.kinds(g, role_of), (kind, door_of))  # deterministic
 
     def test_areas_hold_every_role_once_in_at_most_seven(self):
@@ -159,6 +159,29 @@ class RolesTest(unittest.TestCase):
         self.assertLessEqual(max(sizes), roles.AREA_CAP * len(role_of) + 3, "no blob")
         together = roles.suggest_areas(role_of, Counter(), [{"a/f0.py", "j/f0.py"}] * 5)
         self.assertTrue(any({"a", "j"} <= set(g) for g in together), "roles that change together share an area")
+
+    def test_runtime_links_find_http_calls_runs_and_copies(self):
+        from modfence import roles
+        d = tempfile.mkdtemp(prefix="modfence-test-")
+        _dirs.append(d)
+        body = "".join(f"def step_{i}(x):\n    return x + {i}\n" for i in range(8))
+        files = {
+            "server/routes.py": "from fastapi import APIRouter\nr = APIRouter(prefix='/v1')\n@r.get('/items/{item_id}')\ndef get(item_id): pass\n",
+            "app/client.py": "import urllib.request\ndef fetch(i):\n    return urllib.request.urlopen(f'http://127.0.0.1/v1/items/{i}')\n",
+            "tools/run.py": "import subprocess\nsubprocess.run(['python', 'server/routes.py'])\n",
+            "server/steps.py": body, "mirror/steps.py": body + "def extra():\n    return 0\n",
+            "mirror/routes.py": "from fastapi import APIRouter\nr = APIRouter(prefix='/v1')\n@r.get('/items/{item_id}')\ndef get(item_id): pass\n",
+            "mirror/call.py": "URL = '/v1/items/7'\n",
+        }
+        for rel, text in files.items():
+            os.makedirs(os.path.join(d, os.path.dirname(rel)), exist_ok=True)
+            write(os.path.join(d, rel), text)
+        links = {(l["file"], l["target_file"], l["kind"]) for l in roles.runtime_links(analyze.analyze(d))}
+        self.assertIn(("app/client.py", "server/routes.py", "http"), links)  # an f-string path matches a {param} route
+        self.assertIn(("tools/run.py", "server/routes.py", "runs"), links)
+        self.assertTrue({("mirror/steps.py", "server/steps.py", "copy"), ("server/steps.py", "mirror/steps.py", "copy")} & links)
+        self.assertIn(("mirror/call.py", "mirror/routes.py", "http"), links, "a copy calls its own copy's route")
+        self.assertNotIn(("mirror/call.py", "server/routes.py", "http"), links)
 
     def test_roles_from_history_keep_what_changes_together(self):
         from modfence import roles

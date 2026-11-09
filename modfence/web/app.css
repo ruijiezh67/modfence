@@ -165,6 +165,12 @@ body.panel-open .canvas, body.panel-open .alt { right: var(--panel-w); }
 .edge.faded { opacity: 0.25; }
 .edge.back { stroke: var(--bad); stroke-opacity: 0.8; }
 .edge.weak { stroke-opacity: 0.28; }
+.node.ghost { opacity: 0.55; } .node.ghost .card { stroke-dasharray: 4 3; } /* a role in another area this one links to */
+.edge.runtime { stroke-dasharray: 7 5; }
+.edge.cochange { stroke-dasharray: 1.5 5; stroke-linecap: round; }
+.edge.copy { stroke-dasharray: 12 4 2 4; }
+.legend i.dashdot { border-style: dashed; border-width: 2px; }
+.legend i.line { border-style: solid; } .legend i.dash { border-style: dashed; } .legend i.dot { border-style: dotted; }
 .crumbs em.round { color: var(--ok); font-style: normal; }
 .crumbs em.round b { font-weight: 650; }
 .edge.quiet, .edge-hit.quiet { display: none; }

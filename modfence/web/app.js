@@ -165,7 +165,7 @@ function loopEdges(edges) {
   return back;
 }
 // Cross-cutting files (roles.kinds): entry points, doors (HTTP routes) and shared config are not features, so they are
-// not boxes, draw no edges and stay out of a role's fence: they show as a strip on top, a rail below and door counts.
+// not boxes, draw no edges and stay out of a role's fence: the side bar lists them with the role they serve.
 const kindOf = (f) => (S.roles?.kinds || {})[f];
 const ownFiles = (r) => r.files.filter((f) => !kindOf(f));
 const doorsOf = (rid) => Object.keys(S.roles?.doors || {}).filter((f) => S.roles.doors[f] === rid).sort();
@@ -174,13 +174,6 @@ function roleNode(r, kind = "group") {
   return { id: "role:" + r.id, role: r.id, kind: r.name === "shared" ? "tests" : kind, label: r.name,
     meta: plural(files.length, "file") + (doors.length ? ` · ${plural(doors.length, "door")}` : ""), doors,
     files, lines, names: [], doc: r.purpose || "", members: [...new Set(files.map((f) => S.full.files[f].module))] };
-}
-const RAILS = { entry: ["start points", "Where the programs start (main files and scripts). Read-only by default: no role's fence includes them."],
-  shared: ["shared", "Settings and config most roles import. Read-only by default: a change here reaches every role that uses it."] };
-function railNode(k) {
-  const files = Object.keys(S.roles?.kinds || {}).filter((f) => S.roles.kinds[f] === k).sort();
-  return files.length && { id: "rail:" + k, kind: "rail", label: RAILS[k][0], doc: RAILS[k][1], files, names: [], members: [],
-    meta: plural(files.length, "file"), lines: files.reduce((a, f) => a + (S.full.files[f]?.lines || 0), 0) };
 }
 function usersOf(files) { // roles whose code imports any of these files
   const fs = new Set(files), fr = fileRoles(), out = new Set();
@@ -191,9 +184,18 @@ function roleGraph() {
   const fr = fileRoles(), rs = [...S.roles.roles];
   if (S.roles.unassigned.length) rs.push({ id: "?", name: "not placed yet", purpose: "New files: place them in a role.", files: S.roles.unassigned });
   const area = S.area && (S.roles.areas || []).find((a) => a.id === S.area), inArea = area && new Set(area.roles);
-  const boxes = rs.filter((r) => (!inArea || inArea.has(r.id)) && ownFiles(r).length).map((r) => roleNode(r));
-  return { ...S.full, modules: (inArea ? boxes : [railNode("entry"), ...boxes, railNode("shared")]).filter(Boolean),
-    edges: prune(aggregate((f) => !kindOf(f) && fr[f] && (!inArea || inArea.has(fr[f])) && "role:" + fr[f])) };
+  // Inside an area, a role's links often lead out of it: the roles at the other end are drawn too, faded ("ghosts",
+  // labelled with their area), so every box shows what it is tied to. Click one to go there.
+  const all = rs.filter((r) => ownFiles(r).length).map((r) => roleNode(r));
+  const nodeOf = (f) => { const r = S.roles.doors?.[f] || fr[f]; return r && "role:" + r; };
+  const edges = linked(all, prune(aggregate((f) => !kindOf(f) && nodeOf(f))), nodeOf, (r) => "role:" + r);
+  if (!inArea) return { ...S.full, modules: all, edges };
+  const mine = new Set(all.filter((b) => inArea.has(b.role)).map((b) => b.id));
+  const keep = edges.filter((e) => mine.has(e.source) || mine.has(e.target));
+  const ghosts = new Set(keep.flatMap((e) => [e.source, e.target]).filter((id) => !mine.has(id))), ar = areaOf();
+  const aname = (aid) => ((S.roles.areas || []).find((x) => x.id === aid) || {}).name || "another area";
+  return { ...S.full, edges: keep, modules: all.filter((b) => mine.has(b.id) || ghosts.has(b.id))
+    .map((b) => (ghosts.has(b.id) ? { ...b, ghost: true, meta: `in ${aname(ar[b.role])}` } : b)) };
 }
 function partGraph(rid) {
   const fr = fileRoles(), mine = new Set(Object.keys(fr).filter((f) => fr[f] === rid && !kindOf(f)));
@@ -219,7 +221,7 @@ function pick(id) { // a click only selects; the card below says what it is and 
   const link = (e, other) => { const n = takes(e); return `<li><button type="button" class="lk" data-go="${esc(other)}">${esc(shown(other))}</button>`
     + `<span class="mono">${n.length ? esc(clip(n.join(", "), 80)) : "the whole module"}</span></li>`; };
   const out = (S.graph.edges || []).filter((e) => e.source === id), inn = (S.graph.edges || []).filter((e) => e.target === id);
-  const rail = id.startsWith("rail:"), reach = rail ? usersOf(m.files) : [];
+  const mine = new Set(m.files), shared = [...new Set(S.full.edges.flatMap((e) => e.receipts).filter((r) => mine.has(r.file) && kindOf(r.target_file) === "shared").map((r) => r.target_file))].sort();
   const doc = folder ? "" : m.doc || mdoc(m);
   const fdoc = (f) => S.full.files[f]?.doc || "";
   card.innerHTML = `<div class="pk"><b>${esc(name)}</b><button type="button" class="btn quiet" data-x aria-label="Close">${X_ICON}</button></div>`
@@ -231,8 +233,8 @@ function pick(id) { // a click only selects; the card below says what it is and 
     + (inn.length ? `<h4>Used by <i>${inn.length}</i></h4><ul class="pl">${inn.map((e) => link(e, e.source)).join("")}</ul>` : "")
     + (area ? `<h4>Roles <i>${m.roles.length}</i></h4><ul class="pf">${m.roles.map((r) => `<li><span class="mono">${esc(r.name)}</span><span>${esc(r.purpose || "")}</span></li>`).join("")}</ul>` : "")
     + (id.startsWith("role:") && S.roles.areas?.length ? `<h4>Area</h4><select data-area aria-label="Area of ${esc(name)}">${S.roles.areas.filter((a) => a.id !== "?").map((a) => `<option value="${esc(a.id)}"${areaOf()[id.slice(5)] === a.id ? " selected" : ""}>${esc(a.name)}</option>`).join("")}</select>` : "")
-    + (m.doors?.length ? `<h4>Doors <i>${m.doors.length}</i></h4><ul class="pf">${m.doors.map((f) => `<li><span class="mono">${esc(f)}</span><span>HTTP routes into this role · read-only by default</span></li>`).join("")}</ul>` : "")
-    + (rail ? `<h4>Used by <i>${reach.length}</i></h4><ul class="pl">${reach.map((r) => `<li><button type="button" class="lk" data-go="role:${esc(r)}">${esc(rname(r))}</button></li>`).join("")}</ul>` : "")
+    + (m.doors?.length ? `<h4>Start files and routes <i>${m.doors.length}</i></h4><ul class="pf">${m.doors.map((f) => `<li><span class="mono">${esc(f)}</span><span>${kindOf(f) === "entry" ? "starts the program" : "HTTP routes into it"} · read-only by default</span></li>`).join("")}</ul>` : "")
+    + (shared.length ? `<h4>Shared config it reads <i>${shared.length}</i></h4><ul class="pf">${shared.map((f) => `<li><span class="mono">${esc(f)}</span><span>${esc(S.full.files[f]?.doc || "")} · read-only by default</span></li>`).join("")}</ul>` : "")
     + `<h4>Files <i>${m.files.length}</i></h4><ul class="pf">${m.files.map((f) => `<li><span class="mono">${esc(f)}</span>${fdoc(f) ? `<span>${esc(fdoc(f))}</span>` : ""}</li>`).join("")}</ul>`;
   const opening = card.hidden;
   card.hidden = false; card.scrollTop = 0;
@@ -272,7 +274,7 @@ async function proposeAreas() { // the first level: at most 7 areas of roles, on
 }
 const areaOf = () => Object.fromEntries((S.roles?.areas || []).flatMap((a) => a.roles.map((r) => [r, a.id])));
 function openArea(aid) { S.area = aid; S.level = "roles"; regroup(); fitView(); }
-function areaGraph() { // level 1: the areas, each the own files of its roles; entry strip and shared rail around them
+function areaGraph() { // level 1: the areas, each the own files of its roles
   const fr = fileRoles(), ar = areaOf();
   const boxes = S.roles.areas.map((a) => {
     const rs = a.roles.map((rid) => S.roles.roles.find((r) => r.id === rid)).filter(Boolean), files = rs.flatMap(ownFiles);
@@ -280,8 +282,32 @@ function areaGraph() { // level 1: the areas, each the own files of its roles; e
       files, lines: files.reduce((n, f) => n + (S.full.files[f]?.lines || 0), 0), names: [], doc: a.purpose || "",
       roles: rs, members: [...new Set(files.map((f) => S.full.files[f].module))] };
   }).filter((b) => b.files.length);
-  return { ...S.full, modules: [railNode("entry"), ...boxes, railNode("shared")].filter(Boolean),
-    edges: aggregate((f) => !kindOf(f) && ar[fr[f]] && "area:" + ar[fr[f]]) };
+  const nodeOf = (f) => { const a = ar[S.roles.doors?.[f] || fr[f]]; return a && "area:" + a; };
+  return { ...S.full, modules: boxes, edges: linked(boxes, aggregate((f) => !kindOf(f) && nodeOf(f)), nodeOf, (r) => ar[r] && "area:" + ar[r]) };
+}
+// Imports are not the only way boxes talk: programs call each other over HTTP or start each other (roles.runtime_links,
+// dashed), and a box with no link at all is tied to the box it most often changed with in git (dotted). Every link
+// keeps its evidence: the file and line, the route or file named, or the number of commits.
+function linked(boxes, edges, nodeOf, roleBox) {
+  const has = new Set(edges.map((e) => e.source + "\n" + e.target)), extra = new Map();
+  (S.roles?.links || []).forEach((l) => {
+    const a = nodeOf(l.file), b = nodeOf(l.target_file);
+    if (!a || !b || a === b || has.has(a + "\n" + b)) return;
+    const k = a + "\n" + b;
+    if (!extra.has(k)) extra.set(k, { source: a, target: b, kind: l.kind === "copy" ? "copy" : "runtime", receipts: [] });
+    extra.get(k).receipts.push({ file: l.file, line: l.line, target_file: l.target_file, name: ({ http: "HTTP ", runs: "runs ", copy: "copy of " })[l.kind] + l.name });
+  });
+  const all = [...edges, ...extra.values()], linkedBox = new Set(all.flatMap((e) => [e.source, e.target])), ids = new Set(boxes.map((b) => b.id));
+  boxes.filter((b) => !linkedBox.has(b.id)).forEach((b) => { // an island: tie it to its strongest co-change partner
+    let best = null;
+    (S.roles?.cochange || []).forEach(([ra, rb, n]) => {
+      const a = roleBox(ra), c = roleBox(rb);
+      if (!a || !c || a === c || ![a, c].includes(b.id) || !ids.has(a) || !ids.has(c)) return;
+      if (!best || n > best.n) best = { n, other: a === b.id ? c : a };
+    });
+    if (best) all.push({ source: b.id, target: best.other, kind: "cochange", receipts: [{ name: `changed together in ${best.n} commits` }] });
+  });
+  return all;
 }
 function renameRole(rid) {
   const r = S.roles.roles.find((x) => x.id === rid);
@@ -358,7 +384,7 @@ const inSet = (set, id) => set.has(id) || !!(mod(id)?.members && mod(id).members
 
 /* ---------------- layout: layered, foundations at the bottom ---------------- */
 function layout() {
-  const g = S.graph, all = g.modules.map((m) => m.id), ids = all.filter((i) => !i.startsWith("rail:"));
+  const g = S.graph, all = g.modules.map((m) => m.id), ids = all;
   // Rank on the imports left once loop edges are set aside (loopEdges): an acyclic graph, so every other edge points down.
   S.back = loopEdges(g.edges);
   const deps = {};
@@ -393,25 +419,14 @@ function layout() {
   S.dense = !S.free && g.edges.length > DENSE;
   if (S.free) return placeFree(g, all, ids, rank);
   if (S.dense) { const order = rows.flat(), cols = Math.ceil(Math.sqrt(order.length * 1.8)); rows = Array.from({ length: Math.ceil(order.length / cols) }, (_, i) => order.slice(i * cols, (i + 1) * cols)); }
-  if (all.includes("rail:entry")) rows.unshift(["rail:entry"]);
-  if (all.includes("rail:shared")) rows.push(["rail:shared"]);
   S.rows = rows.map((row) => row.slice());
   S.pos = {};
   rows.forEach((row, ri) => row.forEach((id, k) => {
     S.pos[id] = { x: (k - (row.length - 1) / 2) * (NODE_W + GAP_X) - NODE_W / 2, y: ri * (NODE_H + GAP_Y) };
   }));
-  const xs = ids.map((i) => S.pos[i].x), x0 = xs.length ? Math.min(...xs) : -NODE_W / 2, x1 = xs.length ? Math.max(...xs) + NODE_W : NODE_W / 2;
-  all.filter((i) => i.startsWith("rail:")).forEach((i) => Object.assign(S.pos[i], { x: x0, w: Math.max(NODE_W, x1 - x0) }));
 }
 
-function placeFree(g, all, ids, rank) { // stress positions, then the entry strip above and the shared rail below
-  S.pos = stressLayout(ids, g.edges, rank);
-  S.rows = [];
-  const xs = ids.map((i) => S.pos[i].x), ys = ids.map((i) => S.pos[i].y);
-  const x0 = Math.min(...xs, 0), x1 = Math.max(...xs, 0) + NODE_W, y0 = Math.min(...ys, 0), y1 = Math.max(...ys, 0) + NODE_H;
-  if (all.includes("rail:entry")) S.pos["rail:entry"] = { x: x0, y: y0 - NODE_H - GAP_Y, w: Math.max(NODE_W, x1 - x0) };
-  if (all.includes("rail:shared")) S.pos["rail:shared"] = { x: x0, y: y1 + GAP_Y, w: Math.max(NODE_W, x1 - x0) };
-}
+function placeFree(g, all, ids, rank) { S.pos = stressLayout(ids, g.edges, rank); S.rows = []; }
 // Stress majorization (Gansner, Koren and North 2004), the per-node update with weights d^-2: boxes that import each
 // other sit close, the drawing comes nearest to a hand-made one on small graphs. Distance = import hops. Start from the
 // import ranks (deterministic, upstream on top); a light pull keeps each import pointing down unless it closes a loop.
@@ -516,7 +531,7 @@ function drawGraph() {
   g.edges.forEach((e) => {
     const d = (e._d = edgePath(e, spread.get(e)));
     e._back = !S.free && S.back.has(e); // closes a loop: drawn red, the cheapest import to cut (layered maps only)
-    e._base = (mod(e.source).kind === "tests" ? "edge from-tests" : "edge") + (e._back ? " back" : "") + (S.free && e.receipts.length < weak ? " weak" : "");
+    e._base = (mod(e.source).kind === "tests" ? "edge from-tests" : "edge") + (e._back ? " back" : "") + (e.kind ? " " + e.kind : "") + (S.free && !e.kind && e.receipts.length < weak ? " weak" : "");
     const sw = S.free ? 1 + 3 * Math.sqrt(e.receipts.length / wmax) : 1.3 + Math.min(2, Math.log2(e.receipts.length)); // free: grows with every import
     e._el = el("path", { d, class: e._base, "marker-end": "url(#ah)", style: `stroke-width:${sw.toFixed(2)}px` }, eg); // inline: the .edge CSS rule would override an attribute
     const hit = (e._hit = el("path", { d, class: "edge-hit" }, eg));
@@ -527,11 +542,11 @@ function drawGraph() {
     hit.addEventListener("click", () => pick(e.target));
   });
   g.modules.forEach((m) => {
-    if (m.kind === "rail") return drawRail(m, ng);
     const { x, y } = S.pos[m.id];
     const n = el("g", { class: `node${m.kind === "tests" ? " tests" : ""}`, transform: `translate(${x},${y})`, tabindex: 0, role: "button", "data-id": m.id }, ng);
     el("rect", { class: "ring", x: -3, y: -3, width: NODE_W + 6, height: NODE_H + 6, rx: 10 }, n);
     if (m.group) { n.classList.add("group"); el("rect", { class: "stack", x: 5, y: 5, width: NODE_W, height: NODE_H, rx: 7 }, n); }
+    if (m.ghost) n.classList.add("ghost");
     el("rect", { class: "card", width: NODE_W, height: NODE_H, rx: 7 }, n);
     el("rect", { class: "fill", width: NODE_W, height: NODE_H, rx: 7 }, n);
     const name = el("text", { class: "name", x: 12, y: 25 }, n);
@@ -556,26 +571,7 @@ function drawGraph() {
   });
   paintSelection();
 }
-const RAIL_H = 46, DENSE = 20; // ponytail: 20 edges is a guess at where a node-link picture stops reading
-function drawRail(m, ng) { // a full-width strip: entry points on top, shared config below; its files as one line of names
-  const { x, y, w } = S.pos[m.id], top = m.id === "rail:entry";
-  const n = el("g", { class: "node rail", transform: `translate(${x},${y + (top ? NODE_H - RAIL_H : 0)})`, tabindex: 0, role: "button", "data-id": m.id }, ng);
-  el("rect", { class: "ring", x: -3, y: -3, width: w + 6, height: RAIL_H + 6, rx: 10 }, n);
-  el("rect", { class: "card", width: w, height: RAIL_H, rx: 7 }, n);
-  el("rect", { class: "fill", width: w, height: RAIL_H, rx: 7 }, n);
-  const name = el("text", { class: "name", x: 14, y: 28 }, n);
-  name.textContent = m.label;
-  const stems = [...new Set(m.files.map((f) => f.split("/").pop().replace(/\.py$/, "")))];
-  const names = el("text", { class: "meta", x: 130, y: 28 }, n);
-  names.textContent = clip(stems.join(" · "), Math.max(10, Math.floor((w - 280) / 7.2)));
-  const meta = el("text", { class: "meta", x: w - 14, y: 28, "text-anchor": "end" }, n);
-  meta.textContent = m.meta + " · read-only";
-  el("text", { class: "tag", x: w - 14, y: 12, "text-anchor": "end", "data-tag": "" }, n);
-  el("title", {}, n).textContent = m.files.join("\n");
-  n.addEventListener("pointerdown", (ev) => ev.stopPropagation());
-  n.addEventListener("click", (ev) => onNodeClick(m.id, ev));
-  n.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onNodeClick(m.id, ev); } });
-}
+const DENSE = 20; // ponytail: 20 edges is a guess at where a node-link picture stops reading
 function routeLanes(g) {
   // An edge that skips rows goes around the cards in between: right if its target lies to the right, else left.
   const rowOf = (id) => Math.round(S.pos[id].y / (NODE_H + GAP_Y));
@@ -603,7 +599,6 @@ const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
 function related(id) {
   const dep = new Set(), use = new Set();
-  if (id.startsWith("rail:")) { usersOf(mod(id).files).forEach((r) => use.add("role:" + r)); return { dep, use }; } // no edges drawn: who uses it
   S.graph.edges.forEach((e) => { if (e.source === id) dep.add(e.target); if (e.target === id) use.add(e.source); });
   return { dep, use };
 }
@@ -670,6 +665,7 @@ function hoverNode(id, on) {
 function renderLegend(focus) {
   const items = [];
   if (focus) items.push(["var(--select)", "", "selected"], ["var(--dep)", "", "uses"], ["var(--use)", "", "used by"]);
+  if (S.free && S.graph.edges.some((e) => e.kind)) items.push(["var(--text-3)", "line", "imports"], ["var(--text-3)", "dash", "calls over HTTP or starts"], ["var(--text-3)", "dashdot", "copied code"], ["var(--text-3)", "dot", "changed together (git)"]);
   if (S.selected && !S.readOnly) items.push(["var(--fence)", "hatch", "editable (in the fence)"]);
   if (S.marks.changed.size) items.push(["var(--ok)", "", "changed by the last run"]);
   if (S.marks.ripple.size) items.push(["var(--warn)", "", "uses changed code"]);
@@ -777,7 +773,8 @@ function wireCanvas() {
 const takes = (e) => [...new Set(e.receipts.map((r) => r.name).filter(Boolean))];
 function showEdgeTip(ev, e) {
   const t = $("#tip"), names = takes(e);
-  t.innerHTML = `<div class="h">${esc(shown(e.source))} uses ${esc(shown(e.target))}</div>`
+  const verb = ({ runtime: "calls or starts", copy: "has copies of code in", cochange: "changes together with" })[e.kind] || "uses";
+  t.innerHTML = `<div class="h">${esc(shown(e.source))} ${verb} ${esc(shown(e.target))}</div>`
     + (names.length ? `<div class="tn">${names.slice(0, 12).map((n) => `<b class="mono">${esc(n)}</b>`).join(" ")}${names.length > 12 ? ` +${names.length - 12}` : ""}</div>` : `<div class="tn">the whole module</div>`)
     + `<div class="tk">Click: ${esc(shown(e.target))}</div>`;
   t.classList.add("show"); moveTip(ev);
@@ -787,7 +784,7 @@ function hideTip() { $("#tip").classList.remove("show"); }
 
 /* ---------------- selection, fence & panel ---------------- */
 function onNodeClick(id, ev) {
-  if (/^(role|dir|part|rail|area):/.test(id)) { pick(id); return; }
+  if (/^(role|dir|part|area):/.test(id)) { pick(id); return; }
   // a click only picks (the card opens it on purpose); shift-click with a module open grows the fence
   if (!((ev.shiftKey || ev.metaKey || ev.ctrlKey) && S.selected) || mod(id)?.group) { pick(id); return; }
   if (S.scope.has(id) && S.scope.size > 1) S.scope.delete(id); else S.scope.add(id);

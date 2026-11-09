@@ -86,13 +86,117 @@ def kinds(graph, role_of):
     uses = defaultdict(Counter)  # a door serves the role of the file named like it (memory_routes -> memory.py), else
     for t, ps in imp.items():     # the role it imports most
         for p in ps:
-            if kind.get(p) == "door" and t not in kind and role_of.get(t):
+            if kind.get(p) in ("door", "entry") and t not in kind and role_of.get(t):
                 core = set(re.split(r"[_.\-]+", stem(p))) - DOOR
                 uses[p][role_of[t]] += 100 if core and core <= set(re.split(r"[_.\-]+", stem(t))) else 1
     door_of = {f: min(c.items(), key=lambda kv: (-kv[1], kv[0]))[0] for f, c in uses.items() if c}
-    for f in [f for f, k in kind.items() if k == "door" and f not in door_of]:
-        kind[f] = "entry"  # a door to nothing modfence knows: list it with the entries
+    for f, k in kind.items():  # an entry or door that imports nothing modfence knows stays with its own role
+        if k != "shared" and f not in door_of and role_of.get(f):
+            door_of[f] = role_of[f]
     return kind, door_of
+
+
+# ---------- runtime links: what talks to what without an import (golden rules 2, 7) ----------
+# Separate programs (a desktop app, a demo service, evaluation scripts) call each other over HTTP or start each other,
+# so the import graph shows them as islands. Two string matches, deterministic, every link with its file and line.
+ROUTE = re.compile(r"@\w+\.(?:get|post|put|delete|patch|websocket|api_route|route)\(\s*[\"']([^\"']+)")
+PREFIX = re.compile(r"APIRouter\([^)]*prefix\s*=\s*[\"']([^\"']+)")
+DOTTED = re.compile(r"^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+$")
+
+
+def _strings(text):
+    """(string, line) for every string literal; an f-string's holes become {}."""
+    import ast
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return []
+    out = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            out.append((n.value, n.lineno))
+        elif isinstance(n, ast.JoinedStr):
+            out.append(("".join(p.value if isinstance(p, ast.Constant) and isinstance(p.value, str) else "{}" for p in n.values), n.lineno))
+    return out
+
+
+def role_cochange(root, members, least=1):
+    """[[role a, role b, commits that changed both]] from git history (commits of up to 100 files). The map uses it
+    only to tie a box that has no other link, and shows the count, so one shared commit reads as the weak evidence it is."""
+    role_of = {f: r for r, fs in members.items() for f in fs}
+    c = Counter()
+    for change in change_sets(root, set(role_of), big=100):
+        rs = sorted({role_of[f] for f in change})
+        c.update((a, b) for i, a in enumerate(rs) for b in rs[i + 1:])
+    return [[a, b, n] for (a, b), n in sorted(c.items()) if n >= least]
+
+
+def runtime_links(graph, files=None):
+    """[{file, line, target_file, kind, name}]. kind "http": a string in `file` is a URL path (2+ segments) that a route
+    decorator in `target_file` serves; "runs": a string names another code file by path or dotted module; "copy": the
+    file is a copy of `target_file` (same name, another top folder, half its lines shared). When the
+    same path or name exists in several places, the one under the caller's own top folder wins (a platform copy calls
+    its own copy); else a route served by up to 3 files links to each, and a file name found in several places is
+    too common to tell and skipped. Read-only."""
+    root, files = graph["root"], files or code_files(graph)
+    top = lambda f: f.split("/")[0] if "/" in f else "."
+    text = {}
+    for f in files:
+        try:
+            with open(os.path.join(root, f), encoding="utf-8", errors="replace") as fh:
+                text[f] = fh.read()
+        except OSError:
+            pass
+    routes = []
+    for f, t in text.items():
+        m = PREFIX.search(t)
+        pre = m.group(1) if m else ""
+        for r in ROUTE.findall(t):
+            full = (r if r.startswith(pre) else pre + r).rstrip("/")
+            if full.count("/") >= 2:
+                routes.append((re.compile("^" + re.sub(r"\\\{[^}]*\\\}", "[^/]+", re.escape(full)) + "/?$"), f, full))
+
+    def pick(f, cands, most):
+        """The candidate under the caller's own top folder, else every candidate when there are at most `most` files
+        (an API served by two copies: the caller may reach either), else none (a name too common to tell)."""
+        own = [c for c in cands if top(c[0]) == top(f)]
+        if own:
+            return own[:1]
+        files = {c[0] for c in cands}
+        return [c for i, c in enumerate(cands) if c[0] not in {x[0] for x in cands[:i]}] if len(files) <= most else []
+
+    out, seen = [], set()
+    for f, t in sorted(text.items()):
+        for s, line in _strings(t):
+            hits = []
+            u = s.split("?")[0]
+            u = u.split("://", 1)[1].partition("/")[1:] if "://" in u else ("", u)  # drop scheme and host
+            m = re.search(r"(/[A-Za-z0-9_\-{}.]+(?:/[A-Za-z0-9_\-{}.]+)+)", "".join(u))
+            if m:
+                path = m.group(1).replace("{}", "x").rstrip("/")
+                hits = [(tf, "http", full) for tf, full in pick(f, [(tf, full) for rx, tf, full in routes if rx.match(path)], 3)]
+            if not hits and (s.endswith(".py") or DOTTED.match(s)):
+                cand = s if s.endswith(".py") else s.replace(".", "/") + ".py"
+                hits = [(tf, "runs", s) for tf, _ in pick(f, [(tf, s) for tf in text if tf == cand or tf.endswith("/" + cand)], 1)]
+            for hit in hits:
+                if hit[0] != f and (f, *hit) not in seen:
+                    seen.add((f, *hit))
+                    out.append({"file": f, "line": line, "target_file": hit[0], "kind": hit[1], "name": hit[2]})
+    # copies: a file of the same name under another top folder that shares at least half its lines (a platform copy,
+    # a demo's copy): a fix in one probably belongs in the other
+    same = defaultdict(list)
+    for f in text:
+        if not f.endswith("__init__.py"):
+            same[os.path.basename(f)].append(f)
+    lines = lambda f: {l.strip() for l in text[f].splitlines() if len(l.strip()) > 3}
+    for fs in same.values():
+        for i, a in enumerate(fs):
+            for b in fs[i + 1:]:
+                if top(a) != top(b):
+                    A, B = lines(a), lines(b)
+                    if A and len(A & B) >= 0.5 * len(A | B):
+                        out.append({"file": b, "line": 1, "target_file": a, "kind": "copy", "name": a})
+    return out
 
 
 def source_root(files):
@@ -737,4 +841,5 @@ def view(root, graph):
                       "roles": [r["id"] for r in roles_ if r["id"] not in placed]})
     return {"status": store["status"], "how": store.get("how"), "cost_usd": store.get("cost_usd"), "roles": roles_,
             "unassigned": sorted(code - set(store["files"])), "kinds": kind, "doors": door_of,
+            "links": runtime_links(graph, sorted(code)), "cochange": role_cochange(root, members),
             "areas": areas, "areas_how": store.get("areas_how"), "areas_cost_usd": store.get("areas_cost_usd")}
