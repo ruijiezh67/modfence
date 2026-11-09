@@ -263,7 +263,8 @@ class Job:
         if self.phase == "build" and test_command(self.root):
             hooks["Stop"] = [{"hooks": [{"type": "command", "command": f'"{fwd(sys.executable)}" "{fwd(DONE_CHECK)}"',
                                          "timeout": 300}]}]
-        write_text(p, json.dumps({"hooks": hooks}))
+        extra = {"language": os.environ["MODFENCE_LANGUAGE"]} if os.environ.get("MODFENCE_LANGUAGE") else {}  # replies in that language
+        write_text(p, json.dumps({"hooks": hooks, **extra}))
         return p
 
     def _run(self):
