@@ -1423,8 +1423,7 @@ function renderChanges(root, c, r, check, live) {
   const sel = check && check.selected, which = sel ? `${plural(sel.files.length, "test file")} covering the fence${sel.users?.length ? ` and ${plural(sel.users.length, "module")} using it` : ""}` : "the whole suite";
   foot.innerHTML = (check ? `<div class="chk ${check.ok ? "ok" : "bad"}">${check.ok ? "Done check passed" : "Done check failed"} (ran ${which}): ${esc(check.summary || "project tests")}${check.blocked ? `. The agent was sent back ${plural(check.blocked, "time")}.` : "."}</div>` : "")
     + (check && check.untested?.length ? `<div class="chk bad">Changed without a test: <span class="mono">${esc(check.untested.join(", "))}</span></div>` : "")
-    + (c && c.commit_message ? `<div class="commit"><span class="mono">${esc(c.commit_message.split("
-")[0])}</span><button class="btn quiet mini" type="button" data-copy title="Copy the drafted commit message">Copy commit message</button></div>` : "")
+    + (c && c.commit_message ? `<div class="commit"><span class="mono">${esc(c.commit_message.split("\n")[0])}</span><button class="btn quiet mini" type="button" data-copy title="Copy the drafted commit message">Copy commit message</button></div>` : "")
     + (c && c.ripple.length ? `<div class="ripple">Uses the changed code: ${c.ripple.map((m) => `<button type="button" data-go="${esc(m)}">${esc(shown(m))}</button>`).join("")} run the tests to check them.</div>` : "")
     + (files.length ? `<button class="btn" type="button" data-tests>Run tests</button>` : "")
     + (rev ? `<button class="btn" type="button" data-rev>Revert this run</button>` : "")
