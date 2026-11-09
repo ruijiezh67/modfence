@@ -246,6 +246,29 @@ What this says:
 
 Limits: one held-out split per project; public units are deterministic groups, not model-named roles; whether people find these areas easier to pick from is N/A (no user study).
 
+## 7. Building roles: the level you fence (golden rules 4, 6)
+
+A role is good to fence when a change that touches several files stays inside it. `bench/role_bench.py` scores each way of grouping files on the same five histories (newest 30% held out; commits that change 2 to 30 code files, entry points, doors and shared config left out). Methods make different numbers and sizes of groups, and small groups fit fewer changes by chance alone, so each is compared with its own floor: the same files shuffled among groups of the same sizes, 20 seeds. **Lift** = one-role share minus that floor. **Crumbs** = groups under 2% of the files, which become useless one-file boxes on the map.
+
+Cells are lift (crumbs). Scored commits: private 76, celery 454, rich 65, scrapy 449, textual 739.
+
+| Grouping | private | celery | rich | scrapy | textual |
+|---|---|---|---|---|---|
+| the private project's earlier roles: folder and path-word groups, then a model mapped them onto 14 named roles | .29 | N/A | N/A | N/A | N/A |
+| folders, 2 levels (`folder`) | .65 (25) | .18 (18) | -.04 (79) | .15 (30) | .79 (6) |
+| imports, Louvain (`imports`) | .60 (13) | .09 (12) | .14 (14) | .20 (9) | .17 (10) |
+| imports + folders + path words (`hybrid`) | .60 (4) | .13 (5) | .14 (2) | .20 (2) | .18 (7) |
+| folder and path-word groups merged to 15 by co-change, imports and folders, no role over 25% | .66 (6) | .27 (7) | .23 (7) | .19 (7) | .25 (9) |
+| **the same, crumbs merged first (`history`, shipped)** | .67 (0) | .20 (0) | .08 (0) | .15 (0) | .23 (0) |
+
+What this says:
+- **Letting a model regroup roles cost fence locality.** On the private project, the model-mapped roles kept multi-file changes together far less often than deterministic groups of the same count (.29 against .60 to .67). So roles are now grouped by code and history, and the model only names them (`roles.propose_and_store`, about $0.005 with Haiku-class pricing on that project).
+- **Change history is the strongest single signal** once groups are capped: the co-change rows lead on 4 of 5 projects. Uncapped co-change merging (not shown; see the bench) made 4 to 7 roles holding up to 63% of the files.
+- **Merging crumbs first costs some lift** (rich .23 to .08, celery .27 to .20) but leaves no one-file boxes; a map of crumbs is not usable, so the shipped method pays that. On the private project the top-folder term in the similarity removed 7 crumbs (lift .70 to .67).
+- Folders alone swing from best (textual, .79, but one folder holds 42% of the code) to below chance (rich, -.04): a hint, not a rule.
+
+Limits: one split per project; 65 to 739 scored commits; the earlier-roles row exists only where such roles were stored; whether people find these roles easier to pick from is N/A.
+
 ## How modfence compares with popular tools
 
 Star counts are from the GitHub API on 2026-11-06. Feature cells come from each project's README and docs ([research notes](../../research_notes/Modmap%20next%20step%20priorities/competitor_tools.md)); N/A means not found in their docs.

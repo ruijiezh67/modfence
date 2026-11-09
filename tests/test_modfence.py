@@ -160,6 +160,22 @@ class RolesTest(unittest.TestCase):
         together = roles.suggest_areas(role_of, Counter(), [{"a/f0.py", "j/f0.py"}] * 5)
         self.assertTrue(any({"a", "j"} <= set(g) for g in together), "roles that change together share an area")
 
+    def test_roles_from_history_keep_what_changes_together(self):
+        from modfence import roles
+        d = tempfile.mkdtemp(prefix="modfence-test-")
+        _dirs.append(d)
+        files = [f"{w}/m{i}.py" for w in ("ui", "db", "net", "log") for i in range(3)]
+        for f in files:
+            os.makedirs(os.path.join(d, os.path.dirname(f)), exist_ok=True)
+            write(os.path.join(d, f), "X = 1\n")
+        g = analyze.analyze(d)
+        together = [{"ui/m0.py", "db/m0.py"}] * 6
+        r = roles.by_history(g, most=3, cap=0.6, changes=together)
+        self.assertEqual(r["ui/m0.py"], r["db/m0.py"], "folders that change together form one role")
+        self.assertLessEqual(len(set(r.values())), 3)
+        self.assertEqual(r, roles.by_history(g, most=3, cap=0.6, changes=together))  # deterministic
+        self.assertLessEqual(max(list(r.values()).count(v) for v in set(r.values())), 0.6 * len(files) + 3)
+
     def test_imports_resolve_from_a_subfolder_root(self):
         d = tempfile.mkdtemp(prefix="modfence-test-")
         _dirs.append(d)

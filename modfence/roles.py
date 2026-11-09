@@ -282,16 +282,13 @@ METHODS = {"module": by_module, "folder": by_folder, "words": by_words, "imports
 
 # ---------- naming: a model names the groups; code decides what it may change ----------
 NAME_SYSTEM = (
-    "You map the files of a software system onto its functional roles, for a developer who wants to understand it role "
-    "by role. You get groups of files that a deterministic analysis put together, with docstrings, the imports between "
-    "groups, and the project's own vocabulary from its docs. First decide the system's roles: between 6 and 15, each a "
-    "short lowercase name in the project's own words (e.g. observer, segmenter, inference, memory, api), with one plain "
-    "sentence of at most 20 words on what it does for the system. Then assign every group to exactly one role; groups "
-    "that do the same job in different places (an old and a new implementation, a platform variant) get the same role. "
-    "You may propose moving a single file to another group only when its imports show it works mainly with that group; "
-    "quote the evidence. Reply with JSON only: {\"roles\": {\"<role>\": \"<purpose>\"}, \"assign\": {\"<group id>\": "
-    "\"<role>\"}, \"moves\": [{\"file\": \"...\", \"to\": \"<group id>\", \"evidence\": \"...\"}]}")
-MAX_MOVES = 20
+    "You name the functional roles of a software system for a developer who will pick a role and ask a coding agent to "
+    "change it. Each group of files below is one role, fixed by a deterministic analysis of the code and its change "
+    "history; do not move files or merge groups. You get each group's files with docstrings, the imports between groups, "
+    "and the project's own vocabulary from its docs. For every group write a short lowercase name of 1 to 3 words in "
+    "the project's own words (e.g. observer, segmenter, inference, memory, api), different from the other names, and one "
+    "plain sentence of at most 20 words on what it does for the system. Reply with JSON only: "
+    "{\"roles\": {\"<group id>\": {\"name\": \"...\", \"purpose\": \"...\"}}}")
 
 
 def doc_words(root, limit=80):
@@ -342,48 +339,6 @@ def name_prompt(graph, groups):
     return "\n".join(parts)
 
 
-def apply_names(graph, groups, answer):
-    """The model's names and the moves code can verify: a file moves only if it has more import lines with the target
-    group than with its own. Returns ({file: role name}, {role name: purpose}, [accepted moves], [rejected moves])."""
-    groups = dict(groups)
-    links = defaultdict(Counter)
-    for (a, b), v in intra_module_edges(graph, list(groups)).items():
-        links[a][b] += v
-        links[b][a] += v
-    ids = set(groups.values())
-    ok, bad = [], []
-    for m in (answer.get("moves") or [])[:MAX_MOVES]:
-        f, to = m.get("file"), m.get("to")
-        if f not in groups or to not in ids or to == groups[f] or groups[f] == SHARED:
-            bad.append(dict(m, why="unknown file or group"))
-            continue
-        with_to = sum(v for o, v in links[f].items() if groups.get(o) == to)
-        with_own = sum(v for o, v in links[f].items() if groups.get(o) == groups[f])
-        if with_to > with_own:
-            ok.append(dict(m, import_lines=[with_own, with_to]))
-            groups[f] = to
-        else:
-            bad.append(dict(m, why=f"imports: {with_own} with its group, {with_to} with {to}"))
-    clean = lambda r: re.sub(r"[^a-z0-9 _-]", "", str(r).lower()).strip()
-    declared = {clean(r): str(p) for r, p in (answer.get("roles") or {}).items() if clean(r)}
-    assign = {g: clean(r) for g, r in (answer.get("assign") or {}).items()}
-    # a group keeps its own id unless it is assigned to a declared role: the model cannot invent roles on the fly
-    name = {g: assign[g] if assign.get(g) in declared else g for g in ids}
-    name[SHARED] = SHARED
-    purposes = {r: declared.get(r, "") for r in set(name.values())}
-    return {f: name[g] for f, g in groups.items()}, purposes, ok, bad
-
-
-def propose(graph, claude, method=None):
-    """A named role proposal: a deterministic grouping, then one model call to name it and suggest verified moves.
-    Returns {"roles": {file: name}, "purposes": {...}, "moves": [...], "rejected": [...], "cost_usd": ...}."""
-    from . import purpose
-    groups = (method or by_hybrid)(graph)
-    answer, cost = purpose._ask(claude, name_prompt(graph, groups), system=NAME_SYSTEM)
-    roles_, purposes, ok, bad = apply_names(graph, groups, answer)
-    return {"roles": roles_, "purposes": purposes, "moves": ok, "rejected": bad, "cost_usd": cost}
-
-
 def by_folder_words(graph, files=None, depth=2, flat_at=8):
     """Folders `depth` deep, but a folder with flat_at or more files directly in it (kernel/ with 40 personal_*,
     memory_*, ... files) is split by each file's most specific shared path word."""
@@ -420,11 +375,30 @@ METHODS.update({
 })
 
 
+ROLE_MAX, ROLE_CAP = 15, 0.25
+
+
+def by_history(graph, files=None, most=ROLE_MAX, cap=ROLE_CAP, changes=None, top_w=0.25):
+    """by_folder_words groups merged into at most `most` roles, none over `cap` of the files: groups that changed
+    together (git history), import each other and share folders merge first (suggest_areas, one level down).
+    Measured with bench/role_bench.py: it kept multi-file commits in one role better than the other methods across
+    five histories, and better than model-made roles (docs/EVALUATION.md section 6). Without git, imports and folders."""
+    fw = by_folder_words(graph, files)
+    changes = change_sets(graph["root"], set(fw)) if changes is None else changes  # a bench passes older commits only
+    groups = suggest_areas(fw, role_imports(graph, fw), changes, most, cap, top_w)
+    size = Counter(fw.values())
+    label = {u: max(g, key=lambda x: (size[x], x)) for g in groups for u in g}
+    return {f: label[u] for f, u in fw.items()}
+
+
+METHODS["history"] = by_history
+
+
 # ---------- the user's roles: stored, renamed and corrected by hand ----------
 # Roles keep a stable id (r1, r2 ...); the name is only a label, so renaming never touches file assignments, fences
 # or history. Names are checked: clear but short.
 NAME_MAX, NAME_WORDS = 24, 3
-DEFAULT = by_folder_words
+DEFAULT = by_folder_words  # the fine groups by_history starts from
 
 
 def store_path(root):
@@ -488,18 +462,25 @@ def to_store(files_to_name, purposes, how, cost=None):
 
 
 def propose_and_store(root, graph, claude):
-    """Group deterministically (DEFAULT), then one model call maps the groups onto 6-15 named roles. Without a model
-    the folder groups are stored as they are. Measured on one 400-file system: see docs/EVALUATION.md."""
-    groups = DEFAULT(graph)
+    """Group with by_history (deterministic), then one small model call names each role. Without a model, or for a
+    group it leaves unnamed, the group keeps its folder or path-word label."""
+    groups = by_history(graph)
     try:
         if not claude:
             raise RuntimeError("no Claude Code CLI")
         from . import purpose
         answer, cost = purpose._ask(claude, name_prompt(graph, groups), system=NAME_SYSTEM)
-        named, purposes, _ok, _bad = apply_names(graph, groups, answer)
-        store = to_store(named, purposes, "folders and path words, roles named by a model", cost)
+        named = {g: v for g, v in (answer.get("roles") or {}).items() if isinstance(v, dict) and str(v.get("name") or "").strip()}
+        how = "folders, path words, imports and change history; named by a model"
     except (RuntimeError, OSError, ValueError) as e:
-        store = to_store(by_folder(graph, depth=2), {}, f"folders only ({e})")
+        named, cost, how = {}, None, f"folders, path words, imports and change history ({e})"
+    name, purposes = {}, {}
+    for g in sorted(set(groups.values())):
+        n = re.sub(r"[^a-z0-9 _-]", "", str((named.get(g) or {}).get("name") or g).lower()).strip() or g
+        while n in purposes:  # two groups never share a name, or to_store would merge them
+            n += "+"
+        name[g], purposes[n] = n, str((named.get(g) or {}).get("purpose") or "")[:200]
+    store = to_store({f: name[g] for f, g in groups.items()}, purposes, how, cost)
     save_store(root, store)
     return store
 
@@ -583,9 +564,10 @@ def _cos(a, b):
     return sum(a[k] * b[k] for k in a) / n if n else 0.0
 
 
-def agglomerate(names, size, sim, most=AREA_MAX, cap=AREA_CAP):
+def agglomerate(names, size, sim, most=AREA_MAX, cap=AREA_CAP, tiny=0.02):
     """Average-linkage merging of `names` into `most` groups. A merge is worth less the bigger its result, and no group
-    may pass `cap` of the total size while another merge is possible. Pair sums are updated per merge. Deterministic."""
+    may pass `cap` of the total size while another merge is possible. A group under `tiny` of the total joins its most
+    similar group first, so the boxes left are not one-file crumbs. Pair sums are updated per merge. Deterministic."""
     groups = {i: [u] for i, u in enumerate(sorted(names))}
     n = sum(size[u] for u in names) or 1
     gsize = {i: size[g[0]] for i, g in groups.items()}
@@ -593,7 +575,8 @@ def agglomerate(names, size, sim, most=AREA_MAX, cap=AREA_CAP):
     while len(groups) > most:
         score = lambda p: tot[p] / (len(groups[p[0]]) * len(groups[p[1]])) * (1 - (gsize[p[0]] + gsize[p[1]]) / n)
         ok = [p for p in tot if gsize[p[0]] + gsize[p[1]] <= cap * n] or list(tot)
-        i, j = max(ok, key=lambda p: (score(p), -p[0], -p[1]))
+        crumb = lambda p: min(gsize[p[0]], gsize[p[1]]) < tiny * n and tot[p] > 0
+        i, j = max(ok, key=lambda p: (crumb(p), score(p), -p[0], -p[1]))
         groups[i] += groups.pop(j)
         gsize[i] += gsize.pop(j)
         for x in groups:
@@ -603,7 +586,7 @@ def agglomerate(names, size, sim, most=AREA_MAX, cap=AREA_CAP):
     return sorted((sorted(g) for g in groups.values()), key=lambda g: (-sum(size[u] for u in g), g))
 
 
-def suggest_areas(role_of, imports, changes=(), most=AREA_MAX, cap=AREA_CAP):
+def suggest_areas(role_of, imports, changes=(), most=AREA_MAX, cap=AREA_CAP, top_w=0.25):
     """[[role, ...], ...], at most `most` areas, none over `cap` of the files: roles that change together (git history),
     import each other (per file pair) and share folders (a hint) are merged first. Of the groupings measured in
     bench/area_bench.py this one fitted the most multi-role commits into one area at a capped area size."""
@@ -613,14 +596,15 @@ def suggest_areas(role_of, imports, changes=(), most=AREA_MAX, cap=AREA_CAP):
         rs = sorted({role_of[f] for f in c if f in role_of})
         alone.update(rs)
         together.update(frozenset(p) for i, a in enumerate(rs) for p in ((a, b) for b in rs[i + 1:]))
-    fold = defaultdict(Counter)
+    fold, top = defaultdict(Counter), defaultdict(Counter)
     for f, r in role_of.items():
         fold[r]["/".join(f.split("/")[:2])] += 1
+        top[r][f.split("/")[0] if "/" in f else "."] += 1  # the top folder pulls in small groups nothing else links
 
     def sim(a, b):
         k = frozenset((a, b))
         co = together[k] / math.sqrt(alone[a] * alone[b]) if alone[a] and alone[b] else 0.0
-        return co + min(1.0, imports[k] / math.sqrt(size[a] * size[b])) + 0.5 * _cos(fold[a], fold[b])
+        return co + min(1.0, imports[k] / math.sqrt(size[a] * size[b])) + 0.5 * _cos(fold[a], fold[b]) + top_w * _cos(top[a], top[b])
     return agglomerate(list(size), size, sim, most, cap)
 
 
