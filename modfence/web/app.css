@@ -163,6 +163,8 @@ body.panel-open .canvas, body.panel-open .alt { right: var(--panel-w); }
 .edge.dep { stroke: var(--dep); stroke-opacity: 1; stroke-width: 1.8; }
 .edge.use { stroke: var(--use-ink); stroke-opacity: 1; stroke-width: 1.8; }
 .edge.faded { opacity: 0.25; }
+.edge.back { stroke: var(--bad); stroke-opacity: 0.8; }
+.edge.quiet, .edge-hit.quiet { display: none; }
 .edge.from-tests { stroke-dasharray: 3 4; opacity: 0.45; }
 .edge.from-tests.dep, .edge.from-tests.use { opacity: 1; }
 .edge.from-tests.faded { opacity: 0.12; }

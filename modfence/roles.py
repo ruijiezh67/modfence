@@ -39,19 +39,60 @@ def intra_module_edges(graph, files):
     return w
 
 
-def hubs(graph, files, share=0.05, floor=8):
-    """Files imported by many distinct files: max(floor, share of all files). They glue roles together and pull
-    clustering around (Bunch's 'omnipresent modules'), so they get their own group."""
-    importers = defaultdict(set)
+def importers(graph, files):
+    """{file: the files in `files` that import it}, imports inside one module included."""
     from . import analyze
-    allfiles = set(graph["files"])
+    out, allfiles = defaultdict(set), set(graph["files"])
     for p in files:
         r = analyze._parse(os.path.join(graph["root"], p), p)
         for t, *_ in analyze._resolved(p, r["imports"], allfiles):
             if t != p:
-                importers[t].add(p)
+                out[t].add(p)
+    return out
+
+
+def hubs(graph, files, share=0.05, floor=8):
+    """Files imported by many distinct files: max(floor, share of all files). They glue roles together and pull
+    clustering around (Bunch's 'omnipresent modules'), so they get their own group."""
+    imp = importers(graph, files)
     cut = max(floor, math.ceil(share * len(files)))
-    return {f for f in files if len(importers.get(f, ())) >= cut}
+    return {f for f in files if len(imp.get(f, ())) >= cut}
+
+
+# ---------- cross-cutting files: not features, so not boxes and not edited by default (golden rules 2, 4, 6) ----------
+# Fan-in alone cannot tell settings.py from memory.py (both used by most roles), so position in the import graph is
+# combined with naming conventions most projects follow. ponytail: word lists, extend them when a project disagrees.
+ENTRY = re.compile(r"^(__main__|main|\w+_main|main_\w+|manage|wsgi|asgi|run)$")
+DOOR = {"route", "routes", "router", "routers", "views", "endpoint", "endpoints", "handlers", "controllers"}
+SHARE = re.compile(r"^(settings|config|configs|conf|constants|consts|env|auth|permissions|clients?|middleware|"
+                   r"utils?|helpers?|common|logging_?\w*|log)$")
+
+
+def kinds(graph, role_of):
+    """({file: "entry" | "door" | "shared"}, {door file: role id it serves}), from the import graph and file names.
+    entry: nothing imports it and its name says main. door: a routes/views/handlers file only entries import; it
+    serves the role whose code it imports most. shared: a settings/config/auth/utils-style name used by 2+ roles."""
+    code = [f for f in code_files(graph)]
+    imp = importers(graph, code)
+    stem = lambda f: os.path.splitext(os.path.basename(f))[0].lower()
+    kind = {f: "entry" for f in code if not imp.get(f) and ENTRY.match(stem(f))}
+    for f in code:
+        if f in kind:
+            continue
+        if SHARE.match(stem(f)) and len({role_of.get(p) for p in imp.get(f, ())} - {role_of.get(f), None}) >= 2:
+            kind[f] = "shared"
+        elif DOOR & set(re.split(r"[/_.\-]+", f.lower())) and len(imp.get(f, ())) <= 2:  # an app file mounts it
+            kind[f] = "door"
+    uses = defaultdict(Counter)  # a door serves the role of the file named like it (memory_routes -> memory.py), else
+    for t, ps in imp.items():     # the role it imports most
+        for p in ps:
+            if kind.get(p) == "door" and t not in kind and role_of.get(t):
+                core = set(re.split(r"[_.\-]+", stem(p))) - DOOR
+                uses[p][role_of[t]] += 100 if core and core <= set(re.split(r"[_.\-]+", stem(t))) else 1
+    door_of = {f: min(c.items(), key=lambda kv: (-kv[1], kv[0]))[0] for f, c in uses.items() if c}
+    for f in [f for f, k in kind.items() if k == "door" and f not in door_of]:
+        kind[f] = "entry"  # a door to nothing modfence knows: list it with the entries
+    return kind, door_of
 
 
 def source_root(files):
@@ -550,5 +591,6 @@ def view(root, graph):
             members[rid].append(f)
     roles_ = [dict(id=rid, files=sorted(members[rid]), parts=role_parts(sorted(members[rid])), **r) for rid, r in store["roles"].items()]
     roles_.sort(key=lambda r: (r["name"] == SHARED, -len(r["files"]), r["name"]))
+    kind, door_of = kinds(graph, {f: rid for rid, fs in members.items() for f in fs})
     return {"status": store["status"], "how": store.get("how"), "cost_usd": store.get("cost_usd"), "roles": roles_,
-            "unassigned": sorted(code - set(store["files"]))}
+            "unassigned": sorted(code - set(store["files"])), "kinds": kind, "doors": door_of}

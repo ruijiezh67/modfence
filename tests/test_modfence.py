@@ -128,6 +128,24 @@ class RolesTest(unittest.TestCase):
         clash = [f"evaluation/x{i}.py" for i in range(9)] + ["backend/evaluation_judge.py", "w/backend/evaluation_judge.py"]
         self.assertEqual(roles.role_parts(clash)["backend/evaluation_judge.py"], "judge", "no part named like a folder")
 
+    def test_entry_points_doors_and_shared_config_are_not_features(self):
+        from modfence import roles
+        d = tempfile.mkdtemp(prefix="modfence-test-")
+        _dirs.append(d)
+        for rel, text in {"settings.py": "X = 1\n", "memory.py": "import settings\n", "recorder.py": "import settings\n",
+                          "pipeline.py": "import settings, memory\n",
+                          "routers/memory_routes.py": "import memory, recorder\n",
+                          "app.py": "from routers import memory_routes\n", "main.py": "import app\n"}.items():
+            os.makedirs(os.path.dirname(os.path.join(d, rel)), exist_ok=True)
+            write(os.path.join(d, rel), text)
+        g = analyze.analyze(d)
+        role_of = {"settings.py": "core", "memory.py": "mem", "recorder.py": "rec", "pipeline.py": "pipe",
+                   "routers/memory_routes.py": "core", "app.py": "core", "main.py": "core"}
+        kind, door_of = roles.kinds(g, role_of)
+        self.assertEqual(kind, {"main.py": "entry", "settings.py": "shared", "routers/memory_routes.py": "door"})
+        self.assertEqual(door_of, {"routers/memory_routes.py": "mem"}, "a door serves the file named like it")
+        self.assertEqual(roles.kinds(g, role_of), (kind, door_of))  # deterministic
+
     def test_imports_resolve_from_a_subfolder_root(self):
         d = tempfile.mkdtemp(prefix="modfence-test-")
         _dirs.append(d)
