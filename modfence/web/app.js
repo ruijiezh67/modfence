@@ -702,6 +702,7 @@ function select(id, keepLabel) {
 function closePanel() {
   const wasOpen = document.body.classList.contains("panel-open");
   S.selected = null; S.scope.clear();
+  if (wasOpen) api(`/api/fence/clear?${q()}`, {}).catch(() => {}); // agents started by hand are no longer fenced (409 while a run goes: it stays)
   document.body.classList.remove("panel-open");
   $("#panel").inert = true;
   if (wasOpen) requestAnimationFrame(() => S.view === "graph" && !S.userCam && fitView());
