@@ -164,6 +164,9 @@ body.panel-open .canvas, body.panel-open .alt { right: var(--panel-w); }
 .edge.use { stroke: var(--use-ink); stroke-opacity: 1; stroke-width: 1.8; }
 .edge.faded { opacity: 0.25; }
 .edge.back { stroke: var(--bad); stroke-opacity: 0.8; }
+.edge.weak { stroke-opacity: 0.28; }
+.crumbs em.round { color: var(--ok); font-style: normal; }
+.crumbs em.round b { font-weight: 650; }
 .edge.quiet, .edge-hit.quiet { display: none; }
 .edge.from-tests { stroke-dasharray: 3 4; opacity: 0.45; }
 .edge.from-tests.dep, .edge.from-tests.use { opacity: 1; }
@@ -221,7 +224,7 @@ body.panel-open .crumbs { max-width: calc(100% - var(--panel-w) - 32px); }
 .node.changed .card { stroke: var(--ok-ink); stroke-width: 2; }
 .node.changed .fill { fill: url(#dots); }
 .node.ripple .card { stroke: var(--text-2); stroke-width: 1.5; stroke-dasharray: 5 3; }
-.node.ripple .fill { fill: var(--warn-soft); }
+.node.ripple .fill { fill: var(--warn-soft); fill-opacity: 0.4; } /* a small change: noticed, not shouting */
 .node.error .card { stroke: var(--bad); }
 .node .ring { fill: none; stroke: var(--ok-ink); stroke-width: 2; opacity: 0; transform-box: fill-box; transform-origin: center; }
 .node.changed .ring { animation: pulse 2.2s ease-out 2; }

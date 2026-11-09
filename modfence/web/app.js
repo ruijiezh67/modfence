@@ -335,7 +335,7 @@ function renderCrumbs() {
     if (S.role === "?" && S.level !== "roles") h += `<button type="button" class="act" data-files>Place files</button>`;
   }
   c.hidden = false;
-  c.innerHTML = h;
+  c.innerHTML = h + roundLine();
   c.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => { S.focus = b.dataset.f; regroup(); fitView(); }));
   c.querySelectorAll("[data-lv]").forEach((b) => (b.onclick = () => { S.level = b.dataset.lv; regroup(); fitView(); }));
   c.querySelectorAll("[data-role]").forEach((b) => (b.onclick = () => openRole(b.dataset.role)));
@@ -387,9 +387,11 @@ function layout() {
   }
   const WRAP = 10; // ponytail: a wide rank wraps onto extra rows, so a 40-function rank stays on screen
   rows = rows.flatMap((row) => Array.from({ length: Math.ceil(row.length / WRAP) }, (_, i) => row.slice(i * WRAP, (i + 1) * WRAP)));
-  // Areas, roles and parts are where you pick what to change, and a dense module map layers into a tall tower that
-  // says little: both become a compact grid in the same upstream-to-downstream order, edges drawn on focus only.
-  S.dense = g.edges.length > DENSE || ["areas", "roles", "parts"].includes(S.level); // places to pick, not structure
+  // Areas, roles and parts import each other in rings, so any strict layering is one tall column: they get a stress
+  // layout instead (stressLayout). A dense module map layers into a tower too: it becomes a grid, edges on focus only.
+  S.free = ["areas", "roles", "parts"].includes(S.level);
+  S.dense = !S.free && g.edges.length > DENSE;
+  if (S.free) return placeFree(g, all, ids, rank);
   if (S.dense) { const order = rows.flat(), cols = Math.ceil(Math.sqrt(order.length * 1.8)); rows = Array.from({ length: Math.ceil(order.length / cols) }, (_, i) => order.slice(i * cols, (i + 1) * cols)); }
   if (all.includes("rail:entry")) rows.unshift(["rail:entry"]);
   if (all.includes("rail:shared")) rows.push(["rail:shared"]);
@@ -402,6 +404,74 @@ function layout() {
   all.filter((i) => i.startsWith("rail:")).forEach((i) => Object.assign(S.pos[i], { x: x0, w: Math.max(NODE_W, x1 - x0) }));
 }
 
+function placeFree(g, all, ids, rank) { // stress positions, then the entry strip above and the shared rail below
+  S.pos = stressLayout(ids, g.edges, rank);
+  S.rows = [];
+  const xs = ids.map((i) => S.pos[i].x), ys = ids.map((i) => S.pos[i].y);
+  const x0 = Math.min(...xs, 0), x1 = Math.max(...xs, 0) + NODE_W, y0 = Math.min(...ys, 0), y1 = Math.max(...ys, 0) + NODE_H;
+  if (all.includes("rail:entry")) S.pos["rail:entry"] = { x: x0, y: y0 - NODE_H - GAP_Y, w: Math.max(NODE_W, x1 - x0) };
+  if (all.includes("rail:shared")) S.pos["rail:shared"] = { x: x0, y: y1 + GAP_Y, w: Math.max(NODE_W, x1 - x0) };
+}
+// Stress majorization (Gansner, Koren and North 2004), the per-node update with weights d^-2: boxes that import each
+// other sit close, the drawing comes nearest to a hand-made one on small graphs. Distance = import hops. Start from the
+// import ranks (deterministic, upstream on top); a light pull keeps each import pointing down unless it closes a loop.
+// Then boxes are pushed apart until none overlap. ponytail: O(n^2) per sweep, fine for the 7 to 15 boxes of these levels.
+function stressLayout(ids, edges, rank) {
+  const n = ids.length, ix = Object.fromEntries(ids.map((id, i) => [id, i])), U = 300; // px per hop; a box is 220 wide
+  const adj = ids.map(() => new Set());
+  edges.forEach((e) => { if (e.source in ix && e.target in ix) { adj[ix[e.source]].add(ix[e.target]); adj[ix[e.target]].add(ix[e.source]); } });
+  const d = ids.map((_, s) => {
+    const dist = Array(n).fill(Infinity), q = [s];
+    dist[s] = 0;
+    while (q.length) { const v = q.shift(); adj[v].forEach((w) => { if (dist[w] === Infinity) { dist[w] = dist[v] + 1; q.push(w); } }); }
+    return dist;
+  });
+  const far = 1.4; // boxes with no import path between them sit just beyond a neighbour, not across the screen
+  d.forEach((row) => row.forEach((v, j) => (row[j] = (Number.isFinite(v) ? v : far) * U)));
+  const P = ids.map((id, i) => ({ x: Math.cos(i * 2.39996) * U * 0.7 * Math.sqrt(i + 1), y: -(rank[id] || 0) * U * 0.8 + Math.sin(i * 2.39996) * 20 }));
+  for (let it = 0; it < 300; it++) {
+    let moved = 0;
+    for (let i = 0; i < n; i++) {
+      let sx = 0, sy = 0, sw = 0;
+      for (let j = 0; j < n; j++) {
+        if (i === j) continue;
+        const w = 1 / (d[i][j] * d[i][j]), dx = P[i].x - P[j].x, dy = P[i].y - P[j].y, len = Math.hypot(dx, dy) || 1e-6;
+        sx += w * (P[j].x + (d[i][j] * dx) / len); sy += w * (P[j].y + (d[i][j] * dy) / len); sw += w;
+      }
+      if (!sw) continue;
+      moved += Math.abs(sx / sw - P[i].x) + Math.abs(sy / sw - P[i].y);
+      P[i].x = sx / sw; P[i].y = sy / sw;
+    }
+    edges.forEach((e) => { // downward flow, light: an import that does not close a loop points down by half a hop
+      if (S.back.has(e) || !(e.source in ix) || !(e.target in ix)) return;
+      const a = P[ix[e.source]], b = P[ix[e.target]], gap = U * 0.5 - (b.y - a.y);
+      if (gap > 0) { a.y -= gap * 0.2; b.y += gap * 0.2; }
+    });
+    if (moved < 0.5) break;
+  }
+  const W = NODE_W + 48, H = NODE_H + 56;
+  for (let pass = 0; pass < 200; pass++) { // remove box overlaps along the axis that overlaps less
+    let any = false;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const dx = P[j].x - P[i].x, dy = P[j].y - P[i].y, ox = W - Math.abs(dx), oy = H - Math.abs(dy);
+      if (ox <= 0 || oy <= 0) continue;
+      any = true;
+      if (ox / W < oy / H) { const m = ((dx >= 0 ? 1 : -1) * ox) / 2; P[i].x -= m; P[j].x += m; }
+      else { const m = ((dy >= 0 ? 1 : -1) * oy) / 2; P[i].y -= m; P[j].y += m; }
+    }
+    if (!any) break;
+  }
+  return Object.fromEntries(ids.map((id, i) => [id, { x: Math.round(P[i].x - NODE_W / 2), y: Math.round(P[i].y - NODE_H / 2) }]));
+}
+function straightPath(e) { // box edge to box edge along the centre line; a two-way pair is drawn as two parallel lines
+  const a = S.pos[e.source], b = S.pos[e.target];
+  const ax = a.x + NODE_W / 2, ay = a.y + NODE_H / 2, bx = b.x + NODE_W / 2, by = b.y + NODE_H / 2;
+  const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1, off = e._two ? 5 : 0, ox = (-dy / len) * off, oy = (dx / len) * off;
+  const cut = (hw, hh) => Math.min(hw / Math.abs(dx || 1e-9), hh / Math.abs(dy || 1e-9)); // centre to the box border
+  const s = cut(NODE_W / 2 + 2, NODE_H / 2 + 2), t = cut(NODE_W / 2 + 5, NODE_H / 2 + 5);
+  return `M${ax + dx * s + ox},${ay + dy * s + oy} L${bx - dx * t + ox},${by - dy * t + oy}`;
+}
+
 /* ---------------- drawing ---------------- */
 const SVGNS = "http://www.w3.org/2000/svg";
 const el = (tag, attrs = {}, parentEl) => {
@@ -412,6 +482,7 @@ const el = (tag, attrs = {}, parentEl) => {
 };
 
 function edgePath(e, spread) {
+  if (S.free) return straightPath(e);
   const a = S.pos[e.source], b = S.pos[e.target];
   if (e._lane) {
     const sx = a.x + NODE_W / 2 + spread.out, sy = a.y + NODE_H, tx = b.x + NODE_W / 2 + spread.in, ty = b.y - 3, lx = e._lane;
@@ -439,12 +510,15 @@ function drawGraph() {
   };
   Object.values(outs).forEach((l) => assign(l, "out", "target"));
   Object.values(ins).forEach((l) => assign(l, "in", "source"));
-  routeLanes(g);
+  if (S.free) { S.extent = { x0: Infinity, x1: -Infinity }; const keys = new Set(g.edges.map((e) => e.source + "\n" + e.target)); g.edges.forEach((e) => (e._two = keys.has(e.target + "\n" + e.source))); }
+  else routeLanes(g);
+  const counts = g.edges.map((e) => e.receipts.length).sort((x, y) => x - y), weak = counts[Math.floor(counts.length / 2)] || 0, wmax = counts[counts.length - 1] || 1;
   g.edges.forEach((e) => {
     const d = (e._d = edgePath(e, spread.get(e)));
-    e._back = S.back.has(e); // closes a loop: drawn red, the cheapest import to cut
-    e._base = (mod(e.source).kind === "tests" ? "edge from-tests" : "edge") + (e._back ? " back" : "");
-    e._el = el("path", { d, class: e._base, "marker-end": "url(#ah)", "stroke-width": 1.3 + Math.min(2, Math.log2(e.receipts.length)) }, eg);
+    e._back = !S.free && S.back.has(e); // closes a loop: drawn red, the cheapest import to cut (layered maps only)
+    e._base = (mod(e.source).kind === "tests" ? "edge from-tests" : "edge") + (e._back ? " back" : "") + (S.free && e.receipts.length < weak ? " weak" : "");
+    const sw = S.free ? 1 + 3 * Math.sqrt(e.receipts.length / wmax) : 1.3 + Math.min(2, Math.log2(e.receipts.length)); // free: grows with every import
+    e._el = el("path", { d, class: e._base, "marker-end": "url(#ah)", style: `stroke-width:${sw.toFixed(2)}px` }, eg); // inline: the .edge CSS rule would override an attribute
     const hit = (e._hit = el("path", { d, class: "edge-hit" }, eg));
     hit.addEventListener("pointerdown", (ev) => ev.stopPropagation());
     hit.addEventListener("pointerenter", (ev) => showEdgeTip(ev, e));
@@ -545,7 +619,16 @@ function stateWords(id, rel, focus) {
   else if (S.marks.ripple.has(id)) w.push("uses changed code");
   return w;
 }
-function diffTag(id) { const st = S.marks.stats[id]; return st ? `+${st.plus} −${st.minus}` : ""; }
+function diffTag(id) { // a box's added and removed lines; an area, role or part adds up its modules
+  const st = S.marks.stats[id] || (mod(id)?.members || []).reduce((a, m) => (S.marks.stats[m] ? { plus: (a?.plus || 0) + S.marks.stats[m].plus, minus: (a?.minus || 0) + S.marks.stats[m].minus } : a), null);
+  return st ? `+${st.plus} −${st.minus}` : "";
+}
+function roundLine() { // golden rule 7: which boxes at this level the last run changed, and which use changed code
+  if (!S.marks.changed.size) return "";
+  const at = (set) => S.graph.modules.filter((m) => inSet(set, m.id)).map((m) => shown(m.id));
+  const ch = at(S.marks.changed), rp = at(S.marks.ripple).filter((x) => !ch.includes(x));
+  return `<em class="round">Last run changed <b>${esc(ch.join(", ") || "nothing on this level")}</b>${rp.length ? ` · uses changed code: ${esc(rp.join(", "))}` : ""}</em>`;
+}
 
 function paintSelection(hover) {
   const focus = hover || S.selected || S.picked;
@@ -1268,7 +1351,7 @@ function markRun(c) { // paint a run's changed modules (green dots, +n −m) and
     s.plus += f.plus || 0; s.minus += f.minus || 0;
   });
   S.marks = { changed: new Set(c.modules || []), ripple: new Set(c.ripple || []), stats };
-  paintSelection();
+  paintSelection(); renderCrumbs();
 }
 
 /* ---------------- sheet: file, diff, help, output ---------------- */
