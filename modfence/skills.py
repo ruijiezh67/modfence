@@ -72,8 +72,9 @@ def stack(root, graph):
     """{"libs": {import name: files importing it}, "manifests": {dependency: manifest file},
     "groups": {role or module: [[lib, files], ...top 5]}, "group_kind": "role" | "module"}."""
     files = set(graph["files"])
-    own = {p.split("/")[0].removesuffix(".py") for p in files} | {p.split("/")[1].removesuffix(".py")
-                                                                   for p in files if p.startswith("src/") and p.count("/")}
+    # any folder or module name anywhere in the project is its own code: projects that put backend/ on sys.path
+    # import "kernel" for backend/kernel, which is not a third-party library
+    own = {part.removesuffix(".py") for p in files for part in p.split("/")}
     used = {}
     for p in sorted(files):
         names = set()

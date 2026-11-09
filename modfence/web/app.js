@@ -380,7 +380,7 @@ function renderCrumbs() {
       if (S.level !== "areas" && A) h += `<span>/</span>` + step(n++, A.name, `data-area="${esc(A.id)}"`, S.level === "roles");
     } else h = step(n++, "Roles", 'data-lv="roles"', S.level === "roles");
     if (S.level === "parts") h += `<span>/</span>` + step(n, S.role === "?" ? "not placed yet" : rname(S.role), `data-role="${esc(S.role)}"`, true);
-    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "area")}</em><button type="button" class="act q" data-regroup>Regroup areas</button><button type="button" class="act q" data-lv="modules">All modules</button>`;
+    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "area")}</em><button type="button" class="act q" data-regroup>Regroup areas</button><button type="button" class="act q" data-skills>Skills for this project</button><button type="button" class="act q" data-lv="modules">All modules</button>`;
     if (S.level === "roles" && A) h += `<button type="button" class="act q" data-arename>Rename area</button>`;
     if (S.hiddenLinks && !S.dense) h += `<em title="Strongest ${KEEP_LINKS} links per box">${S.hiddenLinks} weak links hidden</em>`;
     if (S.level === "roles" && !A) h += `<em title="${esc(S.roles.how || "")}">${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}</em>`
@@ -395,6 +395,7 @@ function renderCrumbs() {
   c.querySelectorAll("[data-lv]").forEach((b) => (b.onclick = () => { S.level = b.dataset.lv; regroup(); fitView(); }));
   c.querySelectorAll("[data-role]").forEach((b) => (b.onclick = () => openRole(b.dataset.role)));
   c.querySelectorAll("[data-area]").forEach((b) => (b.onclick = () => openArea(b.dataset.area)));
+  $("[data-skills]", c)?.addEventListener("click", openSkills);
   $("[data-regroup]", c)?.addEventListener("click", () => confirm("Group the roles into areas again? Your area names and moves are replaced.") && proposeAreas());
   $("[data-arename]", c)?.addEventListener("click", () => { const a = S.roles.areas.find((x) => x.id === S.area), n = prompt(`Rename the area "${a.name}":`, a.name); if (n && n.trim() !== a.name) rolesDo("area_rename", { id: a.id, name: n }, "Renamed."); });
   $("[data-propose]", c)?.addEventListener("click", () => (!has || confirm("Propose roles again? Your renames and moves are replaced.")) && proposeRoles());
@@ -1323,6 +1324,33 @@ function renderReview(root, job, c) {
   root.appendChild(b);
   b.onclick = () => { b.disabled = true; startRun(`Review the last change for bugs, nothing else. Changed files: ${files.join(", ")}. Task it did: ${job.prompt}. `
     + `Read only those files and what they call. Report at most 5 real problems (wrong behaviour, broken callers, missing edge cases), each with file:line and why. No style comments. If none, say so in one line.`, job.scope, true, null); };
+}
+// Find skills, built in (golden rule 1: the right skill saves the agent from working it out). Matched to this
+// project's own libraries (skills.py); added to this project only, on a click, never to the user's global setup.
+async function openSkills(refresh) {
+  $("#stitle").textContent = "Skills for this project";
+  $("#scode").innerHTML = `<p class="sub">Reading the project's libraries and searching skills.sh…</p>`;
+  showSheet(true);
+  let d;
+  try { d = await api(`/api/skills?${q(refresh === true ? "&refresh=1" : "")}`); }
+  catch (e) { $("#scode").innerHTML = `<p class="sub">${esc(e.message)}</p>`; return; }
+  const libs = Object.entries(d.stack?.libs || {}).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const row = (k) => `<li class="${k.match === "fuzzy" ? "weak" : ""}"><div><b>${esc(k.name)}</b> <span class="mono">${esc(k.source)}</span></div>`
+    + `<span>${esc(k.reason)} · ${k.installs.toLocaleString()} installs · ${k.stars == null ? "stars N/A" : k.stars.toLocaleString() + " stars"}${k.match === "fuzzy" ? " · loose match" : ""}</span>`
+    + `<div class="pa">${k.installed ? `<span class="meta">In this project</span>` : `<button class="btn" type="button" data-inst="${esc(k.source)}|${esc(k.name)}">Add to this project</button>`} <a href="${esc(k.url)}" target="_blank" rel="noopener">Read it</a></div></li>`;
+  $("#scode").innerHTML = `<p class="sub">This project uses ${libs.map(([n, c]) => `<b>${esc(n)}</b> (${c})`).join(", ") || "no third-party library modfence can see"}. `
+    + `Skills are matched to these, kept when installed 1,000+ times and their repo has 100+ stars. A skill is third-party instructions Claude Code will follow in this project: read it before adding. modfence never runs it.</p>`
+    + (d.errors?.length ? `<p class="sub bad">${esc(d.errors.join("; "))}</p>` : "")
+    + `<ul class="pf skills">${(d.skills || []).map(row).join("") || "<li>No skill passed the filters.</li>"}</ul>`
+    + (d.installed?.length ? `<p class="sub">Already in this project: ${d.installed.map(esc).join(", ")}</p>` : "")
+    + `<button class="btn quiet" type="button" data-refresh>Search again</button>`;
+  $("[data-refresh]", $("#scode")).onclick = () => openSkills(true);
+  $("#scode").querySelectorAll("[data-inst]").forEach((b) => (b.onclick = async () => {
+    const [source, skill] = b.dataset.inst.split("|");
+    b.disabled = true;
+    try { const r = await api(`/api/skills/install?${q()}`, { source, skill }); b.outerHTML = `<span class="meta">Added: ${r.written.length} files in .claude/skills/${esc(skill)}</span>`; }
+    catch (e) { b.disabled = false; toast(e.message, false); }
+  }));
 }
 function renderLesson(root, job) { // golden rule 7: what this run taught goes into the docs of the box it changed
   const fr = fileRoles(), keys = [...new Set(job.scope.flatMap((s) => Object.keys(fr).filter((f) => f === s || f.startsWith(s + "/")).map((f) => "role:" + fr[f])))];

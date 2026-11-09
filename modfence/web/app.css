@@ -674,3 +674,9 @@ body[data-view="history"] :is(.crumbs, .legend, .zoom, .hint) { display: none; }
 .frame-name { font: 650 13px var(--font); fill: var(--text-2); letter-spacing: 0.02em; text-transform: uppercase; }
 .lone-cap { font: 12px var(--font); fill: var(--text-3); }
 .node.chip .name { font-size: 12.5px; }
+
+/* skills for this project */
+.skills li { display: flex; flex-direction: column; gap: 3px; padding: 8px 0; border-top: 1px solid var(--line); }
+.skills li.weak { opacity: 0.6; }
+.skills .pa { display: flex; gap: 10px; align-items: center; }
+.sub.bad { color: var(--bad); }
