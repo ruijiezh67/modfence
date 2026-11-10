@@ -1,8 +1,10 @@
 # Golden rules
 
-modfence exists for **module vibe coding**: the project is a few modules, an agent works inside one module at a time, and every round leaves a receipt of what it touched.
+modfence exists for **module vibe coding**: the project is a few modules, you hand your agent one module at a time, and every round leaves a receipt of what it touched.
 
-The fence is the point. Because each person, and each person's agent, can change only the module they hold, several people can work on one codebase at once without breaking each other's work, whichever agent each of them uses. `MODULES.md` is the agreement on who holds what. A feature that weakens this does not ship. **For now modfence supports Claude Code only**; other agents (Codex, Cursor, Copilot) come once people use it, and nothing is built that would rule them out.
+**The core goal: the same coding goal, done with fewer tokens and in less time.** Given one module instead of the whole project, Claude Code should reach the same working change with fewer turns, fewer tokens and less waiting than plain Claude Code. That is the number modfence is judged by (rule 6), and anything modfence adds to the agent's work (a note to read, a hook to run, a check to pass) is a cost against it.
+
+A side goal, not the reason it exists: because an agent can change only the module it holds, several people, or several agents, can work on one codebase at once without breaking each other's work. `MODULES.md` is the agreement on who holds what. **For now modfence supports Claude Code only**; other agents (Codex, Cursor, Copilot) come once people use it, and nothing is built that would rule them out.
 
 It serves two kinds of user, and every feature must work for at least one of them:
 
@@ -31,7 +33,7 @@ Four lessons from the people who run agents every day (posts on X, 2025-2026) an
 1. **Review is the limit, not the agent.** "Your review bandwidth decides how many you can actually run, not the tool" (Addy Osmani). modfence makes review cheap: a change is read as modules, not as a diff.
 2. **People still read the code that matters.** Karpathy kept vibe coding to "throwaway weekend projects"; Mitchell Hashimoto's planner, coder and judge loop ends with "I read the code". modfence keeps the person's understanding; it does not replace it.
 3. **Verification beats instructions.** The most-liked tip in Boris Cherny's thread is "give Claude a way to verify its work". modfence's guarantees are hooks and checks, not prompt text.
-4. **A map handed to the agent costs more than it saves.** ContextMesh measured a repo map at +36% to +46% tokens with no turns saved. Our own A/B (36 runs, 4 real tasks) measured the fence at +19% to +29% cost: a well-specified task already sends the agent to the right files (2.3 files read, none outside the module), and what costs tokens is turns times context, which the fence did not reduce. The map is for people; what the agent reads from modfence stays minimal.
+4. **Tokens are turns times context, so only fewer turns save.** ContextMesh measured a repo map handed to the agent at +36% to +46% tokens with no turns saved. Our own A/B on a lab project (36 runs, 4 real tasks) measured the fence at +18% to +29% cost, and on rich (30 runs, 5 tasks) at +54%: a well-specified task already sends the agent to the right files (2.3 files read, none outside the module), and each instruction in the fence note added turns (more test runs and checks). Where the task does not say where to work, the fence cut cost by 21%. So the fence saves only when it removes searching, and everything else it adds must cost nothing: a note the agent must open is a turn, and a hook that starts a Python process on every tool call is waiting (0.35 to 0.7 s each, now only on edits).
 
 The seven rules come in three groups. Each rule has a **Done when** line: a check that a reviewer, a test or a script can run. Where a rule names a target not built yet, **Next** says the first step. A change that serves no rule does not ship. A change that breaks one needs a written reason.
 
@@ -53,9 +55,9 @@ The map shows the modules, links that say what they mean, and what the last roun
 
 ## B. Agents
 
-**4. The fence is a hook, granted per module.**
-While a fence is set, a hook blocks any edit outside the fenced module, so two people, or two agents in two worktrees, can work on two modules at once. A person grants and lifts a module for an agent from the map or from the terminal, and crossing into another module needs that person's approval. The fence must not cost the agent turns: hiding other modules' code ("sealed") made agents hit the hook about twice a run for no measured gain, so it is off unless a measurement shows it pays.
-*Done when:* a test shows the hook denying an outside edit by Claude Code, and two fences set in two worktrees of one repository do not affect each other.
+**4. The fence is a hook, granted per module, and costs no turns or time.**
+While a fence is set, a hook blocks any edit outside the fenced module. A person grants and lifts a module for an agent from the map or from the terminal, and crossing into another module needs that person's approval. The fence must not cost the agent turns or time: hiding other modules' code ("sealed") made agents hit the hook about twice a run for no measured gain, so it is off unless a measurement shows it pays; the hook runs only on the tools that edit. As a side benefit, two agents in two worktrees can hold two modules at once.
+*Done when:* a test shows the hook denying an outside edit by Claude Code and starting only on edit tools, and two fences set in two worktrees of one repository do not affect each other.
 
 **5. Every round leaves a receipt, built for review.**
 After a round, the receipt says which modules changed, which modules use them, which names other modules rely on were broken, which cross-module dependencies are new, which files are outside the fence, and which tests to run. It comes from git and static analysis, with no model. On a break it blocks the agent once, then lets it stop. It is shown on the map and in the terminal, and it reads in seconds, because review is the limit (lesson 1).
@@ -65,9 +67,9 @@ After a round, the receipt says which modules changed, which modules use them, w
 
 ## C. Decisions
 
-**6. Measured, or not claimed.**
-A claim about tokens, cost, correctness, safety or understanding needs an A/B on a real project, at least 3 runs per arm, with the same task for every arm. Cost is counted per outcome, as dollars per change that passed its tests and was kept, not per run. A value nobody measured is written N/A, never 0. The limits are published with the result. modfence does not claim to save tokens: the measurement so far says it does not.
-*Done when:* every number in the docs links to the run that produced it.
+**6. Fewer tokens and less time for the same goal, measured.**
+The core goal is checked by one A/B: the same task from a real project's history, plain Claude Code against Claude Code with the fence, at least 3 runs per arm, correctness checked by the commit's own tests. Cost is counted per outcome, as dollars per change that passed its tests, not per run; time is the agent's wall time. Every part of the fence is tested on its own (the line the person pastes, the note, a hint of where the code is), so a part that costs is found and cut. A value nobody measured is written N/A, never 0. The limits are published with the result. Until a round shows a saving, modfence does not claim one: so far it cost 18% to 54% more on well-specified tasks (5% on rich once its misassigned task is left out) and 21% less on vague ones.
+*Done when:* the latest A/B is in the docs with its runs, and every number in the docs links to the run that produced it.
 
 **7. Complete first, then the least that works.**
 Every step of the loop works end to end in a plain form before any step is made better: a crude piece that exists beats a polished piece that is missing. Each piece is the least that works: check whether the codebase, the standard library or Claude Code already does it, build it for the terminal first and draw it on the map second, and keep anything the agent reads from modfence (fence note, brief) as short as measurement allows.
@@ -77,4 +79,4 @@ Every step of the loop works end to end in a plain form before any step is made 
 
 - A commit that changes behaviour names the rule it serves ("rule 5").
 - A design names what it gains and what it costs on each rule it touches.
-- When rules conflict, this order wins: **4** (working code stays safe), then **5** (you know what changed), then **6** (evidence), then the rest in number order.
+- When rules conflict, this order wins: **4** (working code stays safe), then **6** (the core goal, measured), then **5** (you know what changed), then the rest in number order.

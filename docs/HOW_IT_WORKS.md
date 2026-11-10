@@ -23,21 +23,13 @@ Boxes with no link at all are not vertices: they sit as chips under the map. Ent
 
 Layout: boxes read top to bottom like a tree, from what others use (cores) to what uses them (front ends, scripts), in at most 4 rows; inside a row a stress layout (Gansner, Koren and North 2004) keeps linked boxes near each other.
 
-## A hand-off (the default)
+## A hand-off
 
-Most people already work in an agent of their own, so modfence does not need to be the chat. *Hand to my agent* snapshots the project (`runner.Handoff`), arms the fence for every agent started in it (`.modfence/fence.json` plus the hook in `.claude/settings.local.json`) and copies the instruction with the fence note (`Handoff.prompt_text`, about 500 tokens). While your agent works, the map polls the files it changed and marks their boxes. *Review changes* closes the hand-off: the same review as a run below (changed functions, contract check, commit draft, revert), then the fence comes off. A reload finds an open hand-off again; a restarted server clears any fence left behind.
+Most people already work in an agent of their own, so modfence is not the chat. Click a box, then *Fence & copy for my agent*: modfence snapshots the project (`runner.Handoff`), arms the fence for every agent started in it (`.modfence/fence.json` plus the hook in `.claude/settings.local.json`, run only on edit tools), writes the fence note to `.modfence/agent/<box>.md` and copies one line to paste into the agent's chat before the task. While the agent works, the map marks the boxes it changed. An edit outside the box is blocked and shows up as a card: *Allow module X* widens the fence for the same conversation, *Refuse* keeps it. *Review changes* closes the hand-off: the changed functions, the boxes that use them, the contract check (names other modules used whose signature changed) and files changed outside the fence, then the fence comes off. *Revert this round* puts the files back (a second click confirms: the editor's browser blocks dialogs). A reload finds an open hand-off again; a second hand-off waits until the first is reviewed.
 
-*Copy brief for agents* puts a box's brief (`brief.py`) on the clipboard, and the whole project as about 1.5k tokens of text (`handoff.py`: functions and roles, the strongest links between functions, copies to keep in sync, read-only files, the test command, recent runs, docs per function), for any agent or a new session.
+The page has one button per step of that loop and nothing else. The map reads the project again when you come back to it, so an edit to `MODULES.md` shows without a refresh button.
 
-## A run (Run here)
-
-modfence starts Claude Code itself, headless.
-
-1. **Route.** A fence inside one role that nothing outside depends on (no copies, HTTP callers or co-change partners outside) builds at once. Anything else plans first: the agent reads, asks only what is unclear, and lists the functions it will change. The composer says which path and why; one click switches.
-2. **Build, fenced and sealed.** A `PreToolUse` hook (`scope_guard.py`) denies edits outside the fence after resolving `..` and symlinks, and fails closed. Sealed (the default), the agent cannot read other modules' code either; it gets a brief of what they offer and what the fence must keep working (`brief.py`, no model call). Every edit run also carries the lean rule (`runner.LEAN_RULE`) and pointers to the project docs placed on the fence (`docs.py`).
-3. **Ask before crossing.** If the agent needs a file outside the fence, it stops and writes `NEED <path>: <why>`. The run ends with a card per file; *Allow this file* or *Allow all of <role>* continues the same conversation with the fence widened.
-4. **Done check.** A `Stop` hook (`done_check.py`) runs the test files that cover the fence and the modules using it (else the whole suite), and sends the agent back once if they fail, or if it added branching logic without touching a test.
-5. **Review.** The run's changed functions, which boxes it changed (green, with +/- lines) and which use the changed code (pale yellow), the contract check (names other modules used whose signature changed), a drafted commit message, a revert, an optional review run, and a box to write a lesson into the project's docs.
+The server still has the older headless path (`/api/ask`, `claude -p` started by modfence, with plan, build and the done check in `done_check.py`); the page no longer offers it.
 
 ## Parts of the code
 
