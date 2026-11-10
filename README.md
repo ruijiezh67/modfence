@@ -1,4 +1,4 @@
-<h1 align="center"><img src="docs/banner.svg" alt="modfence" width="720"></h1>
+<h1 align="center">modfence</h1>
 
 <p align="center"><b>Understand your project as modules, then direct the AI one module at a time.</b><br>
 A local map of your code where every box is a fence for your coding agent.</p>
@@ -9,8 +9,6 @@ A local map of your code where every box is a fence for your coding agent.</p>
 <img alt="No dependencies" src="https://img.shields.io/badge/dependencies-none-brightgreen">
 <img alt="Runs locally" src="https://img.shields.io/badge/runs-locally-brightgreen">
 </p>
-
-![modfence on rich: seven functions, from the cores on top to what uses them at the bottom](docs/map.png)
 
 AI agents now write most of the lines. What you still need to own is the shape: which part does what, what talks to what, and what a change touched. modfence gives you that shape and lets you act on it:
 
@@ -34,17 +32,11 @@ Your browser opens `http://127.0.0.1:8765`. No project at hand? From a clone of 
 
 **1. Pick a box and say what to change.** Click a function, open it, click a role. The side bar says what the box does, what it uses and what uses it, and takes your instruction right there.
 
-![Inside the layout function: its roles in a frame, the other functions outside; the table layouts role picked with an instruction typed](docs/inside.png)
-
 **2. Read the lines.** Hover a line for what the link is and what it means for a change: imports, HTTP calls, copied code, or files that change together.
-
-![Hovering the line from layout to console: layout uses 14 names from console; editing console can break layout](docs/hover.png)
 
 **3. Hand it to your agent, inside the fence.** *Hand to my agent* (Ctrl Enter) sets the fence and copies your instruction with a short fence note. Paste it into Claude Code, Cursor or Codex opened in the project; a hook blocks their edits outside the box, and the map marks the boxes they change as they go. Click *Review changes* when they are done. No agent open? *Run here* starts Claude Code headless: small, self-contained tasks build at once, anything that crosses roles plans first, and if it needs another file it stops and asks, and you allow the file, the whole role, or nothing.
 
 **4. Review the run.** The boxes it changed turn green, the ones using changed code pale yellow, and a line above the map names them. The panel lists the changed functions, the tests it ran, a drafted commit message, and a revert.
-
-![After a run on rich: file size changed (+30 −2), progress tracker and examples use the changed code; the run's functions, tests and commit message in the panel](docs/run.png)
 
 ## What is built in
 
