@@ -7,7 +7,7 @@ import atexit, json, os, subprocess, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import analyze, brief, docs, handoff, modules, purpose, roles, runner, scope_guard, skills
+from . import analyze, brief, docs, handoff, modules, purpose, receipt, roles, runner, scope_guard, skills
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -108,6 +108,14 @@ def make_handler(app, port):
                                            "asks": scope_guard.pending_asks(job.root, job.scope, job.answered),
                                            "owners": {p: modules.owner(modules.load(job.root), p) for p in scope_guard.pending_asks(job.root, job.scope, job.answered)},
                                            "modules": sorted({analyze.module_of(p, split) for p in changed if p.endswith(".py")})})
+                if u.path == "/api/fleet":  # golden rule 5: every agent's worktree, reviewed by module on the map
+                    root = app.project(q)
+                    try:
+                        if q.get("count"):
+                            return self.send_json({"count": len(receipt.worktrees(root))})
+                        return self.send_json({"agents": receipt.fleet_list(root)})
+                    except RuntimeError:
+                        return self.send_json({"count": 0, "agents": []})
                 if u.path == "/api/brief":  # one box's brief: what it uses and what others use from it
                     root, scope = app.project(q), [s for s in (q.get("scope") or [""])[0].split("+") if s]
                     g = analyze.analyze(root)

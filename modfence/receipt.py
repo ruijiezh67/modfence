@@ -246,29 +246,43 @@ def hook(raw):
     return 0
 
 
-def fleet(root, base="main"):
-    """Golden rule 5, for many agents: one short receipt per git worktree (one agent each), against where it branched
-    from `base`, so 10 to 100 agents' work is reviewed as modules, not as diffs. Exit 1 when any of them broke something."""
-    try:
-        listing = _git(root, "worktree", "list", "--porcelain").decode("utf-8", "replace")
-    except RuntimeError as e:
-        print(f"modfence receipt: {e}", file=sys.stderr)
-        return 2
-    trees = [line[len("worktree "):] for line in listing.splitlines() if line.startswith("worktree ")]
-    bad = 0
-    for wt in trees:
+def worktrees(root):
+    listing = _git(root, "worktree", "list", "--porcelain").decode("utf-8", "replace")
+    return [line[len("worktree "):] for line in listing.splitlines() if line.startswith("worktree ")]
+
+
+def fleet_list(root, base=None):
+    """[{worktree, branch, ok, problems, parts, text}] for every git worktree (one agent each), against where it
+    branched from `base` (default: the branch the project's own folder is on)."""
+    base = base or _git(root, "rev-parse", "--abbrev-ref", "HEAD").decode().strip()
+    out = []
+    for wt in worktrees(root):
         try:
             since = _git(wt, "merge-base", "HEAD", base).decode().strip()
             branch = _git(wt, "rev-parse", "--abbrev-ref", "HEAD").decode().strip()
             r = build(wt, since)
         except RuntimeError as e:
-            print(f"== {wt}: {e}")
+            out.append({"worktree": wt, "branch": "?", "ok": None, "problems": [str(e)], "parts": [], "text": ""})
             continue
-        bad += not r["ok"]
         problems = [f"{len(r['contract'])} contract break(s)"] * bool(r["contract"]) + \
                    [f"{len(r['new_dependencies'])} new dependency(ies)"] * bool(r["new_dependencies"]) + \
                    [f"{len(r['outside_fence'] or [])} outside the fence"] * bool(r["outside_fence"])
-        print(f"== {branch}  ({wt})  {'OK' if r['ok'] else 'CHECK: ' + ', '.join(problems)}")
-        print("\n".join("   " + line for line in text(r).splitlines()[1:]))
-    print(f"{len(trees)} worktree(s), {bad} to check. Cost per agent: N/A (modfence does not see the agents' bills).")
+        out.append({"worktree": wt, "branch": branch, "ok": r["ok"], "problems": problems,
+                    "parts": [a["id"] for a in r["areas"]], "text": text(r)})
+    return out
+
+
+def fleet(root, base="main"):
+    """Golden rule 5, for many agents: one short receipt per git worktree (one agent each), against where it branched
+    from `base`, so 10 to 100 agents' work is reviewed as modules, not as diffs. Exit 1 when any of them broke something."""
+    try:
+        agents = fleet_list(root, base)
+    except RuntimeError as e:
+        print(f"modfence receipt: {e}", file=sys.stderr)
+        return 2
+    for a in agents:
+        print(f"== {a['branch']}  ({a['worktree']})  {'OK' if a['ok'] else 'CHECK: ' + ', '.join(a['problems'])}")
+        print("\n".join("   " + line for line in a["text"].splitlines()[1:]))
+    bad = sum(a["ok"] is False for a in agents)
+    print(f"{len(agents)} worktree(s), {bad} to check. Cost per agent: N/A (modfence does not see the agents' bills).")
     return 1 if bad else 0

@@ -41,6 +41,7 @@ async function boot() {
   $("#picker").value = S.p;
   if (IS_MAC) $("#chint").innerHTML = "<kbd>⌘</kbd> <kbd>Enter</kbd> to send";
   await loadGraph(true);
+  api(`/api/fleet?${q("&count=1")}`).then((r) => { S.fleet = r.count; renderCrumbs(); }).catch(() => {});
   setView(hp.get("v") || store.get("modfence.view") || "graph");
   if (hp.get("m") && mod(hp.get("m"))) {
     if (hp.get("tab")) S.tab = hp.get("tab");
@@ -408,7 +409,7 @@ function renderCrumbs() {
       if (S.level !== "areas" && A) h += `<span>/</span>` + step(n++, A.name, `data-area="${esc(A.id)}"`, S.level === "roles");
     } else h = step(n++, "Roles", 'data-lv="roles"', S.level === "roles");
     if (S.level === "parts") h += `<span>/</span>` + step(n, S.role === "?" ? "not placed yet" : rname(S.role), `data-role="${esc(S.role)}"`, true);
-    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "module")}</em>${S.roles.modules_file ? `<span class="act q" title="The modules are read from MODULES.md at the project root; edits here write it back">MODULES.md</span>` : `<button type="button" class="act q" data-regroup>Regroup modules</button><button type="button" class="act" data-savemods title="Write these modules to MODULES.md at the project root, for your team, every agent, the fence and the receipt">Save as MODULES.md</button>`}<button type="button" class="act q" data-skills>Skills for this project</button><button type="button" class="act q" data-handoff title="The map as about 1k tokens of text for Cursor, Codex or a new session">Copy map for agents</button><button type="button" class="act q" data-lv="modules" title="Every Python file by folder, with its imports">Folders</button>`;
+    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "module")}</em>${S.roles.modules_file ? `<span class="act q" title="The modules are read from MODULES.md at the project root; edits here write it back">MODULES.md</span>` : `<button type="button" class="act q" data-regroup>Regroup modules</button><button type="button" class="act" data-savemods title="Write these modules to MODULES.md at the project root, for your team, every agent, the fence and the receipt">Save as MODULES.md</button>`}${S.fleet > 1 ? `<button type="button" class="act" data-fleet title="One receipt per git worktree: what each agent changed and may break">Agents (${S.fleet})</button>` : ""}<button type="button" class="act q" data-skills>Skills for this project</button><button type="button" class="act q" data-handoff title="The map as about 1k tokens of text for Cursor, Codex or a new session">Copy map for agents</button><button type="button" class="act q" data-lv="modules" title="Every Python file by folder, with its imports">Folders</button>`;
     if (S.level === "roles" && A) h += `<button type="button" class="act q" data-arename>Rename module</button>`;
     if (S.hiddenLinks && !S.dense) h += `<em title="Strongest ${KEEP_LINKS} links per box">${S.hiddenLinks} weak links hidden</em>`;
     if (S.level === "roles" && !A) h += `<em title="${esc(S.roles.how || "")}">${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}</em>`
@@ -424,6 +425,7 @@ function renderCrumbs() {
   c.querySelectorAll("[data-role]").forEach((b) => (b.onclick = () => openRole(b.dataset.role)));
   c.querySelectorAll("[data-area]").forEach((b) => (b.onclick = () => openArea(b.dataset.area)));
   $("[data-skills]", c)?.addEventListener("click", openSkills);
+  $("[data-fleet]", c)?.addEventListener("click", openFleet);
   $("[data-handoff]", c)?.addEventListener("click", () => copyForAgents(`/api/handoff?${q()}`, "Map"));
   $("[data-savemods]", c)?.addEventListener("click", () => rolesDo("save_modules", {}, "Saved MODULES.md at the project root: commit it so your team and every agent share these modules."));
   $("[data-regroup]", c)?.addEventListener("click", () => confirm("Group the roles into modules again? Your module names and moves are replaced.") && proposeAreas());
@@ -1717,6 +1719,21 @@ function markRun(c) { // paint a run's changed modules (green dots, +n −m) and
 
 /* ---------------- sheet: file, diff, help, output ---------------- */
 let sheetReturn = null;
+// Golden rule 5: many agents, one worktree each, reviewed as modules: each one's receipt, and its modules on the map.
+async function openFleet() {
+  $("#stitle").textContent = "Agents";
+  $("#scode").innerHTML = `<p class="none">Reading every worktree…</p>`;
+  showSheet(true);
+  let res;
+  try { res = await api(`/api/fleet?${q()}`); } catch (e) { $("#scode").innerHTML = `<p class="none">${esc(e.message)}</p>`; return; }
+  $("#scode").innerHTML = res.agents.map((a, i) => `<div class="agent"><p><b>${esc(a.branch)}</b> <span class="meta">${esc(a.worktree)}</span> `
+    + `${a.ok ? "OK" : `<b class="bad">${esc(a.problems.join(", ") || "check")}</b>`} <button class="btn" type="button" data-show="${i}">Show on map</button></p>`
+    + `<pre class="mono">${esc(a.text)}</pre></div>`).join("") || `<p class="none">No worktrees.</p>`;
+  $("#scode").querySelectorAll("[data-show]").forEach((b) => (b.onclick = () => {
+    const names = res.agents[b.dataset.show].parts, ids = S.graph.modules.filter((m) => names.includes(m.label || m.id) || names.includes(m.id)).map((m) => m.id);
+    S.marks = { changed: new Set(ids), ripple: new Set(), stats: {} }; paintSelection(); showSheet(false);
+  }));
+}
 function showSheet(on) {
   $("#scrim").classList.toggle("show", on);
   $("#sheet").hidden = !on;
@@ -1843,7 +1860,9 @@ function wire() {
     store.set("modfence.project", S.p); location.hash = `p=${S.p}`;
     closePanel(); S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; S.userCam = false; S.focus = ""; S.level = null; S.role = null; S.area = null; S.proposed = false; S.proposedAreas = false;
     const b = $("#tests"); b.classList.remove("ok", "bad"); $(".lbl", b).textContent = "Run tests";
+    S.fleet = 0;
     await loadGraph(true);
+    api(`/api/fleet?${q("&count=1")}`).then((r) => { S.fleet = r.count; renderCrumbs(); }).catch(() => {});
   };
   $("#refresh").onclick = () => loadGraph(false).then(() => toast("Project re-scanned."));
   $("#tests").onclick = runTests;
