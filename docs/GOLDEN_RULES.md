@@ -2,9 +2,11 @@
 
 modfence exists for **module vibe coding**: the project is a few modules, an agent works inside one module at a time, and every round leaves a receipt of what it touched.
 
+The fence is the point. Because each person, and each person's agent, can change only the module they hold, several people can work on one codebase at once without breaking each other's work, **whichever agent each of them uses** (Claude Code, Codex, Cursor, Copilot). `MODULES.md` is the agreement on who holds what. A feature that weakens this, or that works for only one agent, does not ship.
+
 It serves two kinds of user, and every feature must work for at least one of them:
 
-- **Engineers who live in the terminal** and run agents, often several at once or in loops. They get the fence and the receipt as a Claude Code plugin and a command line, with no page to open.
+- **Engineers who live in the terminal** and run agents, often several at once or in loops. They get the fence and the receipt from a command line and hooks that any agent can use, packaged as a plugin where an agent supports plugins, with no page to open.
 - **People who need to see the project first**: newcomers, reviewers, anyone taking over code they did not write. They get the map.
 
 The seven rules come in three groups. Each rule has a **Done when** line: a check that a reviewer, a test or a script can run. A change that serves no rule does not ship. A change that breaks one needs a written reason.
@@ -12,7 +14,7 @@ The seven rules come in three groups. Each rule has a **Done when** line: a chec
 ## A. Modules
 
 **1. Modules are written down and shared.**
-The first level is at most 7 modules, kept in `MODULES.md` at the repository root (a name, one line of purpose, folders and globs). People, agents, hooks and CI read the same file. modfence writes it only when the user saves the map.
+The first level is at most 7 modules, kept in `MODULES.md` at the repository root (a name, one line of purpose, folders and globs). People, every agent (it is plain Markdown that `CLAUDE.md` and `AGENTS.md` point to), hooks and CI read the same file, so a team shares one picture of who holds what. modfence writes it only when the user saves the map. Test files belong to no module: everyone may run and extend them.
 *Done when:* every feature that needs module membership reads `MODULES.md` when it exists, and a file no module claims is shown as unassigned, not guessed.
 
 **2. Structure is computed, not guessed.**
@@ -26,8 +28,8 @@ The map shows at most 7 boxes, links that say what they mean, and what the last 
 ## B. Agents
 
 **4. The fence is a hook, not a prompt.**
-While a fence is set, a hook blocks any edit outside the fenced module. Crossing into another module needs the user's approval, given in the map or in the terminal. Whether other modules' code is also hidden from the agent ("sealed") is a choice backed by measurement, not a default taken on faith.
-*Done when:* a test shows the hook denying an outside edit for every agent the fence claims to cover.
+While a fence is set, a hook blocks any edit outside the fenced module, so two people, or two agents in two worktrees, can work on two modules at once. Crossing into another module needs the approval of the person who set the fence, given in the map or in the terminal. Whether other modules' code is also hidden from the agent ("sealed") is a choice backed by measurement, not a default taken on faith.
+*Done when:* a test shows the hook denying an outside edit in the payload of each agent it claims to cover (Claude Code, Codex, Cursor, Copilot), and two fences set in two worktrees of one repository do not affect each other.
 
 **5. Every round leaves a receipt.**
 After a round, the receipt says which modules changed, which modules use them, which names other modules rely on were broken, which cross-module dependencies are new, which files are outside the fence, and which tests to run. It comes from git and static analysis, with no model. On a break it blocks the agent once, then lets it stop. It is shown on the map and in the terminal.
