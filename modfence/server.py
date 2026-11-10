@@ -108,6 +108,12 @@ def make_handler(app, port):
                                            "asks": scope_guard.pending_asks(job.root, job.scope, job.answered),
                                            "owners": {p: modules.owner(modules.load(job.root), p) for p in scope_guard.pending_asks(job.root, job.scope, job.answered)},
                                            "modules": sorted({analyze.module_of(p, split) for p in changed if p.endswith(".py")})})
+                if u.path == "/api/fence":  # the fence agents in this project have now (set by the task, the map or the terminal)
+                    root = app.project(q)
+                    f = scope_guard._read_json(os.path.join(root, scope_guard.FENCE_FILE))
+                    asks = scope_guard.pending_asks(root, f["files"], f.get("refused", ())) if f else []
+                    mods = modules.load(root) or []
+                    return self.send_json({"fence": f, "asks": asks, "owners": {a: modules.owner(mods, a) for a in asks}})
                 if u.path == "/api/fleet":  # golden rule 5: every agent's worktree, reviewed by module on the map
                     root = app.project(q)
                     try:
@@ -280,6 +286,17 @@ def make_handler(app, port):
                     else:
                         docs.add_lesson(root, path, str(b.get("text") or ""))
                     return self.send_json({"ok": True})
+                if u.path == "/api/fence/set":  # the person switches the task's fence, allows a module it blocked, or refuses
+                    root = app.project(q)
+                    f = scope_guard._read_json(os.path.join(root, scope_guard.FENCE_FILE))
+                    if f is None:
+                        return self.send_json({"error": "no fence is set"}, 404)
+                    scope = [x for x in b.get("scope") or f["files"] if isinstance(x, str) and x]
+                    keep = {k: v for k, v in f.items() if k not in ("files", "sealed", "label", "since", "made_settings")}
+                    keep["refused"] = sorted(set(f.get("refused", [])) | {x for x in b.get("refuse") or [] if isinstance(x, str)})
+                    label = " + ".join(x.replace("@module:", "") for x in scope if x.startswith("@module:")) or f.get("label", "")
+                    scope_guard.arm(root, scope, bool(f.get("sealed")), label, hook=False, extra=keep)
+                    return self.send_json({"ok": True, "scope": scope})
                 if u.path == "/api/fence/clear":
                     with app.lock:
                         running = app.active.get(app.project(q))

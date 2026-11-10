@@ -822,6 +822,43 @@ class ModulesTest(unittest.TestCase):
         self.assertEqual(names[v["file_area"]["app/core/values.py"]], "engine", "a box holds the files MODULES.md gives it")
 
 
+class JitTest(unittest.TestCase):
+    """The task picks the fence (golden rules 4 and 6): no model, and a fence the person set is never replaced."""
+
+    def setUp(self):
+        from modfence import jit
+        self.jit, self.d = jit, project()
+        write(os.path.join(self.d, "MODULES.md"), "# Modules\n\n## core\nValues.\n- app/core/\n\n## api\n- app/api/\n\n## cli\n- app/cli/\n")
+        write(os.path.join(self.d, "app/core/values.py"),
+              '"""Values."""\nLIMIT = 3\n\ndef double_value(x):\n    """Double a value, capped at the limit."""\n    return min(2 * x, LIMIT)\n')
+        self.fence = os.path.join(self.d, ".modfence", "fence.json")
+
+    def hook(self, prompt):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.jit.hook(json.dumps({"cwd": os.path.join(self.d, "app"), "prompt": prompt}))
+        return buf.getvalue()
+
+    def test_the_task_fences_its_module_and_says_why(self):
+        out = json.loads(self.hook("double_value should respect the limit when doubling a value"))
+        self.assertIn("core", out["systemMessage"])
+        self.assertIn("app/core/values.py:4 double_value", out["hookSpecificOutput"]["additionalContext"])
+        f = load(self.fence)
+        self.assertEqual((f["files"], f["by"]), (["@module:core"], "jit"))
+        self.assertFalse(os.path.exists(os.path.join(self.d, ".claude")), "the plugin's own hook enforces it: no settings written")
+        self.assertIsNotNone(scope_guard.decide({"tool_name": "Edit", "tool_input": {"file_path": "app/api/handlers.py"}}, self.d, f["files"]))
+        self.assertEqual(self.hook("continue"), "", "a follow-up names nothing: the fence it has stays")
+        self.assertEqual(load(self.fence)["files"], ["@module:core"])
+
+    def test_a_fence_the_person_set_is_kept(self):
+        scope_guard.arm(self.d, ["@module:cli"], False, "cli")
+        self.assertEqual(self.hook("double_value should respect the limit when doubling a value"), "")
+        self.assertEqual(load(self.fence)["files"], ["@module:cli"])
+        scope_guard.disarm(self.d)
+        os.remove(os.path.join(self.d, "MODULES.md"))
+        self.assertEqual(self.hook("double_value should respect the limit"), "", "no MODULES.md: the hook stays out of the way")
+
+
 class FencePluginTest(unittest.TestCase):
     def test_fence_a_module_of_modules_md_from_the_terminal(self):
         from modfence.__main__ import main

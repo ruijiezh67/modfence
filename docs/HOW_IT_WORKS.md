@@ -23,13 +23,13 @@ Boxes with no link at all are not vertices: they sit as chips under the map. Ent
 
 Layout: boxes read top to bottom like a tree, from what others use (cores) to what uses them (front ends, scripts), in at most 4 rows; inside a row a stress layout (Gansner, Koren and North 2004) keeps linked boxes near each other.
 
-## A hand-off
+## A task, fenced just in time
 
-Most people already work in an agent of their own, so modfence is not the chat. Click a box, then *Fence & copy for my agent*: modfence snapshots the project (`runner.Handoff`), arms the fence for every agent started in it (`.modfence/fence.json` plus the hook in `.claude/settings.local.json`, run only on edit tools), writes the fence note to `.modfence/agent/<box>.md` and copies one line to paste into the agent's chat before the task. While the agent works, the map marks the boxes it changed. An edit outside the box is blocked and shows up as a card: *Allow module X* widens the fence for the same conversation, *Refuse* keeps it. *Review changes* closes the hand-off: the changed functions, the boxes that use them, the contract check (names other modules used whose signature changed) and files changed outside the fence, then the fence comes off. *Revert this round* puts the files back (a second click confirms: the editor's browser blocks dialogs). A reload finds an open hand-off again; a second hand-off waits until the first is reviewed.
+You give Claude Code a task as usual. The plugin's `UserPromptSubmit` hook (`jit.py`) reads it at that moment and scores every function of every module in `MODULES.md`: 3 per task word in its name, 1 per word in its body, plus words in its file's name; a module scores its best three. The best module is fenced (and the second when it scores at least 3/4 as well), through `.modfence/fence.json`, which the plugin's `PreToolUse` hook enforces on edit tools only. The agent gets one short paragraph: the modules it may edit and the three likely places (file:line, function); you get one line: the modules, the functions behind the guess and the other candidates. Nothing happens without `MODULES.md`, on a fence you set yourself (`modfence fence`, kept), or on a follow-up whose words point nowhere (the task's fence stays).
 
-The page has one button per step of that loop and nothing else. The map reads the project again when you come back to it, so an edit to `MODULES.md` shows without a refresh button.
+An edit outside the fence is blocked and logged; the map's top bar shows it with *Allow module X* (widens the fence for the same conversation) and *Refuse*, next to the task, the evidence and the other candidates, each one click away. When the agent stops, the receipt (`receipt.py`, the plugin's `Stop` hook) says what changed and what may break.
 
-The server still has the older headless path (`/api/ask`, `claude -p` started by modfence, with plan, build and the done check in `done_check.py`); the page no longer offers it.
+The older hand-off (`runner.Handoff`: snapshot, a line to paste, *Review changes*, revert) and headless runs (`/api/ask`, `done_check.py`) remain in the server; the page no longer starts them.
 
 ## Parts of the code
 

@@ -3,6 +3,7 @@ modfence receipt [PROJECT] [--since REV] [--json]   what a change touched and ma
 modfence receipt --fleet [PROJECT] [--base main]   one receipt per worktree, for many agents at once
 modfence quiz [PROJECT] [--since REV]              five questions on the round: do you still know what it did?
 modfence fence MODULE | --off                       fence every agent in this project to one module of MODULES.md
+modfence jit "TASK"                                 which module the plugin would fence for this task, and why
 
 With no project given, opens the current directory if it holds Python files, else the bundled examples.
 """
@@ -21,6 +22,9 @@ def main(argv=None):
         return quiz.main(argv[1:])
     if argv[:1] == ["fence"]:  # a fence from the terminal, for any agent in this project (golden rule 4)
         return fence(argv[1:])
+    if argv[:1] == ["jit"]:  # the task picks the fence: what it would pick, or (--hook) the UserPromptSubmit hook itself
+        from . import jit
+        return jit.main(argv[1:])
     if argv[:1] == ["guard"]:  # the PreToolUse hook itself, as the plugin runs it
         from . import scope_guard
         sys.argv = sys.argv[:1]  # the hook reads the project from its working directory

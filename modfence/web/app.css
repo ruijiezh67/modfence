@@ -146,6 +146,11 @@ kbd { font: 11.5px var(--mono); padding: 0 5px; border: 1px solid var(--line-2);
 .runbar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fence); animation: blink 1.6s ease-in-out infinite; }
 .runbar .mono { font-size: 12.5px; }
 .runbar button { margin-left: auto; height: 24px; font-size: 12px; }
+.runbar.still::after { display: none; }
+.runbar.still .dot { animation: none; }
+.runbar .others, .runbar .ask { display: inline-flex; gap: 6px; align-items: center; margin-left: 12px; }
+.runbar .others button, .runbar .ask button { margin-left: 0; }
+.runbar .lk { all: unset; cursor: pointer; font-weight: 650; text-decoration: underline; text-decoration-color: var(--fence); }
 @keyframes blink { 50% { opacity: 0.3; } }
 
 /* ---------- stage ---------- */

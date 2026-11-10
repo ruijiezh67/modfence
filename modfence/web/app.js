@@ -1,4 +1,5 @@
-/* modfence UI: see the modules, fence one for your agent, review what it changed. As few buttons as the loop needs. */
+/* modfence UI: see the modules; when you give your agent a task in Claude Code, see which module it was fenced to,
+   why, and switch it or allow a crossing. As few buttons as the loop needs. */
 "use strict";
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -38,6 +39,7 @@ async function boot() {
   if (hp.get("p") && projects[+hp.get("p")]) S.p = +hp.get("p");
   $("#picker").value = S.p;
   await loadGraph(true);
+  pollFence(); setInterval(pollFence, 3000); // ponytail: a 3 s poll of one small file; an event stream when it matters
 }
 
 async function loadGraph(fit) {
@@ -233,14 +235,11 @@ function pick(id) { // a click only selects; the card below says what it is and 
   const mine = new Set(m.files), shared = [...new Set(S.full.edges.flatMap((e) => e.receipts).filter((r) => mine.has(r.file) && kindOf(r.target_file) === "shared").map((r) => r.target_file))].sort();
   const doc = folder ? "" : m.doc || mdoc(m);
   const fdoc = (f) => S.full.files[f]?.doc || "";
-  const busy = S.job && !S.job.done && S.job.phase === "hand";
   card.innerHTML = `<div class="pk"><b>${esc(name)}</b></div>`
     + `<div class="pm mono">${plural(m.files.length, "file")} · ${m.lines.toLocaleString()} ln</div>`
     + (doc ? `<p>${esc(doc)}</p>` : `<p class="none">No description in the code.</p>`)
     // golden rule 3: say what to change right here; the box is the fence, the map stays where it is
-    + (folder || id === "role:?" ? "" : busy ? `<div class="ask"><p class="meta">Your agent is fenced to ${esc(S.job.label)}. Review its changes (the bar at the top) before fencing another box.</p></div>`
-      : `<div class="ask"><button type="button" class="btn primary" data-hand title="Fence this box for every agent in the project and copy one line to paste into your agent's chat">Fence &amp; copy for my agent</button>`
-      + `<p class="meta">Paste the line into your agent's chat (Claude Code in VS Code) and type the task after it. Edits outside ${esc(name)} are blocked.</p></div>`)
+    + (folder || id === "role:?" ? "" : `<p class="meta">To change it, give your agent the task in Claude Code: modfence fences the module the task needs (the top bar shows which, and why).</p>`)
     + `<div class="pa">${role || folder ? `<button type="button" class="btn" data-open>${area ? "Open roles" : role ? "Open parts" : "Open folder"} ▸</button>` : ""}</div>`
     + (out.length ? `<h4>Uses <i>${out.length}</i></h4><ul class="pl">${out.map((e) => link(e, e.target)).join("")}</ul>` : "")
     + (inn.length ? `<h4>Used by <i>${inn.length}</i></h4><ul class="pl">${inn.map((e) => link(e, e.source)).join("")}</ul>` : "")
@@ -253,12 +252,8 @@ function pick(id) { // a click only selects; the card below says what it is and 
   card.hidden = false; card.scrollTop = 0;
   if (opening && !S.userCam) fitView();
   card.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => pick(b.dataset.go)));
-  const files = plain ? [id] : m.files, label = area ? name : role ? "role " + name : name; // the box's files: the fence without MODULES.md
-  const scope = area && S.roles?.modules_file ? ["@module:" + name] : files; // a module of MODULES.md is fenced as that module
-  const hand = async (ev) => { ev.currentTarget.disabled = true; unpick(); await openFence(scope, label, m.doc); await startHand("", scope, label); };
-  $("[data-hand]", card)?.addEventListener("click", hand);
   $("[data-open]", card)?.addEventListener("click", () => { unpick(); area ? openArea(id.slice(5)) : role ? openRole(id.slice(5)) : (S.focus = id.slice(0, -1), regroup(), fitView()); });
-  ($("[data-hand]", card) || $("[data-open]", card))?.focus();
+  $("[data-open]", card)?.focus();
   paintSelection();
 }
 function unpick() { const was = !$("#pick").hidden; S.picked = null; $("#pick").hidden = true; paintSelection(); if (was && !S.userCam && !document.body.classList.contains("panel-open")) fitView(); }
@@ -657,7 +652,7 @@ function related(id) {
   S.graph.edges.forEach((e) => { if (e.source === id) dep.add(e.target); if (e.target === id) use.add(e.source); });
   return { dep, use };
 }
-function fenced(id) { return S.selected !== null && (inSet(S.scope, id) || !!mod(id)?.files?.some((f) => S.fenceSet?.has(f))); }
+function fenced(id) { return (S.selected !== null || S.fenceOn) && (inSet(S.scope, id) || !!mod(id)?.files?.some((f) => S.fenceSet?.has(f))); }
 function stateWords(id, rel, focus) {
   const w = [];
   if (id === S.selected) w.push("selected");
@@ -1122,18 +1117,6 @@ function md(src) {
   return out.join("").replace(/\u0000(\d+)\u0000/g, (_, i) => `<pre><code>${esc(blocks[+i].replace(/\n$/, ""))}</code></pre>`);
 }
 
-// The default way to work (golden rules 4 and 5): your own agent does the task. modfence fences the box for every agent
-// started in the project, copies the task with the fence note, marks the boxes your agent changes as it goes, and
-// reviews the result like a run when you say it is done.
-async function startHand(prompt, scope, label) {
-  let res;
-  try { res = await api(`/api/hand?${q()}`, { prompt, scope, label, unsealed: !!S.unsealed }); }
-  catch (e) { toast(e.message, false); return; }
-  let copied = true;
-  try { await navigator.clipboard.writeText(res.line); } catch { copied = false; }
-  showHand(res, copied);
-  toast(copied ? "Fence on and a line copied: paste it into your agent's chat, then type the task." : "Fence on. Click the line in the side bar to copy it.");
-}
 async function restoreHand() { // a hand-off outlives a reload: the agent works in a terminal for minutes
   let res;
   try { res = await api(`/api/hand/active?${q()}`); } catch { return; }
@@ -1206,7 +1189,7 @@ function listen(job) {
     if (e.kind === "tool" && e.edit) markEditing(e.detail);
     if (e.kind === "changes") onChanges(e);
     if (e.kind === "done") {
-      job.done = true; es.close(); clearInterval(job.poll); job.wait?.remove(); job.wait = null; showRunbar();
+      job.done = true; es.close(); clearInterval(job.poll); job.wait?.remove(); job.wait = null; showRunbar(); S.fenceKey = null; pollFence();
       const r = job.events.find((x) => x.kind === "result");
       toast(r && r.ok ? "Review ready in the side bar." : "Stopped.", !!(r && r.ok));
     }
@@ -1227,6 +1210,36 @@ function showRunbar() { // while your agent works: one line at the top; a click 
   };
   draw();
   runTimer = setInterval(draw, 1000);
+}
+/* The task's fence (jit.py, golden rule 4): set when you give your agent a task in Claude Code. The bar says which
+   module, for which task, because of which functions, and what else it could have been; a click switches. A file the
+   agent was blocked from is a request: allow its module, or refuse. */
+async function pollFence() {
+  if (document.hidden || !S.full) return;
+  let r;
+  try { r = await api(`/api/fence?${q()}`); } catch { return; }
+  const key = JSON.stringify(r);
+  if (key === S.fenceKey) return;
+  S.fenceKey = key; S.fence = r; showFence();
+}
+function showFence() {
+  if (S.job && !S.job.done) return; // a hand-off from an older page holds the bar until it is reviewed
+  const bar = $("#runbar"), f = S.fence?.fence;
+  S.fenceOn = !!f; S.fenceSet = new Set(f ? filesOf(f.files) : []); paintSelection();
+  bar.hidden = !f; bar.classList.toggle("still", !!f); document.body.classList.toggle("running", !!f);
+  if (!f) return;
+  const names = (c) => [...new Set(c.where.map((w) => w[2]))].slice(0, 3).join(", ");
+  const cands = f.candidates || [], held = (c) => f.files.includes("@module:" + c.module);
+  const why = cands.filter(held).map(names).join("; "), others = cands.filter((c) => !held(c));
+  bar.onclick = null;
+  bar.innerHTML = `<span class="dot" aria-hidden="true"></span><span>Fence <b>${esc(f.label || f.files.join(", "))}</b>${f.task ? ` for “${esc(clip(f.task, 70))}”` : ""}${why ? ` · because ${esc(why)}` : ""}</span>`
+    + (others.length ? `<span class="others">other:${others.map((c) => ` <button type="button" class="lk" data-to="${esc(c.module)}" title="Fence this task to ${esc(c.module)} instead (${esc(names(c))})">${esc(c.module)}</button>`).join("")}</span>` : "")
+    + (S.fence.asks || []).map((a, i) => `<span class="ask">asks to edit <span class="mono">${esc(a)}</span> <button type="button" class="btn primary" data-allow="${i}">Allow ${S.fence.owners[a] ? "module " + esc(S.fence.owners[a]) : "this file"}</button><button type="button" class="btn quiet" data-refuse="${i}">Refuse</button></span>`).join("");
+  const set = async (body, ok) => { try { await api(`/api/fence/set?${q()}`, body); toast(ok); S.fenceKey = null; pollFence(); } catch (e) { toast(e.message, false); } };
+  bar.querySelectorAll("[data-to]").forEach((b) => (b.onclick = () => set({ scope: ["@module:" + b.dataset.to] }, `This task is now fenced to ${b.dataset.to}. Tell your agent if it already started.`)));
+  bar.querySelectorAll("[data-allow]").forEach((b) => (b.onclick = () => { const a = S.fence.asks[+b.dataset.allow], o = S.fence.owners[a];
+    set({ scope: [...new Set([...f.files, o ? "@module:" + o : a])] }, "Allowed. Tell your agent: approved, continue."); }));
+  bar.querySelectorAll("[data-refuse]").forEach((b) => (b.onclick = () => set({ refuse: [S.fence.asks[+b.dataset.refuse]] }, "Refused. The fence stays as it was.")));
 }
 function markEditing(path) {
   const rel = shortPath(path);
@@ -1310,7 +1323,9 @@ async function switchProject(p) {
   S.p = p; $("#picker").value = p; store.set("modfence.project", p); location.hash = `p=${p}`;
   if (S.job) { clearInterval(S.job.poll); S.job = null; showRunbar(); } // found again by restoreHand when you come back
   unpick(); closePanel(); S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; S.userCam = false; S.focus = ""; S.level = null; S.role = null; S.area = null; S.proposed = false; S.proposedAreas = false;
+  S.fence = null; S.fenceKey = null; showFence();
   await loadGraph(true);
+  pollFence();
 }
 // No refresh button: the map reads the project again when you come back to it (after editing MODULES.md, say), and
 // redraws only if something changed, so a card you just opened stays open.

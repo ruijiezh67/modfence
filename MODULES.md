@@ -13,6 +13,7 @@ Builds the module map from the code: imports, git history, copies and runtime li
 ## fence
 Keeps an agent inside one module: the edit hook, the runs through Claude Code, the done check and the escape-hatch viewer.
 - modfence/scope_guard.py
+- modfence/jit.py
 - modfence/runner.py
 - modfence/done_check.py
 - modfence/show.py

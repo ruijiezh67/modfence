@@ -223,18 +223,22 @@ def hook_command(root):
     return f"{q(sys.executable)} {q(__file__)} {q(root)}"
 
 
-def arm(root, files, sealed, label=""):
-    """Write the fence file and add this hook to root's .claude/settings.local.json, keeping everything else there."""
+def arm(root, files, sealed, label="", hook=True, extra=None):
+    """Write the fence file and add this hook to root's .claude/settings.local.json, keeping everything else there.
+    hook=False: the fence file only, for the plugin, whose own hook reads it. extra: more fields for the file (the
+    just-in-time fence keeps the task and the candidates there, for the map)."""
     root = os.path.abspath(root)
     fence_path, settings_path = os.path.join(root, FENCE_FILE), os.path.join(root, LOCAL_SETTINGS)
     settings = _read_json(settings_path)
     made = (_read_json(fence_path) or {}).get("made_settings", settings is None)  # kept across re-arms
     _write_json(fence_path, {"files": sorted({f.split("::")[0] for f in files}), "sealed": bool(sealed), "label": label,
-                             "since": datetime.now().astimezone().isoformat(timespec="seconds"), "made_settings": made})
+                             "since": datetime.now().astimezone().isoformat(timespec="seconds"), "made_settings": made, **(extra or {})})
     gi = os.path.join(root, ".modfence", ".gitignore")
     if not os.path.exists(gi):  # as runner.state_dir does: modfence's state stays out of git
         with open(gi, "w", newline="\n") as f:
             f.write("*\n")
+    if not hook:
+        return
     settings = settings or {}
     pre = settings.setdefault("hooks", {}).setdefault("PreToolUse", [])
     entry = {"matcher": "*" if sealed else EDIT_MATCHER, "hooks": [{"type": "command", "command": hook_command(root), "timeout": 10}]}

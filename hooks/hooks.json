@@ -12,6 +12,17 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=python; command -v python >/dev/null 2>&1 || P=python3; \"$P\" \"${CLAUDE_PLUGIN_ROOT}/plugin/cli.py\" jit --hook",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
