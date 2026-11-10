@@ -565,13 +565,63 @@ function stressLayout(ids, edges, rank) {
   }
   return Object.fromEntries(ids.map((id, i) => [id, { x: Math.round(P[i].x - NODE_W / 2), y: Math.round(P[i].y - NODE_H / 2) }]));
 }
-function straightPath(e) { // box edge to box edge along the centre line; a two-way pair is drawn as two parallel lines
-  const a = S.pos[e.source], b = S.pos[e.target];
-  const ax = a.x + NODE_W / 2, ay = a.y + NODE_H / 2, bx = b.x + NODE_W / 2, by = b.y + NODE_H / 2;
-  const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1, off = e._two ? 5 : 0, ox = (-dy / len) * off, oy = (dx / len) * off;
-  const cut = (hw, hh) => Math.min(hw / Math.abs(dx || 1e-9), hh / Math.abs(dy || 1e-9)); // centre to the box border
-  const s = cut(NODE_W / 2 + 2, NODE_H / 2 + 2), t = cut(NODE_W / 2 + 5, NODE_H / 2 + 5);
-  return `M${ax + dx * s + ox},${ay + dy * s + oy} L${bx - dx * t + ox},${by - dy * t + oy}`;
+// Every map (golden rule 2): each link leaves a box side square to it, the links on one side spread along it in the
+// order of their other ends (so they do not cross at the box), and an S or L curve joins the two ports. A link uses
+// only sides that face the other box; it prefers the pair facing each other along the map's main direction, then a
+// corner (one side up or down, the other sideways), and leaves those when the curve runs far behind another box.
+const NORMAL = { top: [0, -1], bottom: [0, 1], left: [-1, 0], right: [1, 0] };
+function port(p, side, f) {
+  return side === "top" ? [p.x + NODE_W * f, p.y] : side === "bottom" ? [p.x + NODE_W * f, p.y + NODE_H]
+    : side === "left" ? [p.x, p.y + NODE_H * f] : [p.x + NODE_W, p.y + NODE_H * f];
+}
+function sCurve([sx, sy], ss, [tx, ty], ts) {
+  const [ax, ay] = NORMAL[ss], [bx, by] = NORMAL[ts];
+  tx += bx * 4; ty += by * 4; // room for the arrow head
+  const k = ss === ts ? 0 : !ax === !bx ? 0.5 : 0.6, along = (nx) => (nx ? Math.abs(tx - sx) : Math.abs(ty - sy));
+  const ds = k ? Math.max(30, along(ax) * k) : 34 + Math.hypot(tx - sx, ty - sy) * 0.18, dt = k ? Math.max(30, along(bx) * k) : ds;
+  return [sx, sy, sx + ax * ds, sy + ay * ds, tx + bx * dt, ty + by * dt, tx, ty];
+}
+const pathOf = (c) => { const f = c.map((v) => v.toFixed(1)); return `M${f[0]},${f[1]} C${f[2]},${f[3]} ${f[4]},${f[5]} ${f[6]},${f[7]}`; };
+function routeEdges(g) {
+  const boxes = Object.entries(S.pos).filter(([, p]) => !p.chip);
+  const hits = (c, a, b) => { // ponytail: 20 samples per curve against every box; fine for the 7 to 30 boxes of a free map
+    let n = 0;
+    for (let i = 1; i < 20; i++) {
+      const t = i / 20, u = 1 - t, w = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
+      const x = w[0] * c[0] + w[1] * c[2] + w[2] * c[4] + w[3] * c[6], y = w[0] * c[1] + w[1] * c[3] + w[2] * c[5] + w[3] * c[7];
+      if (boxes.some(([id, p]) => id !== a && id !== b && x > p.x - 6 && x < p.x + NODE_W + 6 && y > p.y - 6 && y < p.y + NODE_H + 6)) n++;
+    }
+    return n;
+  };
+  const centre = (id) => [S.pos[id].x + NODE_W / 2, S.pos[id].y + NODE_H / 2];
+  g.edges.forEach((e) => {
+    const a = S.pos[e.source], b = S.pos[e.target], [ax, ay] = centre(e.source), [bx, by] = centre(e.target), dx = bx - ax, dy = by - ay;
+    const faces = (p, side, [ox, oy]) => side === "top" ? oy < p.y : side === "bottom" ? oy > p.y + NODE_H : side === "left" ? ox < p.x : ox > p.x + NODE_W;
+    const gapX = Math.abs(dx) > NODE_W + 16, gapY = Math.abs(dy) > NODE_H + 16, upright = Math.abs(dy) * NODE_W > Math.abs(dx) * NODE_H * 0.8;
+    const tries = [];
+    for (const ss of ["top", "bottom", "left", "right"]) for (const ts of ["top", "bottom", "left", "right"]) {
+      if (!faces(a, ss, [bx, by]) || !faces(b, ts, [ax, ay])) continue;
+      const vs = ss === "top" || ss === "bottom", vt = ts === "top" || ts === "bottom";
+      if (vs === vt && !(vs ? gapY : gapX)) continue; // facing sides with no room between them would curl back
+      tries.push([ss, ts, vs !== vt ? 1 : vs === upright ? 0 : 2]);
+    }
+    if (Math.abs(dy) < NODE_H) tries.push(["bottom", "bottom", 3]); // a U under the row, only for boxes side by side
+    if (!tries.length) tries.push(dy > 0 ? ["bottom", "top", 0] : ["top", "bottom", 0]);
+    let best = null;
+    tries.forEach(([ss, ts, rank]) => { // a graze behind a box is fine, a long run behind one is not
+      const score = hits(sCurve(port(a, ss, 0.5), ss, port(b, ts, 0.5), ts), e.source, e.target) * 0.5 + rank;
+      if (!best || score < best.score) best = { score, ss, ts };
+    });
+    e._ss = best.ss; e._ts = best.ts;
+  });
+  const at = {}; // box and side: the link ends there, in the order of their other ends
+  g.edges.forEach((e) => { (at[e.source + "|" + e._ss] ||= []).push([e, "s", e.target]); (at[e.target + "|" + e._ts] ||= []).push([e, "t", e.source]); });
+  Object.entries(at).forEach(([key, list]) => {
+    const side = key.slice(key.lastIndexOf("|") + 1), axis = side === "top" || side === "bottom" ? 0 : 1, n = list.length, step = Math.min(0.2, 0.72 / n);
+    list.sort((x, y) => centre(x[2])[axis] - centre(y[2])[axis]);
+    list.forEach(([e, end], k) => (e["_f" + end] = 0.5 + (k - (n - 1) / 2) * step));
+  });
+  g.edges.forEach((e) => (e._d = pathOf(sCurve(port(S.pos[e.source], e._ss, e._fs), e._ss, port(S.pos[e.target], e._ts, e._ft), e._ts))));
 }
 
 /* ---------------- drawing ---------------- */
@@ -582,23 +632,6 @@ const el = (tag, attrs = {}, parentEl) => {
   if (parentEl) parentEl.appendChild(n);
   return n;
 };
-
-function edgePath(e, spread) {
-  if (S.free) return straightPath(e);
-  const a = S.pos[e.source], b = S.pos[e.target];
-  if (e._lane) {
-    const sx = a.x + NODE_W / 2 + spread.out, sy = a.y + NODE_H, tx = b.x + NODE_W / 2 + spread.in, ty = b.y - 3, lx = e._lane;
-    return `M${sx},${sy} C${sx},${sy + 30} ${lx},${sy + 8} ${lx},${sy + 46} L${lx},${ty - 46} C${lx},${ty - 8} ${tx},${ty - 30} ${tx},${ty}`;
-  }
-  if (b.y > a.y) {
-    const sx = a.x + NODE_W / 2 + spread.out, sy = a.y + NODE_H, tx = b.x + NODE_W / 2 + spread.in, ty = b.y - 3;
-    const dy = Math.max(32, (ty - sy) * 0.5);
-    return `M${sx},${sy} C${sx},${sy + dy} ${tx},${ty - dy} ${tx},${ty}`;
-  }
-  const sx = a.x + NODE_W, sy = a.y + NODE_H / 2, tx = b.x + NODE_W + 3, ty = b.y + NODE_H / 2; // a cycle: around the right
-  const bulge = 60 + Math.abs(ty - sy) * 0.2;
-  return `M${sx},${sy} C${sx + bulge},${sy} ${tx + bulge},${ty} ${tx},${ty}`;
-}
 
 const CHIP_W = 170, CHIP_H = 40;
 function drawFrame(eg) { // the function around its roles, so inside and outside read at a glance
@@ -629,20 +662,10 @@ function drawGraph() {
     const x0 = Math.min(...S.lone.map((i) => S.pos[i].x)), y0 = S.pos[S.lone[0]].y;
     el("text", { class: "lone-cap", x: x0, y: y0 - 10 }, eg).textContent = "Standalone: no import, call, copy or shared history with the rest";
   }
-  const outs = {}, ins = {};
-  g.edges.forEach((e) => { (outs[e.source] ||= []).push(e); (ins[e.target] ||= []).push(e); });
-  const spread = new Map();
-  const assign = (list, key, other) => {
-    list.sort((x, y) => S.pos[x[other]].x - S.pos[y[other]].x);
-    list.forEach((e, k) => { const s = spread.get(e) || {}; s[key] = (k - (list.length - 1) / 2) * Math.min(26, (NODE_W * 0.6) / Math.max(1, list.length)); spread.set(e, s); });
-  };
-  Object.values(outs).forEach((l) => assign(l, "out", "target"));
-  Object.values(ins).forEach((l) => assign(l, "in", "source"));
-  if (S.free) { S.extent = { x0: Infinity, x1: -Infinity }; const keys = new Set(g.edges.map((e) => e.source + "\n" + e.target)); g.edges.forEach((e) => (e._two = keys.has(e.target + "\n" + e.source))); }
-  else routeLanes(g);
+  routeEdges(g);
   const counts = g.edges.map((e) => e.receipts.length).sort((x, y) => x - y), weak = counts[Math.floor(counts.length / 2)] || 0, wmax = counts[counts.length - 1] || 1;
   g.edges.forEach((e) => {
-    const d = (e._d = edgePath(e, spread.get(e)));
+    const d = e._d;
     e._back = !S.free && S.back.has(e); // closes a loop: drawn red, the cheapest import to cut (layered maps only)
     e._base = (mod(e.source).kind === "tests" ? "edge from-tests" : "edge") + (e._back ? " back" : "") + (e.kind ? " " + e.kind : "") + (S.free && !e.kind && e.receipts.length < weak ? " weak" : "");
     const sw = S.free ? 1 + 3 * Math.sqrt(e.receipts.length / wmax) : 1.3 + Math.min(2, Math.log2(e.receipts.length)); // free: grows with every import
@@ -687,29 +710,6 @@ function drawGraph() {
   paintSelection();
 }
 const DENSE = 20; // ponytail: 20 edges is a guess at where a node-link picture stops reading
-function routeLanes(g) {
-  // An edge that skips rows goes around the cards in between: right if its target lies to the right, else left.
-  const rowOf = (id) => Math.round(S.pos[id].y / (NODE_H + GAP_Y));
-  const byRow = {};
-  Object.entries(S.pos).forEach(([id, p]) => (byRow[rowOf(id)] ||= []).push(p));
-  const lanes = { left: 0, right: 0 };
-  S.extent = { x0: Infinity, x1: -Infinity };
-  g.edges.forEach((e) => {
-    e._lane = 0;
-    const rs = rowOf(e.source), rt = rowOf(e.target);
-    if (rt - rs < 2) return;
-    const mid = [];
-    for (let r = rs + 1; r < rt; r++) mid.push(...(byRow[r] || []));
-    if (!mid.length) return;
-    const minX = Math.min(...mid.map((p) => p.x)), maxX = Math.max(...mid.map((p) => p.x + NODE_W));
-    const dx = S.pos[e.target].x - S.pos[e.source].x;
-    const side = dx > 1 ? "right" : dx < -1 ? "left" : lanes.right <= lanes.left ? "right" : "left";
-    const n = lanes[side]++;
-    e._lane = side === "right" ? maxX + 24 + n * 12 : minX - 24 - n * 12;
-    S.extent.x0 = Math.min(S.extent.x0, e._lane);
-    S.extent.x1 = Math.max(S.extent.x1, e._lane);
-  });
-}
 const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
 function related(id) {
@@ -815,9 +815,8 @@ function stopSpring() { if (S.raf) cancelAnimationFrame(S.raf); S.raf = 0; S.cam
 function bounds() {
   const xs = Object.values(S.pos);
   if (!xs.length) return { x0: 0, y0: 0, x1: 1, y1: 1 };
-  const ex = S.extent || { x0: Infinity, x1: -Infinity };
-  return { x0: Math.min(ex.x0, ...xs.map((p) => p.x)) - 30, y0: Math.min(...xs.map((p) => p.y)) - 24,
-           x1: Math.max(ex.x1, ...xs.map((p) => p.x + NODE_W)) + 30, y1: Math.max(...xs.map((p) => p.y + NODE_H)) + 24 };
+  return { x0: Math.min(...xs.map((p) => p.x)) - 30, y0: Math.min(...xs.map((p) => p.y)) - 24,
+           x1: Math.max(...xs.map((p) => p.x + NODE_W)) + 30, y1: Math.max(...xs.map((p) => p.y + NODE_H)) + 24 };
 }
 function viewport() { // the side bar covers the right of the canvas, so the graph fits in what is left
   const c = $("#canvas").getBoundingClientRect(), side = $("#pick").hidden ? 0 : $("#pick").offsetWidth;
