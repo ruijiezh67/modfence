@@ -3,7 +3,7 @@
 Binds to 127.0.0.1 only. Requests must carry a localhost Host header, and state-changing requests must come
 from the page itself (X-Modfence header), so another website cannot drive your Claude Code through it.
 """
-import atexit, json, os, subprocess, threading
+import atexit, json, os, subprocess, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -352,6 +352,18 @@ def hand_info(job):
             "tokens": len(text) // 4, "at": job.started}
 
 
+class QuietServer(ThreadingHTTPServer):
+    daemon_threads = True
+    # On Windows SO_REUSEADDR lets a second server bind a port the first still holds, and requests then land on
+    # either: one modfence per port, so a stale one cannot answer for a new one.
+    allow_reuse_address = os.name != "nt"
+
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+            return  # the browser closed a tab or an event stream: not an error worth a traceback
+        super().handle_error(request, client_address)
+
+
 def serve(projects, port=8765, claude_bin=None, open_browser=True):
     app = App(projects, claude_bin)
     # No fence outlives the server: cleared on exit, and on start too, for a server that was killed (a closed
@@ -359,13 +371,20 @@ def serve(projects, port=8765, claude_bin=None, open_browser=True):
     for p in app.projects:
         scope_guard.disarm(p)
     atexit.register(lambda: [scope_guard.disarm(p) for p in app.projects])
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app, port))
-    httpd.daemon_threads = True
+    httpd, wanted = None, port
+    for port in range(wanted, wanted + 20):  # a port still held by another modfence: take the next one
+        try:
+            httpd = QuietServer(("127.0.0.1", port), make_handler(app, port))
+            break
+        except OSError:
+            continue
+    if httpd is None:
+        raise SystemExit(f"modfence: ports {wanted} to {wanted + 19} are all in use; pass --port")
     url = f"http://127.0.0.1:{port}/"
-    print(f"modfence: {url}")
+    print(f"modfence: {url}" + (f"  (port {wanted} is in use, maybe by another modfence)" if port != wanted else ""), flush=True)
     for i, p in enumerate(app.projects):
-        print(f"  [{i}] {p}")
-    print(f"  claude: {app.claude or 'NOT FOUND (set CLAUDE_BIN)'}")
+        print(f"  [{i}] {p}", flush=True)
+    print(f"  claude: {app.claude or 'NOT FOUND (set CLAUDE_BIN)'}", flush=True)
     def warm():  # parse and hash every project once, so the first graph and the first run start fast
         for p in app.projects:
             analyze.analyze(p)
