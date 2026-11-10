@@ -1103,9 +1103,6 @@ class ServerTest(unittest.TestCase):
         self.assertIn("double the limit", res["text"])
         self.assertTrue(os.path.exists(os.path.join(self.d, res["file"])), "the fence note is a file only the agent reads")
         self.assertIn(res["file"], res["line"], "the line to paste points the agent at it")
-        s, data = self.req("POST", "/api/hand?p=0", {"prompt": "", "scope": ["app/core"], "label": "core"}, {"X-Modfence": "1"})
-        self.assertEqual(s, 200, "no task in modfence: the person types it in the agent's chat")
-        self.req("POST", "/api/hand/finish?p=0", {"job": json.loads(data)["job"]}, {"X-Modfence": "1"})
         self.assertIn("NEED <path>", runner.Handoff(self.d, ["app/core"], "x", analyze.analyze(self.d), None).system_note() + scope_guard.decide(
             {"tool_name": "Edit", "tool_input": {"file_path": os.path.join(self.d, "app/cli/main.py")}}, self.d, ["app/core"]))
         note = runner.Handoff(self.d, ["app/core"], "x", analyze.analyze(self.d), None, seal=True).system_note()
@@ -1125,6 +1122,9 @@ class ServerTest(unittest.TestCase):
                         "a reviewed hand-off reads Done, not Stopped")
         self.assertFalse(os.path.exists(os.path.join(self.d, ".modfence", "fence.json")), "the fence comes off after the review")
         self.assertEqual(json.loads(self.req("GET", "/api/hand/active?p=0")[1]), {}, "a reviewed hand-off is closed")
+        s, data = self.req("POST", "/api/hand?p=0", {"prompt": "", "scope": ["app/core"], "label": "core"}, {"X-Modfence": "1"})
+        self.assertEqual(s, 200, "no task in modfence: the person types it in the agent's chat")
+        self.req("POST", "/api/hand/finish?p=0", {"job": json.loads(data)["job"]}, {"X-Modfence": "1"})
 
     def test_allow_a_whole_module_of_modules_md(self):
         path = os.path.join(self.d, "MODULES.md")
