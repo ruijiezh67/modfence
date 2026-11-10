@@ -169,7 +169,8 @@ def context_note(graph, scope, read_only=False, phase=None, sealed=False, lean=T
     mods = {m["id"]: m for m in graph["modules"]}
     out_edges = [e for e in graph["edges"] if e["source"] in scope and e["target"] not in scope]
     in_edges = [e for e in graph["edges"] if e["target"] in scope and e["source"] not in scope]
-    where = ", ".join("`(project root files)`" if s == "." else f"function `{s.split('::')[1]}` in `{s.split('::')[0]}`"
+    where = ", ".join("`(project root files)`" if s == "." else f"module `{s[8:]}` of MODULES.md" if s.startswith("@module:")
+                      else f"function `{s.split('::')[1]}` in `{s.split('::')[0]}`"
                       if "::" in s else f"`{s}`" if s.endswith(".py") else f"`{s}/`" for s in scope)
     if phase == "plan":
         rule = PLAN_RULE.replace("{where}", where)
@@ -192,8 +193,8 @@ def context_note(graph, scope, read_only=False, phase=None, sealed=False, lean=T
                  f"To check behaviour run the tests ({tests or 'python -m pytest path/to/test_file.py -q'}); python -c, cat and shell "
                  "chaining or redirection are blocked in this run, so do not try them.")
     lines = [f"You are working in modfence on project `{graph['name']}`, focused on module(s): "
-             + ", ".join(f"`{s}`" for s in scope) + ".", rule, ""]
-    loose = [s for s in scope if s not in mods]
+             + ", ".join(f"`{s.replace('@module:', '')}`" for s in scope) + ".", rule, ""]
+    loose = [s for s in scope if s not in mods and not s.startswith("@module:")]
     if loose:  # files and functions fenced one by one (a role, or a function)
         lines.append("Fenced files and functions: " + ", ".join(f"`{s}`" for s in loose[:60]) + (" ..." if len(loose) > 60 else ""))
     for s in scope:
