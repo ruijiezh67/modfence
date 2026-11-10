@@ -850,6 +850,16 @@ class JitTest(unittest.TestCase):
         self.assertEqual(self.hook("continue"), "", "a follow-up names nothing: the fence it has stays")
         self.assertEqual(load(self.fence)["files"], ["@module:core"])
 
+    def test_an_agent_you_run_yourself_gets_the_same_fence(self):
+        import modfence
+        self.assertIsNone(modfence.check_edit("app/api/handlers.py", self.d), "no fence yet: everything may be written")
+        f = modfence.fence_for("double_value should respect the limit when doubling a value", os.path.join(self.d, "app"))
+        self.assertEqual(f["modules"], ["core"])
+        self.assertIn("double_value", f["context"])
+        self.assertIsNone(modfence.check_edit(os.path.join(self.d, "app/core/values.py"), self.d))
+        self.assertIn("outside", modfence.check_edit("app/api/handlers.py", self.d))
+        self.assertEqual(scope_guard.pending_asks(self.d, ["@module:core"]), ["app/api/handlers.py"], "the map shows it as a request")
+
     def test_a_fence_the_person_set_is_kept(self):
         scope_guard.arm(self.d, ["@module:cli"], False, "cli")
         self.assertEqual(self.hook("double_value should respect the limit when doubling a value"), "")

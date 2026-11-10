@@ -163,6 +163,13 @@ def load_fence(root):
     return None if f is None else (root, f["files"], f["files"] if f.get("sealed") else None)
 
 
+def log_ask(root, path):
+    """Record a denied file as a request the map shows the person; returns the sentence to add for the agent."""
+    with open(os.path.join(root, ASKS_FILE), "a", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps({"path": path, "at": datetime.now().astimezone().isoformat(timespec="seconds")}) + "\n")
+    return " modfence shows the user this request; they will tell you when it is approved."
+
+
 def pending_asks(root, scope, answered=()):
     """The files an agent was denied since the fence was armed, oldest first, minus those answered or now inside."""
     try:
@@ -185,9 +192,7 @@ def main():
         asked = None if "MODFENCE_ROOT" in os.environ else []  # an agent the user started: modfence's UI asks the user
         reason = decide(event, *fence, asked=asked)
         if asked:
-            with open(os.path.join(fence[0], ASKS_FILE), "a", encoding="utf-8", newline="\n") as f:
-                f.write(json.dumps({"path": asked[0], "at": datetime.now().astimezone().isoformat(timespec="seconds")}) + "\n")
-            reason += " modfence shows the user this request; they will tell you when it is approved."
+            reason += log_ask(fence[0], asked[0])
     except Exception as e:  # fail closed
         reason = f"modfence scope guard error ({type(e).__name__}: {e}); blocked."
     if not reason:

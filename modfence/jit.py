@@ -93,6 +93,34 @@ def message(pick, cands):
     return agent, person
 
 
+def fence_for(task, root=None, fence=True):
+    """For an agent you run yourself (the Claude API, the Agent SDK, any tool loop): the fence for this task, as the
+    plugin's hook sets it. {"modules": [...] or None, "context": text to give the model or None, "message": line for
+    the person or None, "candidates": [...]}. fence=False only looks. root: the project or a folder in it."""
+    root = project_root(root)
+    if not root:
+        return {"modules": None, "context": None, "message": None, "candidates": []}
+    if fence:
+        pick, cands, _ = apply(root, task or "")
+    else:
+        cands = candidates(root, task)
+        pick = choose(cands)
+    agent, person = message(pick, cands) if pick else (None, None)
+    return {"modules": pick, "context": agent, "message": person, "candidates": cands}
+
+
+def check_edit(path, root=None):
+    """For a tool loop you run yourself: None if the fence lets this file be written (or no fence is set), else the
+    reason to send the model instead of writing. A denied file is recorded as a request, shown on the map."""
+    root = project_root(root) or os.path.abspath(root or os.getcwd())
+    fence = scope_guard.load_fence(root)
+    if fence is None:
+        return None
+    asked = []
+    reason = scope_guard.decide({"tool_name": "Write", "tool_input": {"file_path": path}}, *fence, asked=asked)
+    return reason + scope_guard.log_ask(fence[0], asked[0]) if asked else reason
+
+
 def hook(raw):
     """UserPromptSubmit: fence the task's module and tell both sides. Silent without MODULES.md, on a fence the person
     set, and on a follow-up too vague to point anywhere (the fence it has stays)."""

@@ -31,6 +31,22 @@ An edit outside the fence is blocked and logged; the map's top bar shows it with
 
 The older hand-off (`runner.Handoff`: snapshot, a line to paste, *Review changes*, revert) and headless runs (`/api/ask`, `done_check.py`) remain in the server; the page no longer starts them.
 
+## An agent you run yourself (Claude API, Agent SDK, any tool loop)
+
+The same fence, with no plugin: call two functions where your loop already decides things. Checked with the Agent SDK
+(0.2.180, Haiku, one task): the edit inside the task's module went through, the one outside was denied and logged as a
+request, $0.007.
+
+```python
+import modfence
+f = modfence.fence_for(task, project)          # fences the task's module; f["context"] goes to the model
+why = modfence.check_edit(path, project)       # before writing a file: None, or the reason to send back instead
+```
+
+With the Agent SDK, return `f["context"]` as `additionalContext` from a `UserPromptSubmit` hook and `why` as a `deny`
+from a `PreToolUse` hook on `Edit|Write|MultiEdit|NotebookEdit`. A chat window that runs no tools (claude.ai, a web
+chat) has nothing to block: there the receipt, from git, is the check.
+
 ## Parts of the code
 
 | Part | File | What it does |
