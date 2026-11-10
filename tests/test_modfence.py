@@ -389,6 +389,9 @@ class ScopeGuardTest(unittest.TestCase):
         f = load(os.path.join(self.d, ".modfence", "fence.json"))
         self.assertEqual((f["files"], f["sealed"], f["label"]), (["app/core", "app/core/values.py"], True, "core"))
         self.assertTrue(os.path.exists(os.path.join(self.d, ".modfence", ".gitignore")), "the fence file stays out of git")
+        scope_guard.arm(self.d, ["app/core"], False, "core")
+        self.assertEqual([e["matcher"] for e in load(p)["hooks"]["PreToolUse"]], ["Bash", scope_guard.EDIT_MATCHER],
+                         "unsealed: the hook starts only on edits, and replaces the sealed entry")
         for _ in range(2):
             scope_guard.disarm(self.d)
         self.assertEqual(load(p), mine, "only modfence's hook is removed")

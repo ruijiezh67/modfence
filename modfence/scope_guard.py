@@ -29,6 +29,9 @@ PATCH_PATH = re.compile(r"^\*\*\* (?:Update File|Add File|Delete File|Move to): 
 PATH_KEYS = ("file_path", "notebook_path", "path", "filePath", "target_file")
 FENCE_FILE = os.path.join(".modfence", "fence.json")
 LOCAL_SETTINGS = os.path.join(".claude", "settings.local.json")
+# Golden rule 4 (no turns, no time): the hook starts a Python process, about 0.35 s on Windows, so it runs only on the
+# tools that can edit; a sealed fence also checks reads, searches and commands.
+EDIT_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|mcp__.*"
 ASKS_FILE = os.path.join(".modfence", "asks.jsonl")  # edits the fence file's fence denied: the UI shows them for approval
 SEAL_TOOLS = ("Read", "Grep", "Bash")
 BASH_OK = re.compile(r"^\s*(\S*python[0-9.]*(\.exe)?\"?\s+-m\s+(pytest|unittest)\b|pytest\b|git\s+(status|diff|log)\b|ls\b|"
@@ -234,8 +237,9 @@ def arm(root, files, sealed, label=""):
             f.write("*\n")
     settings = settings or {}
     pre = settings.setdefault("hooks", {}).setdefault("PreToolUse", [])
-    if not any(_ours(e) for e in pre):
-        pre.append({"matcher": "*", "hooks": [{"type": "command", "command": hook_command(root), "timeout": 10}]})
+    entry = {"matcher": "*" if sealed else EDIT_MATCHER, "hooks": [{"type": "command", "command": hook_command(root), "timeout": 10}]}
+    if entry not in pre:  # one entry of ours, matching what this fence must see
+        pre[:] = [e for e in pre if not _ours(e)] + [entry]
         _write_json(settings_path, settings)
 
 

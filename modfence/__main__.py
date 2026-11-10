@@ -8,9 +8,6 @@ With no project given, opens the current directory if it holds Python files, els
 """
 import argparse, glob, os, sys
 
-from .analyze import walk
-from .server import join_running, serve
-
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -28,6 +25,8 @@ def main(argv=None):
         from . import scope_guard
         sys.argv = sys.argv[:1]  # the hook reads the project from its working directory
         return scope_guard.main()
+    from .analyze import walk  # here, not at the top: the hook above starts on every edit and must start fast
+    from .server import join_running, serve
     ap = argparse.ArgumentParser(prog="modfence", description="See your project as modules, and prompt Claude about one module at a time.")
     ap.add_argument("projects", nargs="*", help="project folders (default: the current directory, else the bundled examples)")
     ap.add_argument("--port", type=int, default=8765)
