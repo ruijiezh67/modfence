@@ -29,6 +29,7 @@ PATCH_PATH = re.compile(r"^\*\*\* (?:Update File|Add File|Delete File|Move to): 
 PATH_KEYS = ("file_path", "notebook_path", "path", "filePath", "target_file")
 FENCE_FILE = os.path.join(".modfence", "fence.json")
 LOCAL_SETTINGS = os.path.join(".claude", "settings.local.json")
+ASKS_FILE = os.path.join(".modfence", "asks.jsonl")  # edits the fence file's fence denied: the UI shows them for approval
 SEAL_TOOLS = ("Read", "Grep", "Bash")
 BASH_OK = re.compile(r"^\s*(\S*python[0-9.]*(\.exe)?\"?\s+-m\s+(pytest|unittest)\b|pytest\b|git\s+(status|diff|log)\b|ls\b|"
                      r"\S*python[0-9.]*(\.exe)?\"?\s+\"?\S*show\.py\"?\s)")
@@ -86,8 +87,9 @@ def patch_paths(text):
     return [p.strip() for p in PATCH_PATH.findall(text)]
 
 
-def decide(event, root, scope, fence=None):
-    """None to allow, or the reason to deny. fence: what a sealed run may read (None: not sealed)."""
+def decide(event, root, scope, fence=None, asked=None):
+    """None to allow, or the reason to deny. fence: what a sealed run may read (None: not sealed). asked: a list that
+    gets the project path of an edit denied for being outside the scope."""
     tool, ti = normalise(event)
     text = ti.get("command") or ti.get("input") or ""
     text = "\n".join(text) if isinstance(text, list) else str(text)
@@ -105,6 +107,8 @@ def decide(event, root, scope, fence=None):
         path = next((p for p in paths if not allowed(p, root, scope)), None)
         if path is None:
             return None
+        if asked is not None and _rel(path, root):
+            asked.append(_rel(path, root))
         return (f"modfence scope: {path} is outside the modules you may edit ({', '.join(scope) or '(nothing)'}). Do not try "
                 "another way to change it. Finish what you can inside the scope, then end your turn with one line per file "
                 "you need, exactly: NEED <path>: <the change and why>. The user approves or refuses each; if approved, "
@@ -145,6 +149,16 @@ def load_fence(root):
     return None if f is None else (root, f["files"], f["files"] if f.get("sealed") else None)
 
 
+def pending_asks(root, scope, answered=()):
+    """The files an agent was denied since the fence was armed, oldest first, minus those answered or now inside."""
+    try:
+        with open(os.path.join(root, ASKS_FILE), encoding="utf-8") as f:
+            paths = [json.loads(line)["path"] for line in f if line.strip()]
+    except (OSError, ValueError, KeyError):
+        return []
+    return [p for p in dict.fromkeys(paths) if p not in answered and not allowed(p, root, scope)]
+
+
 def main():
     try:
         event = json.load(sys.stdin)
@@ -154,7 +168,12 @@ def main():
         fence = load_fence(sys.argv[1] if len(sys.argv) > 1 else os.getcwd())
         if fence is None:
             return 0
-        reason = decide(event, *fence)
+        asked = None if "MODFENCE_ROOT" in os.environ else []  # an agent the user started: modfence's UI asks the user
+        reason = decide(event, *fence, asked=asked)
+        if asked:
+            with open(os.path.join(fence[0], ASKS_FILE), "a", encoding="utf-8", newline="\n") as f:
+                f.write(json.dumps({"path": asked[0], "at": datetime.now().astimezone().isoformat(timespec="seconds")}) + "\n")
+            reason += " modfence shows the user this request; they will tell you when it is approved."
     except Exception as e:  # fail closed
         reason = f"modfence scope guard error ({type(e).__name__}: {e}); blocked."
     if not reason:
@@ -214,8 +233,9 @@ def disarm(root):
     root = os.path.abspath(root)
     fence_path, settings_path = os.path.join(root, FENCE_FILE), os.path.join(root, LOCAL_SETTINGS)
     made = (_read_json(fence_path) or {}).get("made_settings", False)
-    if os.path.exists(fence_path):
-        os.remove(fence_path)
+    for p in (fence_path, os.path.join(root, ASKS_FILE)):
+        if os.path.exists(p):
+            os.remove(p)
     settings = _read_json(settings_path)
     pre = ((settings or {}).get("hooks") or {}).get("PreToolUse") or []
     if not any(_ours(e) for e in pre):

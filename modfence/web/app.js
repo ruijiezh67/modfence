@@ -1221,6 +1221,7 @@ function attachLive(job) {
   const view = newRun(job.prompt, job.scope, job.at, job.readOnly, job.phase);
   job.events.forEach((e) => view.add(e, true));
   view.flush();
+  if (job.wait) view.root.appendChild(job.wait); // a hand-off's waiting card survives a redraw of the log
   return view;
 }
 function scrollTalk() { const b = $("#pbody"); requestAnimationFrame(() => (b.scrollTop = b.scrollHeight)); }
@@ -1360,13 +1361,13 @@ function renderLesson(root, job) { // golden rule 7: what this run taught goes i
 
 /* Golden rules 4 and 7: the agent stopped at the fence. Each file it needs is a card: the change it wants and why, and
    the user's choice. Approving continues the same conversation with the file (or its whole role) inside the fence. */
-function renderRequests(root, items, job, replay) {
+function renderRequests(root, items, job, replay, hand) { // hand: the user's own agent asked; answer it in place
   const fr = fileRoles(), box = document.createElement("div");
   box.className = "requests";
   box.innerHTML = `<h4>The agent asks to edit outside the fence</h4>` + items.map((it, k) => {
     const rid = fr[it.path], role = rid && S.roles?.roles.find((r) => r.id === rid);
     return `<div class="req" data-k="${k}"><div class="rp"><span class="mono">${esc(it.path)}</span>${role ? ` <span class="rr">in ${esc(role.name)}</span>` : ""}</div>`
-      + `<p>${it.why ? esc(it.why) : "It tried to edit this file; no reason given."}</p>`
+      + `<p>${it.why ? esc(it.why) : hand ? "Your agent tried to edit this file. Its reason is in your agent's chat." : "It tried to edit this file; no reason given."}</p>`
       + (replay || !job ? "" : `<div class="pa"><button class="btn primary" type="button" data-file>Allow this file</button>`
         + (role ? `<button class="btn" type="button" data-role>Allow all of ${esc(role.name)}</button>` : "")
         + `<button class="btn quiet" type="button" data-no>Refuse</button></div>`) + `</div>`;
@@ -1376,10 +1377,11 @@ function renderRequests(root, items, job, replay) {
   box.querySelectorAll(".req").forEach((el) => {
     const it = items[el.dataset.k], role = S.roles?.roles.find((r) => r.id === fr[it.path]);
     const go = (paths) => { box.querySelectorAll("button").forEach((b) => (b.disabled = true)); document.querySelectorAll(".node.asks").forEach((n) => n.classList.remove("asks"));
+      if (hand) return hand(el, paths, true);
       startRun(`Approved: ${paths.length > 1 ? (role ? role.name : plural(paths.length, "file")) : paths[0]}`, [...new Set([...job.scope, ...paths])], false, job.phase, { job: job.id, paths }); };
     $("[data-file]", el)?.addEventListener("click", () => go([it.path]));
     $("[data-role]", el)?.addEventListener("click", () => go(ownFiles(role)));
-    $("[data-no]", el)?.addEventListener("click", () => { el.classList.add("refused"); el.querySelector(".pa").innerHTML = `<span class="meta">Refused. The fence stays as it was.</span>`; document.querySelectorAll(".node.asks").forEach((n) => n.classList.remove("asks")); });
+    $("[data-no]", el)?.addEventListener("click", () => { hand?.(el, [it.path], false); el.classList.add("refused"); el.querySelector(".pa").innerHTML = `<span class="meta">Refused. The fence stays as it was.</span>`; document.querySelectorAll(".node.asks").forEach((n) => n.classList.remove("asks")); });
   });
 }
 
@@ -1590,7 +1592,7 @@ async function restoreHand() { // a hand-off outlives a reload: the agent works 
 }
 function showHand(res, copied) {
   const { prompt, scope, label } = res;
-  const job = { id: res.job, prompt, scope, readOnly: false, phase: "hand", label, key: [...scope].sort().join("+"), events: [], done: false, at: res.at || Date.now() / 1000 };
+  const job = { id: res.job, prompt, scope, readOnly: false, phase: "hand", label, key: [...scope].sort().join("+"), events: [], done: false, at: res.at || Date.now() / 1000, asked: new Set() };
   S.job = job;
   S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; paintSelection();
   setTab("talk");
@@ -1602,14 +1604,30 @@ function showHand(res, copied) {
     + `<p class="meta" data-live>Watching for changes…</p><div class="pa"><button class="btn primary" type="button" data-review>Review changes</button><button class="btn quiet" type="button" data-again>Copy the task again</button></div>`
     + (copied ? "" : `<textarea class="handtext" readonly>${esc(res.text)}</textarea>`);
   job.view.root.appendChild(w);
+  job.wait = w;
   const poll = setInterval(async () => {
     if (job.done) return clearInterval(poll);
     try {
       const s = await api(`/api/hand/status?${q("&job=" + job.id)}`);
       $("[data-live]", w).textContent = s.changed.length ? `Your agent changed ${plural(s.changed.length, "file")} so far: ${s.changed.slice(0, 4).join(", ")}${s.changed.length > 4 ? " …" : ""}` : "Watching for changes… none yet.";
       S.marks = { changed: new Set(s.modules), ripple: new Set(), stats: {} }; paintSelection();
+      const fresh = s.asks.filter((p) => !job.asked.has(p));
+      if (fresh.length) {
+        fresh.forEach((p) => job.asked.add(p));
+        if (!w.isConnected || !document.body.classList.contains("panel-open")) await openFence(job.scope, job.label, "");
+        renderRequests(w, fresh.map((path) => ({ path })), job, false, answer); scrollTalk();
+        toast(`Your agent asks to edit ${fresh.length > 1 ? plural(fresh.length, "file") + " outside the fence" : fresh[0]}.`);
+      }
     } catch {}
   }, 4000);
+  const answer = async (el, paths, ok) => { // golden rule 4: widen the fence for the agent already working, or not
+    try {
+      const r = await api(`/api/hand/answer?${q()}`, { job: job.id, paths, ok });
+      if (!ok) return;
+      job.scope = r.scope; job.key = [...r.scope].sort().join("+"); S.scope = new Set(r.scope); renderFence(); renderHeader(); paintSelection();
+      el.querySelector(".pa").innerHTML = `<span class="meta">Allowed. Tell your agent: <b>approved, continue</b>.</span>`;
+    } catch (e) { toast(e.message, false); }
+  };
   $("[data-review]", w).onclick = async () => { clearInterval(poll); w.remove(); try { await api(`/api/hand/finish?${q()}`, { job: job.id }); } catch (e) { toast(e.message, false); } };
   $("[data-again]", w).onclick = () => navigator.clipboard.writeText(res.text).then(() => toast("Copied."), () => toast("Copy failed.", false));
   syncSend(); showRunbar(); listen(job);

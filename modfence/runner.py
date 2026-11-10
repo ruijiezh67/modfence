@@ -442,6 +442,7 @@ class Handoff(Job):
     fence for every agent started in it, the user pastes prompt_text() into Claude Code, Cursor or Codex, and finish()
     reviews the result exactly like a run: changed functions, contract check, commit draft, a version with revert."""
     def start(self):
+        self.answered = set()  # files the user allowed or refused when the agent hit the fence
         self.before = analyze.snapshot(self.root)
         self.before_bytes = analyze.snapshot_bytes(self.root)
         for p in self.before:  # as in a run: the fence's own files stay revertible in a big project

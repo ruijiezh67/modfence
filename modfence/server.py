@@ -93,7 +93,8 @@ def make_handler(app, port):
                         return self.send_json({"error": "no such hand-off"}, 404)
                     changed = job.changed()
                     split = set(job.graph.get("split", ()))
-                    return self.send_json({"changed": changed, "done": job.done,
+                    return self.send_json({"changed": changed, "done": job.done, "scope": job.scope,
+                                           "asks": scope_guard.pending_asks(job.root, job.scope, job.answered),
                                            "modules": sorted({analyze.module_of(p, split) for p in changed if p.endswith(".py")})})
                 if u.path == "/api/brief":  # one box's brief: what it uses and what others use from it
                     root, scope = app.project(q), [s for s in (q.get("scope") or [""])[0].split("+") if s]
@@ -213,6 +214,16 @@ def make_handler(app, port):
                     app.jobs[job.id] = app.hands[root] = job  # one open hand-off per project, found again after a reload
                     scope_guard.arm(root, job.scope, job.sealed, job.label)
                     return self.send_json(hand_info(job))
+                if u.path == "/api/hand/answer":  # golden rule 4: the user's agent hit the fence; the user decides
+                    job, paths = app.jobs.get(b.get("job")), [p for p in b.get("paths") or [] if isinstance(p, str) and p]
+                    if not isinstance(job, runner.Handoff) or job.done or not paths:
+                        return self.send_json({"error": "no open hand-off or nothing answered"}, 404)
+                    job.answered |= set(paths)
+                    if b.get("ok"):
+                        job.scope = sorted(set(job.scope) | set(paths))
+                        job.editable = sorted(set(job.editable) | set(paths))
+                        scope_guard.arm(job.root, job.scope, job.sealed, job.label)
+                    return self.send_json({"scope": job.scope})
                 if u.path == "/api/hand/finish":
                     job = app.jobs.get(b.get("job"))
                     if not isinstance(job, runner.Handoff):
@@ -246,6 +257,9 @@ def make_handler(app, port):
                         running = app.active.get(app.project(q))
                         if running and not running.done:  # stays set: changing settings now would show as a run change
                             return self.send_json({"error": "wait for the current run to finish"}, 409)
+                        hand = app.hands.get(app.project(q))
+                        if hand and not hand.done:  # your agent is still working: closing the panel must not lift its fence
+                            return self.send_json({"error": "review the hand-off first"}, 409)
                     scope_guard.disarm(app.project(q))
                     return self.send_json({"ok": True})
                 if u.path == "/api/describe":

@@ -898,6 +898,25 @@ class ServerTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.d, ".modfence", "fence.json")), "the fence comes off after the review")
         self.assertEqual(json.loads(self.req("GET", "/api/hand/active?p=0")[1]), {}, "a reviewed hand-off is closed")
 
+    def test_your_agent_hits_the_fence_and_you_allow_the_file(self):
+        res = json.loads(self.req("POST", "/api/hand?p=0", {"prompt": "x", "scope": ["app/core"], "label": "core"}, {"X-Modfence": "1"})[1])
+        env = {k: v for k, v in os.environ.items() if not k.startswith("MODFENCE_")}  # an agent the user started by hand
+        hook = lambda path: subprocess.run([sys.executable, scope_guard.__file__, self.d], env=env, capture_output=True, text=True,
+                                           input=json.dumps({"tool_name": "Edit", "tool_input": {"file_path": os.path.join(self.d, path)}}))
+        self.assertEqual(hook("app/cli/main.py").returncode, 2)
+        hook("app/api/routes.py")
+        status = lambda: json.loads(self.req("GET", f"/api/hand/status?p=0&job={res['job']}")[1])
+        self.assertEqual(status()["asks"], ["app/cli/main.py", "app/api/routes.py"], "each denied edit becomes a request card")
+        s, data = self.req("POST", "/api/hand/answer?p=0", {"job": res["job"], "paths": ["app/cli/main.py"], "ok": True}, {"X-Modfence": "1"})
+        self.assertIn("app/cli/main.py", json.loads(data)["scope"])
+        self.req("POST", "/api/hand/answer?p=0", {"job": res["job"], "paths": ["app/api/routes.py"], "ok": False}, {"X-Modfence": "1"})
+        self.assertEqual(status()["asks"], [], "answered requests leave")
+        self.assertEqual(hook("app/cli/main.py").returncode, 0, "the allowed file is inside the fence now")
+        self.assertEqual(hook("app/api/routes.py").returncode, 2, "a refused file stays outside")
+        self.assertEqual(self.req("POST", "/api/fence/clear?p=0", {}, {"X-Modfence": "1"})[0], 409, "closing the panel keeps your agent fenced")
+        self.req("POST", "/api/hand/finish?p=0", {"job": res["job"]}, {"X-Modfence": "1"})
+        self.assertFalse(os.path.exists(os.path.join(self.d, scope_guard.ASKS_FILE)), "requests go with the fence")
+
     def test_handoff_and_brief_as_text(self):
         s, data = self.req("GET", "/api/handoff?p=0")
         self.assertEqual(s, 200)
