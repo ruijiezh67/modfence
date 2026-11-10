@@ -6,8 +6,8 @@ Everything below runs on your machine. Only the steps marked "model call" talk t
 
 | Level | What you see | How it is built |
 |---|---|---|
-| **1 Functions** | At most 7 boxes: the jobs the system does (observer, inference, memory, repair ...). | Code cuts *blocks* that must stay together: folder and file-name groups, with copies of the same code joined (`roles.blocks`). One model call sorts whole blocks into functions and names them (`roles.functions`); it cannot split a block. |
-| **2 Roles of a function** | The function as a frame around its roles; the other functions sit outside it, the ones it uses above, the ones using it below. | Inside each function, blocks are merged by what changed together in git, what imports what, and shared folders (`roles.suggest_areas`), at most 6 roles. One small model call only names them. A role named like its function reads as "<name> core". |
+| **1 Modules** | About 7 boxes to start: the jobs the system does (observer, inference, memory, repair ...). Saved as `MODULES.md`, they become the modules your team and every agent share; you split, merge and add them as the project needs. | Code cuts *blocks* that must stay together: folder and file-name groups, with copies of the same code joined (`roles.blocks`). One model call sorts whole blocks into modules and names them (`roles.functions`); it cannot split a block. Once `MODULES.md` exists, the map reads it instead. |
+| **2 Roles of a module** | The module as a frame around its roles; the other modules sit outside it, the ones it uses above, the ones using it below. | Inside each module, blocks are merged by what changed together in git, what imports what, and shared folders (`roles.suggest_areas`), at most 6 roles. One small model call only names them. A role named like its module reads as "<name> core". |
 | **3 Parts of a role** | At most 8 parts: files grouped by the word their names share, else by folder. | Deterministic (`roles.role_parts`). |
 
 **Lines** between boxes, each with its evidence on hover:

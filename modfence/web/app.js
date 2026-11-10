@@ -84,7 +84,7 @@ const maxLines = () => Math.max(1, ...S.graph.modules.map((m) => m.lines));
 
 function updateStats() {
   const g = S.full, files = Object.keys(g.files).length, lines = g.modules.reduce((a, m) => a + m.lines, 0);
-  $("#stats").textContent = `${plural(g.modules.length, "module")} · ${plural(files, "file")} · ${lines.toLocaleString()} lines`;
+  $("#stats").textContent = `${plural(files, "file")} · ${lines.toLocaleString()} lines`; // golden rule 1: "module" means a box of MODULES.md only
 }
 
 /* ---------------- big projects: folders with many modules shown as one node ---------------- */
@@ -313,8 +313,8 @@ async function proposeRoles() {
 }
 async function proposeAreas() { // the first level: at most 7 areas of roles, one model call with the imports as evidence
   $("#crumbs").hidden = false;
-  $("#crumbs").innerHTML = `<em>Grouping the roles into at most 7 areas…</em>`;
-  if (await rolesDo("areas", {}, null)) { S.level = "areas"; S.area = null; regroup(); fitView(); toast(`Areas proposed (${S.roles.areas_how}${S.roles.areas_cost_usd != null ? `, $${S.roles.areas_cost_usd.toFixed(3)}` : ""}). Rename an area or move a role any time.`); }
+  $("#crumbs").innerHTML = `<em>Grouping the roles into about 7 modules…</em>`;
+  if (await rolesDo("areas", {}, null)) { S.level = "areas"; S.area = null; regroup(); fitView(); toast(`Modules proposed (${S.roles.areas_how}${S.roles.areas_cost_usd != null ? `, $${S.roles.areas_cost_usd.toFixed(3)}` : ""}). Rename a module or move a role any time.`); }
 }
 const areaOf = () => Object.fromEntries((S.roles?.areas || []).flatMap((a) => a.roles.map((r) => [r, a.id])));
 function openArea(aid) { S.area = aid; S.level = "roles"; regroup(); fitView(); }
@@ -396,23 +396,23 @@ function renderCrumbs() {
   if (S.level === "modules") {
     if (!big && !has && S.full.modules.length <= ROLE_AT) { c.hidden = true; return; }
     const parts = S.focus ? S.focus.split("/") : [];
-    h = (has ? step(1, S.roles.areas?.length ? "Areas" : "Roles", `data-lv="${S.roles.areas?.length ? "areas" : "roles"}"`) + `<span>/</span>` : "") + `<button type="button" data-f="" aria-current="${!S.focus}">${esc(S.full.name)}</button>`
+    h = (has ? step(1, S.roles.areas?.length ? "Modules" : "Roles", `data-lv="${S.roles.areas?.length ? "areas" : "roles"}"`) + `<span>/</span>` : "") + `<button type="button" data-f="" aria-current="${!S.focus}">${esc(S.full.name)}</button>`
       + parts.map((p, i) => `<span>/</span><button type="button" data-f="${esc(parts.slice(0, i + 1).join("/"))}">${esc(p)}</button>`).join("")
-      + (big ? `<em>${plural(S.full.modules.length, "module")}, grouped by folder</em>` : "")
+      + (big ? `<em>${plural(S.full.modules.length, "folder")} and files</em>` : "")
       + (!has && S.claude ? `<button type="button" class="act" data-propose>Group into roles</button>` : "");
   } else {
     const r = S.roles.roles.find((x) => x.id === S.role), A = (S.roles.areas || []).find((a) => a.id === S.area);
     let n = 1;
     if (S.roles.areas?.length) {
-      h = step(n++, "Areas", 'data-lv="areas"', S.level === "areas");
+      h = step(n++, "Modules", 'data-lv="areas"', S.level === "areas");
       if (S.level !== "areas" && A) h += `<span>/</span>` + step(n++, A.name, `data-area="${esc(A.id)}"`, S.level === "roles");
     } else h = step(n++, "Roles", 'data-lv="roles"', S.level === "roles");
     if (S.level === "parts") h += `<span>/</span>` + step(n, S.role === "?" ? "not placed yet" : rname(S.role), `data-role="${esc(S.role)}"`, true);
-    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "area")}</em>${S.roles.modules_file ? `<span class="act q" title="The modules are read from MODULES.md at the project root; edits here write it back">MODULES.md</span>` : `<button type="button" class="act q" data-regroup>Regroup areas</button><button type="button" class="act" data-savemods title="Write these modules to MODULES.md at the project root, for your team, every agent, the fence and the receipt">Save as MODULES.md</button>`}<button type="button" class="act q" data-skills>Skills for this project</button><button type="button" class="act q" data-handoff title="The map as about 1k tokens of text for Cursor, Codex or a new session">Copy map for agents</button><button type="button" class="act q" data-lv="modules">All modules</button>`;
-    if (S.level === "roles" && A) h += `<button type="button" class="act q" data-arename>Rename area</button>`;
+    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "module")}</em>${S.roles.modules_file ? `<span class="act q" title="The modules are read from MODULES.md at the project root; edits here write it back">MODULES.md</span>` : `<button type="button" class="act q" data-regroup>Regroup modules</button><button type="button" class="act" data-savemods title="Write these modules to MODULES.md at the project root, for your team, every agent, the fence and the receipt">Save as MODULES.md</button>`}<button type="button" class="act q" data-skills>Skills for this project</button><button type="button" class="act q" data-handoff title="The map as about 1k tokens of text for Cursor, Codex or a new session">Copy map for agents</button><button type="button" class="act q" data-lv="modules" title="Every Python file by folder, with its imports">Folders</button>`;
+    if (S.level === "roles" && A) h += `<button type="button" class="act q" data-arename>Rename module</button>`;
     if (S.hiddenLinks && !S.dense) h += `<em title="Strongest ${KEEP_LINKS} links per box">${S.hiddenLinks} weak links hidden</em>`;
     if (S.level === "roles" && !A) h += `<em title="${esc(S.roles.how || "")}">${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}</em>`
-      + (S.roles.status !== "confirmed" ? `<button type="button" class="act" data-confirm>Confirm roles</button>` : "") + `<button type="button" class="act q" data-propose>Propose again</button><button type="button" class="act q" data-lv="modules">All modules</button>`;
+      + (S.roles.status !== "confirmed" ? `<button type="button" class="act" data-confirm>Confirm roles</button>` : "") + `<button type="button" class="act q" data-propose>Propose again</button><button type="button" class="act q" data-lv="modules" title="Every Python file by folder, with its imports">Folders</button>`;
     if (S.level === "parts" && r && S.outside) h += `<em title="${esc(r.purpose || "")}">${S.outside} imports to other roles</em>`;
     if (r && S.level !== "roles") h += `<button type="button" class="act q" data-rename>Rename</button><button type="button" class="act q" data-files>Files</button><button type="button" class="act" data-fence>Fence this role</button>`;
     if (S.role === "?" && S.level !== "roles") h += `<button type="button" class="act" data-files>Place files</button>`;
@@ -426,8 +426,8 @@ function renderCrumbs() {
   $("[data-skills]", c)?.addEventListener("click", openSkills);
   $("[data-handoff]", c)?.addEventListener("click", () => copyForAgents(`/api/handoff?${q()}`, "Map"));
   $("[data-savemods]", c)?.addEventListener("click", () => rolesDo("save_modules", {}, "Saved MODULES.md at the project root: commit it so your team and every agent share these modules."));
-  $("[data-regroup]", c)?.addEventListener("click", () => confirm("Group the roles into areas again? Your area names and moves are replaced.") && proposeAreas());
-  $("[data-arename]", c)?.addEventListener("click", () => { const a = S.roles.areas.find((x) => x.id === S.area), n = prompt(`Rename the area "${a.name}":`, a.name); if (n && n.trim() !== a.name) rolesDo("area_rename", { id: a.id, name: n }, "Renamed."); });
+  $("[data-regroup]", c)?.addEventListener("click", () => confirm("Group the roles into modules again? Your module names and moves are replaced.") && proposeAreas());
+  $("[data-arename]", c)?.addEventListener("click", () => { const a = S.roles.areas.find((x) => x.id === S.area), n = prompt(`Rename the module "${a.name}":`, a.name); if (n && n.trim() !== a.name) rolesDo("area_rename", { id: a.id, name: n }, "Renamed."); });
   $("[data-propose]", c)?.addEventListener("click", () => (!has || confirm("Propose roles again? Your renames and moves are replaced.")) && proposeRoles());
   $("[data-confirm]", c)?.addEventListener("click", () => rolesDo("confirm", {}, "Roles confirmed. Rename or move files any time."));
   $("[data-rename]", c)?.addEventListener("click", () => renameRole(S.role));
