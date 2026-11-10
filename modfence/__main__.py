@@ -49,10 +49,13 @@ def main(argv=None):
 
 
 def fence(argv):
-    """modfence fence <module> [--sealed] | --off: fence every agent in this project to one module of MODULES.md."""
+    """modfence fence MODULE [--sealed] | --allow MODULE_OR_PATH ... | --off | (nothing: what is fenced, what was blocked).
+    Fence every agent in this project to one module of MODULES.md; --allow widens the fence the agent already works in
+    (golden rule 4: the person who set the fence approves a crossing, from the terminal as well as from the map)."""
     from . import modules, scope_guard
     ap = argparse.ArgumentParser(prog="modfence fence", description="Fence agents in this project to one module of MODULES.md.")
     ap.add_argument("module", nargs="?")
+    ap.add_argument("--allow", nargs="+", metavar="MODULE_OR_PATH", help="widen the current fence by a module or a file or folder")
     ap.add_argument("--off", action="store_true", help="lift the fence")
     ap.add_argument("--sealed", action="store_true", help="also hide other modules' code from the agent")
     ap.add_argument("--project", default=os.getcwd())
@@ -62,18 +65,37 @@ def fence(argv):
         scope_guard.disarm(root)
         print("modfence: fence off.")
         return 0
-    mods = modules.load(root)
+    mods = modules.load(root) or []
+    names = {m["name"].lower(): m["name"] for m in mods}
+    entry = lambda x: "@module:" + names[x.lower()] if x.lower() in names else x.replace("\\", "/").strip("/")
+    current = scope_guard.load_fence(root)
+    if a.allow:
+        if current is None:
+            print("modfence: no fence is set; set one with `modfence fence MODULE`.", file=sys.stderr)
+            return 2
+        f = scope_guard._read_json(os.path.join(root, scope_guard.FENCE_FILE)) or {}
+        scope = sorted(set(current[1]) | {entry(x) for x in a.allow})
+        scope_guard.arm(root, scope, bool(f.get("sealed")), f.get("label", ""))
+        print("modfence: fence widened to " + ", ".join(s.replace("@module:", "") for s in scope) + ". Tell the agent: approved, continue.")
+        return 0
+    if not a.module:
+        if current is None:
+            print("modfence: no fence set." + (" Modules: " + ", ".join(names.values()) if names else ""))
+            return 0
+        print("modfence: fenced to " + ", ".join(s.replace("@module:", "") for s in current[1]) + ".")
+        for path in scope_guard.pending_asks(root, current[1]):
+            print(f"  blocked: {path}  (allow it: modfence fence --allow {path})")
+        return 0
     if not mods:
         print(f"modfence: no {modules.FILE} in {root}. Open the map and save its modules first.", file=sys.stderr)
         return 2
-    names = [m["name"] for m in mods]
-    m = next((m for m in mods if m["name"].lower() == (a.module or "").lower()), None)
+    m = next((m for m in mods if m["name"].lower() == a.module.lower()), None)
     if m is None:
-        print("modfence: name a module: " + ", ".join(names), file=sys.stderr)
+        print("modfence: name a module: " + ", ".join(names.values()), file=sys.stderr)
         return 2
     scope_guard.arm(root, ["@module:" + m["name"]], a.sealed, m["name"])
     print(f"modfence: fence on {m['name']} ({', '.join(m['paths'][:6])}{' ...' if len(m['paths']) > 6 else ''}); tests stay open. "
-          f"Edits outside it are blocked for every agent in this project. `modfence fence --off` lifts it.")
+          f"Edits outside it are blocked for every agent in this project. `modfence fence --allow X` widens it, `--off` lifts it.")
     return 0
 
 

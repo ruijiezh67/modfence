@@ -809,9 +809,36 @@ class FencePluginTest(unittest.TestCase):
         self.assertEqual(edit("app/core/new_file.py"), 0, "a new file inside the module's folder is the module's")
         self.assertEqual(edit("tests/test_new.py"), 0, "tests belong to no module: always open")
         self.assertEqual(edit("app/api/handlers.py"), 2, "another module's file is blocked")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            main(["fence", "--project", d])
+            self.assertEqual(main(["fence", "--allow", "app/api/handlers.py", "--project", d]), 0)
+        self.assertIn("blocked: app/api/handlers.py", buf.getvalue(), "the terminal shows what the fence stopped")
+        self.assertEqual(edit("app/api/handlers.py"), 0, "allowed from the terminal")
+        self.assertEqual(edit("app/cli/main.py"), 2, "the rest stays fenced")
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(main(["fence", "--off", "--project", d]), 0)
         self.assertEqual(edit("app/api/handlers.py"), 0, "no fence, no block")
+
+    def test_two_worktrees_two_fences(self):
+        from modfence.__main__ import main
+        d = project()
+        write(os.path.join(d, "MODULES.md"), "# Modules\n\n## core\n- app/core/\n\n## rest\n- app/\n")
+        git = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True, check=True)
+        git("init", "-q", "-b", "main"); git("add", "-A")
+        git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "base")
+        wt = tempfile.mkdtemp(prefix="modfence-wt-")
+        shutil.rmtree(wt)
+        git("worktree", "add", "-q", "-b", "agent2", wt)
+        _dirs.append(wt)
+        with contextlib.redirect_stdout(io.StringIO()):
+            main(["fence", "core", "--project", d])
+            main(["fence", "rest", "--project", wt])
+        env = {k: v for k, v in os.environ.items() if not k.startswith("MODFENCE_")}
+        edit = lambda root, path: subprocess.run([sys.executable, scope_guard.__file__, root], env=env, capture_output=True, text=True,
+                                                 input=json.dumps({"tool_name": "Edit", "tool_input": {"file_path": os.path.join(root, path)}})).returncode
+        self.assertEqual((edit(d, "app/core/values.py"), edit(d, "app/api/handlers.py")), (0, 2), "agent 1 holds core")
+        self.assertEqual((edit(wt, "app/core/values.py"), edit(wt, "app/api/handlers.py")), (2, 0), "agent 2 holds the rest")
 
     def test_the_plugin_points_at_files_that_exist(self):
         root = os.path.dirname(HERE)

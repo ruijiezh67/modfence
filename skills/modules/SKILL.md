@@ -7,5 +7,5 @@ description: Work module by module in a repository that has a MODULES.md (modfen
 
 1. Read `MODULES.md` first. Name the one module the task belongs to before you edit.
 2. Stay inside that module. Tests belong to no module: you may add and run them.
-3. If a modfence fence blocks an edit, do not look for another way to make it. Finish the part inside the module, then tell the user which file in which module needs what change, and why.
+3. If a modfence fence blocks an edit, do not look for another way to make it. Finish the part inside the module, then tell the user which file in which module needs what change, and why. They approve with `/modfence:fence --allow <path>`; then make the edit again.
 4. Before you finish, run `/modfence:receipt` (the Stop hook also does). Fix a broken contract or a new cross-module dependency, or say why it is intended.
