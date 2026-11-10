@@ -28,7 +28,7 @@ modfence
 
 Your browser opens `http://127.0.0.1:8765`. No project at hand? From a clone of this repo, `python -m modfence examples/*` opens five small example projects.
 
-**You need** Python 3.10+ and a logged-in [Claude Code](https://code.claude.com) CLI. modfence has no dependencies and no API key: runs use your own Claude Code setup. The first open of a big project asks one small model call to name the functions (cents); everything else in the map is computed locally.
+**You need** Python 3.10+. modfence has no dependencies and no API key. You keep working in your own agent (Claude Code, Cursor, Codex); modfence fences it and reviews what it did. With a logged-in [Claude Code](https://code.claude.com) CLI it can also run the agent itself, and the first open of a big project asks one small model call to name the functions (cents); everything else in the map is computed locally.
 
 ## How you work
 
@@ -40,7 +40,7 @@ Your browser opens `http://127.0.0.1:8765`. No project at hand? From a clone of 
 
 ![Hovering the line from layout to console: layout uses 14 names from console; editing console can break layout](docs/hover.png)
 
-**3. Let it build inside the fence.** Small, self-contained tasks build at once; anything that crosses roles plans first. A hook blocks edits outside the fence; if the agent needs another file it stops and asks, and you allow the file, the whole role, or nothing.
+**3. Hand it to your agent, inside the fence.** *Hand to my agent* (Ctrl Enter) sets the fence and copies your instruction with a short fence note. Paste it into Claude Code, Cursor or Codex opened in the project; a hook blocks their edits outside the box, and the map marks the boxes they change as they go. Click *Review changes* when they are done. No agent open? *Run here* starts Claude Code headless: small, self-contained tasks build at once, anything that crosses roles plans first, and if it needs another file it stops and asks, and you allow the file, the whole role, or nothing.
 
 **4. Review the run.** The boxes it changed turn green, the ones using changed code pale yellow, and a line above the map names them. The panel lists the changed functions, the tests it ran, a drafted commit message, and a revert.
 
@@ -55,6 +55,7 @@ Each feature serves one of the [golden rules](docs/GOLDEN_RULES.md) the project 
 | **Map** | Functions → roles → parts, at most 7 boxes on the first level. Copies of the same code are kept together, so a platform copy of your backend is the same function. Boxes with no link are listed apart, not drawn as vertices. |
 | **Links with evidence** | Imports with file:line receipts, HTTP calls matched to route decorators, copied code, and co-change from git. |
 | **Fence** | A Claude Code hook blocks edits outside the box; sealed runs also hide other modules' code and pass a compact brief of their interfaces instead. While a fence is set, agents you start yourself (Claude Code, Cursor, Copilot, Codex) are fenced too. |
+| **Your own agent** | *Hand to my agent* fences the box for every agent in the project and copies the task; *Review changes* turns whatever it did into a run with changed functions, tests, commit message and revert. *Copy brief for agents* gives a box's interfaces, and the whole map as about 1.5k tokens of text, for any agent. |
 | **Ask before crossing** | Out-of-fence needs become approval cards; approving continues the same conversation. |
 | **Fewer tokens** | Fast path or plan-first per task, a three-sentence lean rule in every edit run, pointers to the project's own docs instead of their text. |
 | **Tests** | The tests covering the fence and its users run before the agent may stop; branching logic added without a test is sent back once. |

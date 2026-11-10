@@ -7,7 +7,7 @@ import atexit, json, os, subprocess, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import analyze, docs, purpose, roles, runner, scope_guard, skills
+from . import analyze, brief, docs, handoff, purpose, roles, runner, scope_guard, skills
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -19,6 +19,7 @@ class App:
         self.projects = [os.path.abspath(p) for p in projects]
         self.claude = claude_bin or runner.find_claude()
         self.jobs, self.active, self.lock = {}, {}, threading.Lock()
+        self.hands = {}  # project root -> its open hand-off, found again after a reload
 
     def project(self, q):
         i = int((q.get("p") or ["0"])[0])
@@ -79,6 +80,26 @@ def make_handler(app, port):
                 if u.path == "/api/roles":
                     root = app.project(q)
                     return self.send_json(roles.view(root, analyze.analyze(root)))
+                if u.path == "/api/handoff":  # the map as text for any agent (golden rule 1)
+                    root = app.project(q)
+                    text = handoff.build(root, analyze.analyze(root))
+                    return self.send_json({"text": text, "tokens": len(text) // 4})
+                if u.path == "/api/hand/active":
+                    job = app.hands.get(app.project(q))
+                    return self.send_json(hand_info(job) if job and not job.done else {})
+                if u.path == "/api/hand/status":  # what the user's agent changed so far
+                    job = app.jobs.get((q.get("job") or [""])[0])
+                    if not isinstance(job, runner.Handoff):
+                        return self.send_json({"error": "no such hand-off"}, 404)
+                    changed = job.changed()
+                    split = set(job.graph.get("split", ()))
+                    return self.send_json({"changed": changed, "done": job.done,
+                                           "modules": sorted({analyze.module_of(p, split) for p in changed if p.endswith(".py")})})
+                if u.path == "/api/brief":  # one box's brief: what it uses and what others use from it
+                    root, scope = app.project(q), [s for s in (q.get("scope") or [""])[0].split("+") if s]
+                    g = analyze.analyze(root)
+                    text = "\n".join(x for x in (brief.LEGEND[brief.DEFAULT], brief.brief(g, scope)) if x)
+                    return self.send_json({"text": text, "tokens": len(text) // 4})
                 if u.path == "/api/docs":
                     root = app.project(q)
                     return self.send_json(docs.view(root, (roles.load_store(root) or {}).get("files", {})))
@@ -182,6 +203,23 @@ def make_handler(app, port):
                     reverted, skipped = runner.revert_run(app.project(q), b.get("run") or "", b.get("paths") or None)
                     scope_guard.disarm(app.project(q))  # the run was discarded
                     return self.send_json({"reverted": reverted, "skipped": skipped})
+                if u.path == "/api/hand":  # the default: the user's own agent does the work, fenced
+                    root, prompt = app.project(q), (b.get("prompt") or "").strip()
+                    scope = [s for s in b.get("scope") or [] if isinstance(s, str) and s]
+                    if not prompt or not scope:
+                        return self.send_json({"error": "need a task and a box"}, 400)
+                    job = runner.Handoff(root, scope, prompt, analyze.analyze(root), app.claude, seal=not b.get("unsealed")).start()
+                    job.label = str(b.get("label") or ", ".join(job.scope))
+                    app.jobs[job.id] = app.hands[root] = job  # one open hand-off per project, found again after a reload
+                    scope_guard.arm(root, job.scope, job.sealed, job.label)
+                    return self.send_json(hand_info(job))
+                if u.path == "/api/hand/finish":
+                    job = app.jobs.get(b.get("job"))
+                    if not isinstance(job, runner.Handoff):
+                        return self.send_json({"error": "no such hand-off"}, 404)
+                    job.finish()
+                    scope_guard.disarm(job.root)
+                    return self.send_json({"ok": True})
                 if u.path == "/api/approve":  # golden rule 4: the user widened the fence; the same conversation goes on
                     old, paths = app.jobs.get(b.get("job")), [p for p in b.get("paths") or [] if isinstance(p, str) and p]
                     if not old or not paths:
@@ -294,9 +332,19 @@ def make_handler(app, port):
     return H
 
 
+def hand_info(job):
+    text = job.prompt_text()
+    return {"job": job.id, "prompt": job.prompt, "scope": job.scope, "label": job.label, "text": text,
+            "tokens": len(text) // 4, "at": job.started}
+
+
 def serve(projects, port=8765, claude_bin=None, open_browser=True):
     app = App(projects, claude_bin)
-    atexit.register(lambda: [scope_guard.disarm(p) for p in app.projects])  # no fence outlives the server
+    # No fence outlives the server: cleared on exit, and on start too, for a server that was killed (a closed
+    # terminal skips atexit) and would otherwise leave every agent in the project fenced with no UI to lift it.
+    for p in app.projects:
+        scope_guard.disarm(p)
+    atexit.register(lambda: [scope_guard.disarm(p) for p in app.projects])
     httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app, port))
     httpd.daemon_threads = True
     url = f"http://127.0.0.1:{port}/"

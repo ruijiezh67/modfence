@@ -732,6 +732,23 @@ class RunnerTest(unittest.TestCase):
         self.assertTrue(any(e["kind"] == "error" and "not found" in e["text"] for e in job.events))
 
 
+class HandoffTest(unittest.TestCase):
+    def test_the_map_as_text_for_agents_is_capped_and_deterministic(self):
+        from modfence import handoff, roles
+        d = project()
+        g = analyze.analyze(d)
+        self.assertIn("no module map yet", handoff.build(d, g), "no functions yet: a note, not an empty map")
+        store = roles.to_store({f: ("core" if f.startswith("app/core") else "api") for f in roles.code_files(g)}, {"core": "Values."}, "test")
+        store["areas"] = {"a1": {"name": "engine", "purpose": "Computes values.", "roles": ["r2"]},
+                          "a2": {"name": "surface", "purpose": "Serves them.", "roles": ["r1"]}}
+        roles.save_store(d, store)
+        text = handoff.build(d, g)
+        self.assertEqual(text, handoff.build(d, g))
+        self.assertLessEqual(len(text), handoff.BUDGET)
+        for want in ("## Functions", "- engine", "- surface", "roles: core", "surface -> engine: imports"):
+            self.assertIn(want, text)
+
+
 class WebTest(unittest.TestCase):
     """The page has no build step and no browser in CI: check what a typo or a cut too far would break."""
 
@@ -859,6 +876,37 @@ class ServerTest(unittest.TestCase):
         s, data = self.req("GET", "/")
         self.assertEqual(s, 200)
         self.assertIn("modfence", data)
+
+    def test_hand_a_task_to_your_own_agent_then_review_it(self):
+        s, data = self.req("POST", "/api/hand?p=0", {"prompt": "double the limit", "scope": ["app/core"], "label": "core"}, {"X-Modfence": "1"})
+        self.assertEqual(s, 200, data)
+        res = json.loads(data)
+        self.assertIn("double the limit", res["text"])
+        self.assertIn("NEED <path>", runner.Handoff(self.d, ["app/core"], "x", analyze.analyze(self.d), None).system_note() + scope_guard.decide(
+            {"tool_name": "Edit", "tool_input": {"file_path": os.path.join(self.d, "app/cli/main.py")}}, self.d, ["app/core"]))
+        self.assertEqual(load(os.path.join(self.d, ".modfence", "fence.json"))["files"], ["app/core"], "every agent in the project is fenced")
+        write(os.path.join(self.d, "app/core/values.py"), "LIMIT = 20\n\ndef double(x):\n    return 2 * x\n")  # your agent's edit
+        s, data = self.req("GET", f"/api/hand/status?p=0&job={res['job']}")
+        self.assertEqual(json.loads(data)["changed"], ["app/core/values.py"])
+        self.assertEqual(json.loads(self.req("GET", "/api/hand/active?p=0")[1])["job"], res["job"], "a reload finds the open hand-off")
+        self.assertEqual(self.req("POST", "/api/hand/finish?p=0", {"job": res["job"]}, {"X-Modfence": "1"})[0], 200)
+        s, stream = self.req("GET", f"/api/events?job={res['job']}&from=0")
+        ch = next(json.loads(l[6:]) for l in stream.splitlines() if l.startswith("data: ") and '"changes"' in l)
+        self.assertEqual(ch["modified"], ["app/core/values.py"])
+        self.assertTrue(any(l.startswith("data: ") and '"result"' in l and '"ok": true' in l for l in stream.splitlines()),
+                        "a reviewed hand-off reads Done, not Stopped")
+        self.assertFalse(os.path.exists(os.path.join(self.d, ".modfence", "fence.json")), "the fence comes off after the review")
+        self.assertEqual(json.loads(self.req("GET", "/api/hand/active?p=0")[1]), {}, "a reviewed hand-off is closed")
+
+    def test_handoff_and_brief_as_text(self):
+        s, data = self.req("GET", "/api/handoff?p=0")
+        self.assertEqual(s, 200)
+        self.assertIn("text", json.loads(data))
+        s, data = self.req("GET", "/api/brief?p=0&scope=app/core")
+        self.assertEqual(s, 200)
+        body = json.loads(data)
+        self.assertGreater(body["tokens"], 0)
+        self.assertIn("app/api", body["text"], "the brief names the modules that use the box")
 
     def test_guards(self):
         self.assertEqual(self.req("GET", "/api/projects", headers={"Host": "evil.example:80"})[0], 403)

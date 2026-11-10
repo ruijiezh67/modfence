@@ -58,6 +58,7 @@ async function loadGraph(fit) {
   else if (S.roles?.roles.length && !S.roles.areas?.length && S.claude && !S.proposedAreas) { S.proposedAreas = true; proposeAreas(); }
   renderAltView();
   updateStats();
+  restoreHand();
   if (fit) fitView(false);
   loadTasks();
   if (S.selected && !mod(S.selected)) closePanel();
@@ -252,8 +253,10 @@ function pick(id) { // a click only selects; the card below says what it is and 
     + (doc ? `<p>${esc(doc)}</p>` : `<p class="none">No description in the code.</p>`)
     // golden rule 2: say what to change right here; the box is the fence, the map stays where it is
     + (folder || id === "role:?" ? "" : `<div class="ask"><textarea data-q rows="3" placeholder="What should change in ${esc(name)}?"></textarea>`
-      + `<div class="route" data-route></div><div class="pa"><button type="button" class="btn primary" data-run>Build</button><span class="meta">Ctrl Enter</span></div></div>`)
-    + (role || folder ? `<div class="pa"><button type="button" class="btn" data-open>${area ? "Open roles" : role ? "Open parts" : "Open folder"} ▸</button></div>` : "")
+      + `<div class="route" data-route></div><div class="pa"><button type="button" class="btn primary" data-hand title="Fence this box and copy the task for Claude Code, Cursor or Codex">Hand to my agent</button>`
+      + `<button type="button" class="btn quiet" data-run title="modfence runs Claude Code itself, headless">Run here</button></div></div>`)
+    + `<div class="pa">${role || folder ? `<button type="button" class="btn" data-open>${area ? "Open roles" : role ? "Open parts" : "Open folder"} ▸</button>` : ""}`
+    + (folder ? "" : `<button type="button" class="btn quiet" data-brief title="What this box uses and what others use from it, as text for any agent">Copy brief for agents</button>`) + `</div>`
     + (out.length ? `<h4>Uses <i>${out.length}</i></h4><ul class="pl">${out.map((e) => link(e, e.target)).join("")}</ul>` : "")
     + (inn.length ? `<h4>Used by <i>${inn.length}</i></h4><ul class="pl">${inn.map((e) => link(e, e.source)).join("")}</ul>` : "")
     + (area ? `<h4>Roles <i>${m.roles.length}</i></h4><ul class="pf">${m.roles.map((r) => `<li><span class="mono">${esc(r.name)}</span><span>${esc(r.purpose || "")}</span></li>`).join("")}</ul>` : "")
@@ -269,15 +272,18 @@ function pick(id) { // a click only selects; the card below says what it is and 
   const showRoute = () => { const r = route(files), el = $("[data-route]", card), b = $("[data-run]", card); if (!el || !r) return;
     el.className = `route ${r.full ? "full" : "fast"}`;
     el.innerHTML = r.full ? `<b>Plans first</b>: the box ${esc(r.why.join("; ") || "is set to plan")}.` : `<b>Builds now</b>: one role, nothing outside depends on it.`;
-    b.textContent = r.full ? "Plan" : "Build"; };
+    b.textContent = r.full ? "Run here: plan" : "Run here: build"; };
   showRoute();
   $("[data-route]", card)?.addEventListener("click", () => { const r = route(files); S.forceRoute = r && r.full ? "fast" : "full"; showRoute(); });
   const go = async () => { const prompt = qbox.value.trim(); if (!prompt || !S.claude) return; const r = route(files);
     openFence(files, label, m.doc); unpick();
     await startRun(prompt, files, false, r && !r.full ? "build" : "plan"); };
+  const hand = async () => { const prompt = qbox.value.trim(); if (!prompt) return; unpick(); await openFence(files, label, m.doc); await startHand(prompt, files, label); };
   $("[data-run]", card)?.addEventListener("click", go);
-  qbox?.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(); } });
+  $("[data-hand]", card)?.addEventListener("click", hand);
+  qbox?.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); hand(); } });
   $("[data-open]", card)?.addEventListener("click", () => { unpick(); area ? openArea(id.slice(5)) : role ? openRole(id.slice(5)) : select(id); });
+  $("[data-brief]", card)?.addEventListener("click", () => copyForAgents(`/api/brief?${q("&scope=" + encodeURIComponent(files.join("+")))}`, `Brief of ${name}`));
   $("[data-x]", card).onclick = unpick;
   (qbox || $("[data-open]", card) || $("[data-x]", card)).focus();
   paintSelection();
@@ -366,7 +372,8 @@ function openFence(files, label, doc) {
   S.fenceLabel = label; S.fenceDoc = doc || "";
   S.selected = S.full.files[files[0]]?.module || files[0]; S.scope = new Set(files);
   document.body.classList.add("panel-open"); $("#panel").inert = false;
-  renderHeader(); renderOverview(); afterFenceChange(); setTab("talk", false);
+  renderHeader(); renderOverview(); const talk = afterFenceChange(); setTab("talk", false);
+  return talk; // resolves once the fence's run log is drawn, so a card added after it is not drawn over
 }
 function fileList(files, fdoc) {
   return `<ul class="pf">${files.map((f) => `<li><span class="mono">${esc(f.split("/").pop())}</span>${fdoc(f) ? `<span>${esc(fdoc(f))}</span>` : ""}</li>`).join("")}</ul>`;
@@ -397,7 +404,7 @@ function renderCrumbs() {
       if (S.level !== "areas" && A) h += `<span>/</span>` + step(n++, A.name, `data-area="${esc(A.id)}"`, S.level === "roles");
     } else h = step(n++, "Roles", 'data-lv="roles"', S.level === "roles");
     if (S.level === "parts") h += `<span>/</span>` + step(n, S.role === "?" ? "not placed yet" : rname(S.role), `data-role="${esc(S.role)}"`, true);
-    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "area")}</em><button type="button" class="act q" data-regroup>Regroup areas</button><button type="button" class="act q" data-skills>Skills for this project</button><button type="button" class="act q" data-lv="modules">All modules</button>`;
+    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "area")}</em><button type="button" class="act q" data-regroup>Regroup areas</button><button type="button" class="act q" data-skills>Skills for this project</button><button type="button" class="act q" data-handoff title="The map as about 1k tokens of text for Cursor, Codex or a new session">Copy map for agents</button><button type="button" class="act q" data-lv="modules">All modules</button>`;
     if (S.level === "roles" && A) h += `<button type="button" class="act q" data-arename>Rename area</button>`;
     if (S.hiddenLinks && !S.dense) h += `<em title="Strongest ${KEEP_LINKS} links per box">${S.hiddenLinks} weak links hidden</em>`;
     if (S.level === "roles" && !A) h += `<em title="${esc(S.roles.how || "")}">${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}</em>`
@@ -413,6 +420,7 @@ function renderCrumbs() {
   c.querySelectorAll("[data-role]").forEach((b) => (b.onclick = () => openRole(b.dataset.role)));
   c.querySelectorAll("[data-area]").forEach((b) => (b.onclick = () => openArea(b.dataset.area)));
   $("[data-skills]", c)?.addEventListener("click", openSkills);
+  $("[data-handoff]", c)?.addEventListener("click", () => copyForAgents(`/api/handoff?${q()}`, "Map"));
   $("[data-regroup]", c)?.addEventListener("click", () => confirm("Group the roles into areas again? Your area names and moves are replaced.") && proposeAreas());
   $("[data-arename]", c)?.addEventListener("click", () => { const a = S.roles.areas.find((x) => x.id === S.area), n = prompt(`Rename the area "${a.name}":`, a.name); if (n && n.trim() !== a.name) rolesDo("area_rename", { id: a.id, name: n }, "Renamed."); });
   $("[data-propose]", c)?.addEventListener("click", () => (!has || confirm("Propose roles again? Your renames and moves are replaced.")) && proposeRoles());
@@ -987,7 +995,7 @@ function closePanel() {
   if (wasOpen) requestAnimationFrame(() => S.view === "graph" && !S.userCam && fitView());
   paintSelection();
 }
-function afterFenceChange() { S.forceRoute = null; renderFence(); renderHeader(); paintSelection(); loadTalk(); syncSend(); }
+function afterFenceChange() { S.forceRoute = null; renderFence(); renderHeader(); paintSelection(); const talk = loadTalk(); syncSend(); return talk; }
 function setTab(t, focus) {
   S.tab = t;
   document.querySelectorAll("#seg [role=tab]").forEach((b) => {
@@ -1004,7 +1012,7 @@ function setTab(t, focus) {
 
 function renderHeader() {
   if (S.fenceLabel) { // a role or part: the panel is about the whole fence
-    const fs = [...S.scope].filter((f) => S.full.files[f]);
+    const sc = [...S.scope], fs = Object.keys(S.full.files).filter((f) => sc.some((x) => f === x || f.startsWith(x + "/"))); // files or modules
     $("#mname").textContent = S.fenceLabel; $("#mdoc").textContent = S.fenceDoc || "";
     $("#mfacts").textContent = `${plural(fs.length, "file")} · ${fs.reduce((a, f) => a + S.full.files[f].lines, 0).toLocaleString()} lines`;
     return;
@@ -1297,6 +1305,14 @@ function newRun(prompt, scope, at, readOnly, phase) {
    Docs stay the project's markdown files; modfence places each on the boxes it is about (docs.py) and the user can
    add or remove a place, on a box or on a link. A run fenced to a box gets pointers to its docs, not their text. */
 const docsOn = (keys) => (S.docs?.docs || []).filter((d) => d.boxes.some((b) => keys.includes(b)));
+// The same map, as text for any agent: paste it into Cursor, Codex or a new session (golden rule 1).
+async function copyForAgents(url, what) {
+  try {
+    const { text, tokens } = await api(url);
+    await navigator.clipboard.writeText(text);
+    toast(`${what} copied for agents: about ${tokens.toLocaleString()} tokens. Paste it at the start of a session.`);
+  } catch (e) { toast(`Could not copy: ${e.message}`, false); }
+}
 async function openSkills(refresh) {
   $("#stitle").textContent = "Skills for this project";
   $("#scode").innerHTML = `<p class="sub">Reading the project's libraries and searching skills.sh…</p>`;
@@ -1542,17 +1558,62 @@ function syncSend() {
   const b = $("#send"), r = route();
   renderRoute();
   b.classList.toggle("stop", !!running);
-  b.textContent = running ? "Stop" : S.readOnly ? "Explain" : r && !r.full ? "Build" : "Plan";
+  b.textContent = running ? (S.job.phase === "hand" ? "Review changes" : "Stop") : S.readOnly ? "Explain" : r && !r.full ? "Build" : "Plan";
   b.disabled = !running && (!$("#prompt").value.trim() || !S.claude);
 }
 
 // Fence coding: an edit starts as a read-only plan you answer and approve; Build then edits inside the fence.
 async function send() {
-  if (S.job && !S.job.done) { await api("/api/cancel", { job: S.job.id }).catch(() => {}); return; }
+  if (S.job && !S.job.done) { await api(S.job.phase === "hand" ? `/api/hand/finish?${q()}` : "/api/cancel", { job: S.job.id }).catch(() => {}); return; }
   const prompt = $("#prompt").value.trim();
   if (!prompt || !S.scope.size || !S.claude) return;
   const r = route();
   if (await startRun(prompt, [...S.scope], S.readOnly, S.readOnly ? null : r && !r.full ? "build" : "plan")) { $("#prompt").value = ""; autosize(); }
+}
+// The default way to work (golden rules 4, 7): your own agent does the task. modfence fences the box for every agent
+// started in the project, copies the task with the fence note, marks the boxes your agent changes as it goes, and
+// reviews the result like a run when you say it is done.
+async function startHand(prompt, scope, label) {
+  let res;
+  try { res = await api(`/api/hand?${q()}`, { prompt, scope, label, unsealed: !!S.unsealed }); }
+  catch (e) { toast(e.message, false); return; }
+  let copied = true;
+  try { await navigator.clipboard.writeText(res.text); } catch { copied = false; }
+  showHand(res, copied);
+  toast(copied ? "Fence on and task copied: paste it into your agent." : "Fence on. Copy the task from the panel.");
+}
+async function restoreHand() { // a hand-off outlives a reload: the agent works in a terminal for minutes
+  let res;
+  try { res = await api(`/api/hand/active?${q()}`); } catch { return; }
+  if (!res.job || (S.job && S.job.id === res.job)) return;
+  await openFence(res.scope, res.label, "");
+  showHand(res, false);
+}
+function showHand(res, copied) {
+  const { prompt, scope, label } = res;
+  const job = { id: res.job, prompt, scope, readOnly: false, phase: "hand", label, key: [...scope].sort().join("+"), events: [], done: false, at: res.at || Date.now() / 1000 };
+  S.job = job;
+  S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; paintSelection();
+  setTab("talk");
+  job.view = newRun(prompt, scope, job.at, false, "hand");
+  job.view.job = job;
+  const w = document.createElement("div");
+  w.className = "handwait";
+  w.innerHTML = `<p><b>Fence on: ${esc(label)}.</b> ${copied ? "The task and its fence note are copied" : "Copy the task below"} (about ${res.tokens.toLocaleString()} tokens): paste it into Claude Code, Cursor or Codex opened in this project. Their edits outside the box are blocked.</p>`
+    + `<p class="meta" data-live>Watching for changes…</p><div class="pa"><button class="btn primary" type="button" data-review>Review changes</button><button class="btn quiet" type="button" data-again>Copy the task again</button></div>`
+    + (copied ? "" : `<textarea class="handtext" readonly>${esc(res.text)}</textarea>`);
+  job.view.root.appendChild(w);
+  const poll = setInterval(async () => {
+    if (job.done) return clearInterval(poll);
+    try {
+      const s = await api(`/api/hand/status?${q("&job=" + job.id)}`);
+      $("[data-live]", w).textContent = s.changed.length ? `Your agent changed ${plural(s.changed.length, "file")} so far: ${s.changed.slice(0, 4).join(", ")}${s.changed.length > 4 ? " …" : ""}` : "Watching for changes… none yet.";
+      S.marks = { changed: new Set(s.modules), ripple: new Set(), stats: {} }; paintSelection();
+    } catch {}
+  }, 4000);
+  $("[data-review]", w).onclick = async () => { clearInterval(poll); w.remove(); try { await api(`/api/hand/finish?${q()}`, { job: job.id }); } catch (e) { toast(e.message, false); } };
+  $("[data-again]", w).onclick = () => navigator.clipboard.writeText(res.text).then(() => toast("Copied."), () => toast("Copy failed.", false));
+  syncSend(); showRunbar(); listen(job);
 }
 async function startRun(prompt, scope, readOnly, phase, approve) {
   let res;
@@ -1598,9 +1659,11 @@ function showRunbar() {
   if (!on) return;
   const draw = () => {
     const secs = Math.round(Date.now() / 1000 - job.at);
-    bar.innerHTML = `<span class="dot" aria-hidden="true"></span><span>Agent ${job.phase === "plan" ? "planning · read only" : job.readOnly ? "running · read only" : "building · can edit"} <span class="mono">${esc(job.scope.map(shown).join(", "))}</span> · ${secs}s</span><button class="btn" type="button" id="rb-open">Show</button><button class="btn" type="button" id="rb-stop">Stop</button>`;
+    const where = job.label || S.fenceLabel || (job.scope.length > 2 ? plural(job.scope.length, "file") : job.scope.map(shown).join(", "));
+    const what = job.phase === "hand" ? "Your agent is working, fenced to" : job.phase === "plan" ? "Agent planning · read only ·" : job.readOnly ? "Agent running · read only ·" : "Agent building, fenced to";
+    bar.innerHTML = `<span class="dot" aria-hidden="true"></span><span>${what} <b>${esc(where)}</b> · ${secs}s</span><button class="btn" type="button" id="rb-open">Show</button><button class="btn" type="button" id="rb-stop">${job.phase === "hand" ? "Review changes" : "Stop"}</button>`;
     $("#rb-open").onclick = () => { select(job.scope[0]); S.scope = new Set(job.scope); afterFenceChange(); setTab("talk"); };
-    $("#rb-stop").onclick = () => api("/api/cancel", { job: job.id }).catch(() => {});
+    $("#rb-stop").onclick = () => api(job.phase === "hand" ? `/api/hand/finish?${q()}` : "/api/cancel", { job: job.id }).catch(() => {});
   };
   draw();
   runTimer = setInterval(draw, 1000);

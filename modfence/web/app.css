@@ -682,3 +682,11 @@ body[data-view="history"] :is(.crumbs, .legend, .zoom, .hint) { display: none; }
 .pick .ask textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 64px; padding: 8px 10px; font: 13.5px/1.45 var(--font); border: 1.5px solid var(--ink); border-radius: var(--r); background: var(--surface); color: var(--text); }
 .pick .ask textarea:focus-visible { outline: 2px solid var(--fence); outline-offset: 1px; }
 .pick .ask .route { margin: 0; }
+
+/* hand-off: your own agent works, modfence watches */
+.handwait { margin: 10px 0; padding: 10px 12px; border: 1.5px solid var(--fence); border-radius: var(--r); background: var(--fence-soft); font-size: 13px; }
+.handwait p { margin: 0 0 6px; }
+.handwait .pa { display: flex; gap: 8px; flex-wrap: wrap; }
+.handtext { width: 100%; min-height: 160px; margin-top: 8px; box-sizing: border-box; font: 12px/1.4 var(--mono); }
+#runbar { overflow: hidden; white-space: nowrap; }
+#runbar > span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }

@@ -4,6 +4,8 @@
 
 The map became a place to direct an agent from, and every part of a run became visible.
 
+- **Hand to my agent is the default.** modfence fences the box for the agent you already use (Claude Code, Cursor, Codex), copies the task with a fence note, marks the boxes it changes as it goes, and reviews the result like a run. *Run here* still starts Claude Code headless.
+- **The map as text for agents.** *Copy brief for agents* gives a box's interfaces and the whole project map in about 1.5k tokens.
 - **Functions first.** The first level is at most 7 functions (observer, inference, memory ...), sorted by one model call from blocks that code cuts and that keep copies of the same code together; inside a function, roles are grouped by git co-change, imports and folders and only named by a model.
 - **Links with evidence.** HTTP calls matched to route decorators, files started by path, copied code, and co-change from git join imports, so separate programs are no longer islands. Boxes with no link are listed apart.
 - **Readable layout.** Cores on top, what uses them below, in at most 4 rows; inside a function, its roles sit in a frame and the other functions outside. Hovering a line explains it in plain words.

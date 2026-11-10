@@ -437,6 +437,35 @@ class Job:
             self.cond.notify_all()
 
 
+class Handoff(Job):
+    """The user's own agent does the work (golden rules 4 and 7). modfence snapshots the project, the server arms the
+    fence for every agent started in it, the user pastes prompt_text() into Claude Code, Cursor or Codex, and finish()
+    reviews the result exactly like a run: changed functions, contract check, commit draft, a version with revert."""
+    def start(self):
+        self.before = analyze.snapshot(self.root)
+        self.before_bytes = analyze.snapshot_bytes(self.root)
+        for p in self.before:  # as in a run: the fence's own files stay revertible in a big project
+            if p not in self.before_bytes and _in_scope(p, self.editable):
+                self.before_bytes[p] = _read_or_none(os.path.join(self.root, p))
+        self.emit("status", text="Fence on. Paste the task into your agent in this project; review the changes when it is done.")
+        return self
+
+    def prompt_text(self):
+        return f"{self.prompt}\n\n---\nmodfence fence for this task (keep to it):\n{self.system_note()}"
+
+    def changed(self):
+        added, modified, deleted = analyze.diff(self.before, analyze.snapshot(self.root))
+        return [p for p in added + modified + deleted if not p.startswith(".modfence/") and not p.startswith(".claude/")]
+
+    def cancel(self):
+        self.finish()
+
+    def finish(self):
+        if not self.done:  # the user said it is done: a finished run, not a stopped one
+            self.emit("result", ok=True, duration_s=round(time.time() - self.started), turns=None, cost_usd=None)
+            self._finish(self.before)
+
+
 # ---------- runs on disk: diff and revert ----------
 RUN_ID = re.compile(r"^[A-Za-z0-9]{1,40}$")
 
