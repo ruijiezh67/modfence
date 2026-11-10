@@ -44,12 +44,23 @@ def _rel(path, root):
     return os.path.relpath(full, root_n).replace(os.sep, "/")
 
 
+def _module_owner(root, rel):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from modfence import modules
+    return modules.owner(modules.load(root), rel)
+
+
 def allowed(path, root, scope):
-    """Is path (absolute or relative to root) inside one of the scope entries?"""
+    """Is path (absolute or relative to root) inside one of the scope entries? An entry "@module:NAME" is a module of
+    MODULES.md: the files whose longest matching line is that module's, new files included, and every test file."""
     rel = _rel(path, root)
     if rel is None:
         return False
     for s in scope:
+        if s.startswith("@module:"):
+            if _is_test(rel) or _module_owner(root, rel) == s[len("@module:"):]:
+                return True
+            continue
         s = s.strip("/")
         if s in ("", "."):
             if "/" not in rel:

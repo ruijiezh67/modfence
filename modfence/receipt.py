@@ -6,12 +6,16 @@ Compares the working tree with REV (default HEAD), untracked files included, whi
 - the modules it changed, with the lines added and removed;
 - the modules that use them, which the change may break;
 - contract breaks: names another module uses whose signature changed or that went away, with the lines that use them;
+- new cross-module dependencies: a part of the map now importing a part it did not import before, anywhere;
 - the files changed outside the fence, when one is set (.modfence/fence.json);
 - the test files that cover the changed modules and their users.
-Exit status 1 when a contract broke or a file outside the fence changed, so a hook or CI can block on it; 0 otherwise;
-2 when PROJECT is not a git work tree.
+Exit status 1 when a contract broke, a file outside the fence changed or a new cross-module dependency appeared, so
+a hook or CI can block on it; 0 otherwise; 2 when PROJECT is not a git work tree.
+
+--hook: a Claude Code Stop hook. Only in a project with MODULES.md; on a problem it blocks the agent's stop once with
+the receipt as the reason, and lets the second stop through.
 """
-import argparse, json, os, subprocess, sys
+import argparse, ast, json, os, subprocess, sys
 
 from . import analyze, brief, modules, roles, runner, scope_guard
 
@@ -45,6 +49,40 @@ def changes(root, since="HEAD"):
         counts[path] = (len(analyze.read_text(os.path.join(root, path)).splitlines()) if path.endswith(".py") else None, 0)
     return [{"path": p, "status": s, "plus": counts.get(p, (None, None))[0], "minus": counts.get(p, (None, None))[1]}
             for p, s in sorted(status.items()) if not p.startswith(SKIP)]
+
+
+def _pairs(path, data, files, part):
+    """{(part of path, part it imports): line} for one file's source."""
+    try:
+        tree = ast.parse(data)
+    except (SyntaxError, ValueError):
+        return {}
+    src, out = part(path), {}
+    for target, line, _ in analyze.imports_of(path, tree, files):
+        dst = part(target)
+        if src and dst and src != dst:
+            out.setdefault((src, dst), f"{path}:{line}")
+    return out
+
+
+def new_dependencies(root, files, changed, before, part):
+    """[{"from", "to", "at"}]: part-to-part imports the changed files make now that no file made before."""
+    files = set(files)
+    base, now = set(), {}
+    for path in files:
+        if path in changed:
+            continue
+        try:
+            base |= set(_pairs(path, analyze.read_text(os.path.join(root, path)), files, part))
+        except OSError:
+            pass
+    for path in changed:
+        old = before(path)
+        if old is not None:
+            base |= set(_pairs(path, old, files, part))
+        if os.path.exists(os.path.join(root, path)):
+            now.update({k: v for k, v in _pairs(path, analyze.read_text(os.path.join(root, path)), files, part).items() if k not in now})
+    return [{"from": a, "to": b, "at": at} for (a, b), at in sorted(now.items()) if (a, b) not in base]
 
 
 def build(root, since="HEAD"):
@@ -88,13 +126,15 @@ def build(root, since="HEAD"):
         f["path"]: (None if f["status"] == "added" else before(f["path"]),
                     None if f["status"] == "deleted" else _bytes(os.path.join(root, f["path"])))
         for f in py if f["status"] != "added"})
+    part = lambda path: None if modules._is_test(path) else place(path)[0] or (shared is None and analyze.module_of(path, split)) or None
+    new = new_dependencies(root, graph["files"], {f["path"] for f in py if f["status"] != "deleted"}, before, part)
     fence = scope_guard.load_fence(root)
     outside = [f["path"] for f in files if not scope_guard.allowed(f["path"], root, fence[1])] if fence else None
     tests = runner.select_tests(graph, [f["path"] for f in py]) if py else None
     return {"since": since, "files": files, "modules": [{"id": m, **mods[m]} for m in changed], "users": users,
             "areas": sorted(areas.values(), key=lambda a: -(a["plus"] + a["minus"])), "used_by": used_areas,
-            "contract": contract, "outside_fence": outside, "tests": tests["files"] if tests else [],
-            "ok": not contract and not outside}
+            "contract": contract, "new_dependencies": new, "outside_fence": outside, "tests": tests["files"] if tests else [],
+            "ok": not contract and not outside and not new}
 
 
 def text(r):
@@ -117,6 +157,10 @@ def text(r):
             out.append(f"  {c['file']}::{c['name']} {c['change']}; used at " + ", ".join(c["users"][:4]) + (" ..." if len(c["users"]) > 4 else ""))
     else:
         out.append("contract: no name another module uses was changed or removed.")
+    if r["new_dependencies"]:
+        out.append("NEW DEPENDENCY: a part now uses a part it did not use before")
+        for d in r["new_dependencies"]:
+            out.append(f"  {d['from']} -> {d['to']}  ({d['at']})")
     if r["outside_fence"]:
         out.append("OUTSIDE THE FENCE: " + ", ".join(r["outside_fence"]))
     elif r["outside_fence"] is not None:
@@ -131,7 +175,10 @@ def main(argv=None):
     ap.add_argument("project", nargs="?", default=".")
     ap.add_argument("--since", default="HEAD", help="git revision to compare the working tree with (default HEAD)")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--hook", action="store_true", help="run as a Claude Code Stop hook (reads its JSON on stdin)")
     a = ap.parse_args(argv)
+    if a.hook:
+        return hook(sys.stdin.read())
     try:
         r = build(a.project, a.since)
     except RuntimeError as e:
@@ -139,3 +186,31 @@ def main(argv=None):
         return 2
     print(json.dumps(r, indent=2) if a.json else text(r))
     return 0 if r["ok"] else 1
+
+
+def hook(raw):
+    """Stop hook (golden rule 5): block the first stop of a round that broke a contract, left the fence or added a
+    cross-module dependency, with the receipt as the reason; let the second stop through. A project without
+    MODULES.md, or outside git, is left alone: the hook runs in every project once the plugin is installed."""
+    try:
+        event = json.loads(raw or "{}")
+    except ValueError:
+        event = {}
+    if event.get("stop_hook_active"):
+        return 0
+    root = event.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    try:
+        root = _git(root, "rev-parse", "--show-toplevel").decode().strip()
+    except RuntimeError:
+        return 0
+    if modules.load(root) is None:
+        return 0
+    try:
+        r = build(root)
+    except Exception as e:  # a receipt that cannot be made never traps the agent
+        print(f"modfence receipt skipped: {type(e).__name__}: {e}", file=sys.stderr)
+        return 0
+    if r["ok"]:
+        return 0
+    print(json.dumps({"decision": "block", "reason": text(r) + "\nFix these, or say why they are intended, then stop again."}))
+    return 0

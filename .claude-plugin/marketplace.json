@@ -1,0 +1,12 @@
+{
+  "name": "modfence",
+  "description": "modfence: module vibe coding for teams on any agent",
+  "owner": { "name": "Ruijie Zheng" },
+  "plugins": [
+    {
+      "name": "modfence",
+      "source": "./",
+      "description": "Module fences and receipts for coding agents, from MODULES.md."
+    }
+  ]
+}

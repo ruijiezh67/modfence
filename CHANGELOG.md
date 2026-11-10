@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Claude Code plugin.** `/plugin install modfence --marketplace ruijiezh67/modfence`: a Stop hook that blocks a round once when the receipt finds a broken contract, a new cross-module dependency or an edit outside the fence; the fence hook; `/modfence:receipt`, `/modfence:fence <module>`; a short skill for repositories with `MODULES.md`. No pip install: the plugin runs modfence from its own folder. It does nothing in a project without `MODULES.md` or a fence.
+- **`MODULES.md`.** *Save as MODULES.md* on the map writes the first-level modules (name, purpose, folders and files, the longest line winning; tests belong to no module) for the team, the agent, the fence and the receipt. The map reads it back and writes edits to it.
+- **`modfence fence <module>` / `--off`.** A fence from the terminal, by module name.
+- **Receipt: new dependencies.** A part of the map that now imports a part it never imported before is reported.
 - **`modfence receipt`.** What a change touched and what it may break, in the terminal, from git: the parts of the map it changed, the parts that use them, names another module uses whose signature broke (with the lines that use them), files outside the fence, and the tests to run. No UI, no model. Exits 1 on a broken contract or an edit outside the fence, so a hook or CI can block on it.
 - **Hand-off approvals.** When the fence stops your own agent, the map shows the file as a request; Allow widens the fence for the agent already working.
 - **Curved links** from the side of a box, spread so they do not cross at it.

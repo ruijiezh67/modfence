@@ -1,0 +1,8 @@
+{
+  "name": "modfence",
+  "version": "0.4.0",
+  "description": "Module fences and receipts for coding agents: MODULES.md says who holds which module, a hook keeps each agent inside its module, and every stop gets a receipt of what changed and what it may break.",
+  "author": { "name": "Ruijie Zheng" },
+  "homepage": "https://github.com/ruijiezh67/modfence",
+  "license": "MIT"
+}

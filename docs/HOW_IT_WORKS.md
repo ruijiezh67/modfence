@@ -48,6 +48,8 @@ modfence starts Claude Code itself, headless.
 | Brief | `brief.py` | The AI-only document of a fence: what it uses and what others use from it, encoded for tokens (88/88 comprehension probe), plus the contract check. |
 | Runs | `runner.py` | Starts `claude -p --output-format stream-json`, streams events, diffs the project after the run, stores each version's files before and after. `Handoff` does the same around an agent you run yourself. |
 | Map as text | `handoff.py` | The project map for any agent, capped at about 1.5k tokens, no model call. |
+| Modules file | `modules.py` | Reads and writes `MODULES.md`: owner of a path by the longest matching line, the map's areas compressed to folder lines, the map synced to the file. |
+| Plugin | `.claude-plugin/`, `hooks/`, `commands/`, `skills/`, `plugin/cli.py` | The Claude Code plugin: the fence hook (`modfence guard`), the receipt as a Stop hook, two slash commands, one skill. |
 | Receipt | `receipt.py` | `modfence receipt`: the working tree against a git revision, as parts of the map changed, parts that use them, contract breaks, files outside the fence and tests to run; exit 1 on a break. |
 | Fence | `scope_guard.py` | The hook. While the UI has a fence set it is also written to `.modfence/fence.json` and `.claude/settings.local.json`, so agents you start yourself are fenced too. |
 | Done check | `done_check.py` | Test selection, the test gate, one send-back. |

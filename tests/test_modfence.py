@@ -778,6 +778,36 @@ class ModulesTest(unittest.TestCase):
         self.assertEqual(sorted(a["name"] for a in v["areas"]), ["engine", "front"], "the map reads MODULES.md")
 
 
+class FencePluginTest(unittest.TestCase):
+    def test_fence_a_module_of_modules_md_from_the_terminal(self):
+        from modfence.__main__ import main
+        d = project()
+        write(os.path.join(d, "MODULES.md"), "# Modules\n\n## core\nValues.\n- app/core/\n\n## rest\n- app/\n")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["fence", "Core", "--project", d]), 0)
+        self.assertEqual(load(os.path.join(d, ".modfence", "fence.json"))["files"], ["@module:core"])
+        env = {k: v for k, v in os.environ.items() if not k.startswith("MODFENCE_")}
+        edit = lambda path: subprocess.run([sys.executable, scope_guard.__file__, d], env=env, capture_output=True, text=True,
+                                           input=json.dumps({"tool_name": "Write", "tool_input": {"file_path": os.path.join(d, path)}})).returncode
+        self.assertEqual(edit("app/core/values.py"), 0)
+        self.assertEqual(edit("app/core/new_file.py"), 0, "a new file inside the module's folder is the module's")
+        self.assertEqual(edit("tests/test_new.py"), 0, "tests belong to no module: always open")
+        self.assertEqual(edit("app/api/handlers.py"), 2, "another module's file is blocked")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main(["fence", "--off", "--project", d]), 0)
+        self.assertEqual(edit("app/api/handlers.py"), 0, "no fence, no block")
+
+    def test_the_plugin_points_at_files_that_exist(self):
+        root = os.path.dirname(HERE)
+        for f in (".claude-plugin/plugin.json", ".claude-plugin/marketplace.json", "hooks/hooks.json"):
+            load(os.path.join(root, f))  # valid JSON
+        hooks = analyze.read_text(os.path.join(root, "hooks", "hooks.json"))
+        self.assertIn("plugin/cli.py\\\" guard", hooks)
+        self.assertIn("plugin/cli.py\\\" receipt --hook", hooks)
+        for f in ("plugin/cli.py", "commands/receipt.md", "commands/fence.md", "skills/modules/SKILL.md"):
+            self.assertTrue(os.path.exists(os.path.join(root, f)), f)
+
+
 class ReceiptTest(unittest.TestCase):
     def test_the_receipt_names_what_changed_and_the_contract_it_broke(self):
         from modfence import receipt
@@ -809,6 +839,16 @@ class ReceiptTest(unittest.TestCase):
         write(os.path.join(d, "app/core/values.py"), '"""Values."""\nLIMIT = 4\n\ndef double(x):\n    return 2 * x\n')
         with quiet():
             self.assertEqual(receipt.main([d]), 0, "a change inside the contract passes")
+        self.assertEqual(receipt.build(d)["new_dependencies"], [], "the api already imported core: nothing new")
+        write(os.path.join(d, "app/core/values.py"), '"""Values."""\nfrom app.cli.main import Cli\nLIMIT = 4\n\ndef double(x):\n    return 2 * x\n')
+        new = receipt.build(d)["new_dependencies"]
+        self.assertEqual([(n["from"], n["to"]) for n in new], [("app/core", "app/cli")], "core now uses cli: a new dependency")
+        self.assertIn("NEW DEPENDENCY", receipt.text(receipt.build(d)))
+        hook = lambda ev: (lambda buf: (contextlib.redirect_stdout(buf).__enter__(), receipt.hook(json.dumps(ev)), buf.getvalue())[2])(io.StringIO())
+        self.assertEqual(hook({"cwd": d}), "", "no MODULES.md: the hook leaves the project alone")
+        write(os.path.join(d, "MODULES.md"), "# Modules\n\n## core\n- app/core/\n\n## rest\n- app/\n")
+        self.assertEqual(json.loads(hook({"cwd": d}))["decision"], "block")
+        self.assertEqual(hook({"cwd": d, "stop_hook_active": True}), "", "the second stop goes through")
 
 
 class WebTest(unittest.TestCase):
