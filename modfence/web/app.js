@@ -321,12 +321,13 @@ const areaOf = () => Object.fromEntries((S.roles?.areas || []).flatMap((a) => a.
 function openArea(aid) { S.area = aid; S.level = "roles"; regroup(); fitView(); }
 function areaGraph() { // level 1: the areas, each the own files of its roles
   const fr = fileRoles(), ar = areaOf(), boxes = areaBoxes();
-  const nodeOf = (f) => { const a = ar[S.roles.doors?.[f] || fr[f]]; return a && "area:" + a; };
+  const nodeOf = (f) => { const a = S.roles.file_area ? S.roles.file_area[f] : ar[S.roles.doors?.[f] || fr[f]]; return a && "area:" + a; };
   return { ...S.full, modules: boxes, edges: linked(boxes, aggregate((f) => !kindOf(f) && nodeOf(f)), nodeOf, (r) => ar[r] && "area:" + ar[r]) };
 }
 function areaBoxes() {
   return S.roles.areas.map((a) => {
-    const rs = a.roles.map((rid) => S.roles.roles.find((r) => r.id === rid)).filter(Boolean), files = rs.flatMap(ownFiles);
+    const rs = a.roles.map((rid) => S.roles.roles.find((r) => r.id === rid)).filter(Boolean);
+    const files = S.roles.file_area ? Object.keys(S.roles.file_area).filter((f) => S.roles.file_area[f] === a.id) : rs.flatMap(ownFiles);
     return { id: "area:" + a.id, area: a.id, kind: "group", label: a.name, meta: plural(files.length, "file"),
       files, lines: files.reduce((n, f) => n + (S.full.files[f]?.lines || 0), 0), names: [], doc: a.purpose || "",
       roles: rs, members: [...new Set(files.map((f) => S.full.files[f].module))] };

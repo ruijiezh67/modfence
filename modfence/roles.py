@@ -953,4 +953,7 @@ def view(root, graph):
             "unassigned": sorted(code - set(store["files"])), "kinds": kind, "doors": door_of,
             "links": runtime_links(graph, sorted(code)), "cochange": role_cochange(root, members),
             "areas": areas, "areas_how": "MODULES.md" if mods is not None else store.get("areas_how"),
+            # golden rule 1: with MODULES.md a file belongs to the module whose line it matches, not to its role's area
+            "file_area": ({f: f"m{[m['name'] for m in mods].index(o) + 1}" for f in code if (o := modules.owner(mods, f))}
+                          if mods is not None else None),
             "areas_cost_usd": store.get("areas_cost_usd"), "modules_file": mods is not None}

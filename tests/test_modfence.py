@@ -815,6 +815,8 @@ class ModulesTest(unittest.TestCase):
         v = roles.view(d, g)
         self.assertTrue(v["modules_file"])
         self.assertEqual(sorted(a["name"] for a in v["areas"]), ["engine", "front"], "the map reads MODULES.md")
+        names = {a["id"]: a["name"] for a in v["areas"]}
+        self.assertEqual(names[v["file_area"]["app/core/values.py"]], "engine", "a box holds the files MODULES.md gives it")
 
 
 class FencePluginTest(unittest.TestCase):
