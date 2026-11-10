@@ -510,10 +510,11 @@ def run_job(root, scope, prompt):
 class RunnerTest(unittest.TestCase):
     def test_context_note_names_neighbours_with_receipts(self):
         d = project()
-        note = runner.context_note(analyze.analyze(d), ["app/core"])
+        note = runner.context_note(analyze.analyze(d), ["app/core"], task="make double take a factor")
         self.assertIn("`app/core/`", note)
-        self.assertIn("Used by", note)
-        self.assertIn("app/api/handlers.py:1", note)
+        self.assertIn("Used by: `app/api`", note)
+        self.assertIn("app/core/values.py:4 double", note, "the function the task names is pointed at")
+        self.assertLess(len(note) // 4, 400, "the note is read again on every turn: a few lines (golden rule 7)")
         self.assertIn(runner.LEAN_RULE, note, "edit runs carry the lean rule (golden rule 7)")
         self.assertNotIn(runner.LEAN_RULE, runner.context_note(analyze.analyze(d), ["app/core"], read_only=True))
         self.assertNotIn(runner.LEAN_RULE, runner.context_note(analyze.analyze(d), ["app/core"], lean=False))

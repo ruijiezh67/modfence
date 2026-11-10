@@ -122,11 +122,50 @@ LEAN_RULE = ("Lean: make the smallest change that does the task. Reuse what the 
              "restate code in your answer.")
 
 
-def context_note(graph, scope, read_only=False, phase=None, sealed=False, lean=True, hand=False, tests=None):
+STOP = set("the and for with that this from into when what make keep add use not any all each are was has have its "
+           "can should would could must one two only also than then them they their there here been being does done".split())
+
+
+def _words(text):
+    """The stems of the words in a text or an identifier: camelCase and snake_case split, 6 letters kept."""
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text).replace("_", " ").lower()
+    return {w[:6] for w in re.findall(r"[a-z]{3,}", text) if w not in STOP}
+
+
+LOCATE = 5  # ponytail: the five most likely places; a longer list is a search the agent would do better itself
+
+
+def locate(graph, scope, task, k=LOCATE):
+    """Golden rule 7: [(path, line, name)] of the functions in the fence a task most likely touches, by the task's words
+    in each function's name (counted 3 times), its file's name and its body. No model; a guess the agent checks."""
+    root, q = graph["root"], _words(task or "")
+    if not q:
+        return []
+    files = [p for p in graph["files"] if p.endswith(".py") and not is_test(p) and _in_scope(p, [s.split("::")[0] for s in scope], root)]
+    scored = []
+    for p in files[:300]:
+        try:
+            text = analyze.read_text(os.path.join(root, p))
+            lines, tree = text.splitlines(), ast.parse(text)
+        except (OSError, SyntaxError, ValueError):
+            continue
+        in_file = len(q & _words(os.path.basename(p)))
+        for f in analyze.functions(tree, lines):
+            body = _words("\n".join(lines[f["line"] - 1:f["end"]]))
+            score = 3 * len(q & _words(f["name"])) + len(q & body) + in_file
+            if score >= 3:
+                scored.append((-score, p, f["line"], f["name"]))
+    return [(p, line, name) for _, p, line, name in sorted(scored)[:k]]
+
+
+def context_note(graph, scope, read_only=False, phase=None, sealed=False, lean=True, hand=False, tests=None, task=None):
     """System note telling the agent which modules it works on and how they connect to the rest. Sealed (golden
     rule 4): the rest of the project is the brief, not code it may read. hand: the user's own agent, whose answer
     modfence never sees, so a file it needs is asked for by trying the edit (the hook turns the denial into a request
-    card). tests: how to run one test file in this project (default: pytest)."""
+    card). tests: how to run one test file in this project (default: pytest). task: the user's request, to point at the
+    functions it most likely touches.
+    Golden rule 7, measured: every line here is read again on every turn, so the note stays a few lines; what other
+    modules use is checked by the receipt when the agent stops, not listed here."""
     mods = {m["id"]: m for m in graph["modules"]}
     out_edges = [e for e in graph["edges"] if e["source"] in scope and e["target"] not in scope]
     in_edges = [e for e in graph["edges"] if e["target"] in scope and e["source"] not in scope]
@@ -164,18 +203,19 @@ def context_note(graph, scope, read_only=False, phase=None, sealed=False, lean=T
         if sealed and m["kind"] == "tests":  # editable, readable; listing every test file only costs tokens
             lines.append(f"Module `{s}`: the tests ({len(m['files'])} files), inside the fence.")
             continue
-        lines.append(f"Module `{s}`" + (f": {m['doc']}" if m["doc"] else ""))
-        lines.append("  files: " + ", ".join(f"{f} ({graph['files'][f]['lines']} lines)" for f in m["files"]))
-        if m["names"] and not sealed:  # sealed: the brief's contract says what matters
-            lines.append("  public names: " + ", ".join(f"{n['name']} ({n['file']}:{n['line']})" for n in m["names"][:40]))
+        if sealed:
+            lines.append(f"Module `{s}`" + (f": {m['doc']}" if m["doc"] else ""))
+            lines.append("  files: " + ", ".join(f"{f} ({graph['files'][f]['lines']} lines)" for f in m["files"]))
     if sealed:
         lines += [x for x in (brief.LEGEND[brief.DEFAULT], brief.brief(graph, scope)) if x]
-    elif out_edges:
-        lines.append("Depends on (outside the scope): " + "; ".join(
-            f"`{e['target']}` via " + ", ".join(f"{r['file']}:{r['line']}" for r in e["receipts"][:3]) for e in out_edges))
-    if in_edges and not sealed:
-        lines.append("Used by (outside the scope; changing a public name breaks them): " + "; ".join(
-            f"`{e['source']}` via " + ", ".join(f"{r['file']}:{r['line']}" for r in e["receipts"][:3]) for e in in_edges))
+    found = locate(graph, scope, task) if task and not read_only else []
+    if found:
+        lines.append("Most likely places for this task (a guess from its words; check before editing): "
+                     + "; ".join(f"{p}:{line} {name}" for p, line, name in found))
+    users = sorted({e["source"] for e in in_edges})
+    if users and not sealed:
+        lines.append("Used by: " + ", ".join(f"`{u}`" for u in users[:8]) + (" ..." if len(users) > 8 else "")
+                     + ". Keep the names they use working; modfence checks their calls when you stop.")
     if lean and not read_only and phase != "plan":
         lines.append(LEAN_RULE)
     pointers = fence_docs(graph, scope)
@@ -259,7 +299,7 @@ class Job:
 
     def system_note(self):
         return context_note(self.graph, self.scope, self.read_only, self.phase, self.sealed, self.lean,
-                            hand=isinstance(self, Handoff), tests=test_hint(self.root))
+                            hand=isinstance(self, Handoff), tests=test_hint(self.root), task=self.prompt)
 
     def _settings_file(self):
         p = os.path.join(state_dir(self.root), f"settings-{self.id}.json")
