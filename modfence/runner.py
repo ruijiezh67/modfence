@@ -116,7 +116,7 @@ def show_command():
     return f'"{fwd(sys.executable)}" "{fwd(SHOW)}"'
 
 
-# Golden rule 1, built in: the laziest change that works (the ponytail ladder), in a few words every edit run carries.
+# Golden rule 7, built in: the laziest change that works (the ponytail ladder), in a few words every edit run carries.
 LEAN_RULE = ("Lean: make the smallest change that does the task. Reuse what the fence and the brief already have before "
              "writing new code; add no dependency, and no file, option or abstraction the task did not ask for. Do not "
              "restate code in your answer.")
@@ -197,7 +197,7 @@ DOC_POINTERS = 6  # ponytail: a handful of pointers; a doc's text costs tokens o
 
 
 def fence_docs(graph, scope):
-    """[(path, title, lines)] of the project's docs on the roles the fence covers (golden rule 1: pointers, not text)."""
+    """[(path, title, lines)] of the project's docs on the roles the fence covers (golden rule 7: pointers, not text)."""
     from . import docs, roles
     store = roles.load_store(graph["root"])
     if not store:
@@ -374,7 +374,7 @@ class Job:
                           text=(ev.get("result") or "")[-4000:] if ev.get("is_error") else "")
 
     def requests(self):
-        """Golden rules 4 and 7: the files the agent needed outside the fence, each with its reason. A blocked edit is a
+        """Golden rules 4 and 5: the files the agent needed outside the fence, each with its reason. A blocked edit is a
         request; a line "NEED <path>: <why>" in its answer says why (or asks without trying)."""
         rel = lambda p: os.path.relpath(p, self.root).replace("\\", "/") if os.path.isabs(p) else p.replace("\\", "/").removeprefix("./")
         paths = {e["id"]: e.get("detail") or "" for e in self.events if e["kind"] == "tool"}
@@ -406,7 +406,7 @@ class Job:
             requests = self.requests()
             if requests:
                 self.emit("requests", items=requests)
-            # golden rule 3: names other modules used before the run, whose signature the run broke
+            # golden rule 5: names other modules used before the run, whose signature the run broke
             contract = brief.contract_breaks(self.graph, {p: (None if p in added else self.before_bytes.get(p),
                                                               None if p in deleted else _read_or_none(os.path.join(self.root, p)))
                                                           for p in modified + deleted if p.endswith(".py")})
@@ -445,7 +445,7 @@ class Job:
 
 
 class Handoff(Job):
-    """The user's own agent does the work (golden rules 4 and 7). modfence snapshots the project, the server arms the
+    """The user's own agent does the work (golden rules 4 and 5). modfence snapshots the project, the server arms the
     fence for every agent started in it, the user pastes prompt_text() into Claude Code, Cursor or Codex, and finish()
     reviews the result exactly like a run: changed functions, contract check, commit draft, a version with revert."""
     def start(self):
@@ -548,7 +548,7 @@ def _unit_words(funcs):
 
 
 def commit_message(files, split=()):
-    """Golden rule 7: a commit message drafted from the run's changes, with no model call. The subject (at most 72
+    """Golden rule 5: a commit message drafted from the run's changes, with no model call. The subject (at most 72
     chars) names the module with the most changed functions and what happened to them; the body lists the other files."""
     if not files:
         return None

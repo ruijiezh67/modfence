@@ -888,8 +888,12 @@ def view(root, graph):
     Files deleted since are dropped; files added since are listed as unassigned until the user places them."""
     store = load_store(root)
     if not store:
-        return {"status": "none", "roles": [], "unassigned": []}
+        return {"status": "none", "roles": [], "unassigned": [], "modules_file": False}
     code = set(code_files(graph))
+    from . import modules  # golden rule 1: MODULES.md, when the project has one, is the first level
+    mods = modules.load(root)
+    if mods is not None and modules.sync_store(store, mods, sorted(code)):
+        save_store(root, store)
     members = defaultdict(list)
     for f, rid in store["files"].items():
         if f in code and rid in store["roles"]:
@@ -905,4 +909,5 @@ def view(root, graph):
     return {"status": store["status"], "how": store.get("how"), "cost_usd": store.get("cost_usd"), "roles": roles_,
             "unassigned": sorted(code - set(store["files"])), "kinds": kind, "doors": door_of,
             "links": runtime_links(graph, sorted(code)), "cochange": role_cochange(root, members),
-            "areas": areas, "areas_how": store.get("areas_how"), "areas_cost_usd": store.get("areas_cost_usd")}
+            "areas": areas, "areas_how": "MODULES.md" if mods is not None else store.get("areas_how"),
+            "areas_cost_usd": store.get("areas_cost_usd"), "modules_file": mods is not None}

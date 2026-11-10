@@ -13,7 +13,7 @@ Exit status 1 when a contract broke or a file outside the fence changed, so a ho
 """
 import argparse, json, os, subprocess, sys
 
-from . import analyze, brief, roles, runner, scope_guard
+from . import analyze, brief, modules, roles, runner, scope_guard
 
 SKIP = (".modfence/", ".claude/")
 
@@ -23,6 +23,11 @@ def _git(root, *args):
     if r.returncode:
         raise RuntimeError(r.stderr.decode("utf-8", "replace").strip())
     return r.stdout
+
+
+def _bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
 
 
 def changes(root, since="HEAD"):
@@ -60,7 +65,9 @@ def build(root, since="HEAD"):
     store = roles.load_store(root) or {}
     role_area = {r: a for a, v in (store.get("areas") or {}).items() for r in v.get("roles", [])}
     name = lambda d, k: ((store.get(d) or {}).get(k) or {}).get("name")
-    place = lambda path: (name("areas", role_area.get((store.get("files") or {}).get(path))), name("roles", (store.get("files") or {}).get(path)))
+    shared = modules.load(root)  # MODULES.md first (golden rule 1), then the map's own areas
+    place = lambda path: ((modules.owner(shared, path) if shared is not None else name("areas", role_area.get((store.get("files") or {}).get(path)))),
+                          name("roles", (store.get("files") or {}).get(path)))
     areas = {}
     for f in py:
         area, role = place(f["path"])
@@ -79,7 +86,7 @@ def build(root, since="HEAD"):
             return None
     contract = brief.contract_breaks(graph, {
         f["path"]: (None if f["status"] == "added" else before(f["path"]),
-                    None if f["status"] == "deleted" else open(os.path.join(root, f["path"]), "rb").read())
+                    None if f["status"] == "deleted" else _bytes(os.path.join(root, f["path"])))
         for f in py if f["status"] != "added"})
     fence = scope_guard.load_fence(root)
     outside = [f["path"] for f in files if not scope_guard.allowed(f["path"], root, fence[1])] if fence else None

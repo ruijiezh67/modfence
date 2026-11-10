@@ -751,6 +751,33 @@ class HandoffTest(unittest.TestCase):
             self.assertIn(want, text)
 
 
+class ModulesTest(unittest.TestCase):
+    def test_modules_md_round_trips_and_leads_the_map(self):
+        from modfence import modules, roles
+        d = project()
+        g = analyze.analyze(d)
+        code = roles.code_files(g)
+        store = roles.to_store({f: ("core" if f.startswith("app/core") else "api") for f in code}, {}, "test")
+        rid = {r["name"]: k for k, r in store["roles"].items()}
+        store["areas"] = {"a1": {"name": "engine", "purpose": "Computes values.", "roles": [rid["core"]]},
+                          "a2": {"name": "surface", "purpose": "Serves them.", "roles": [rid["api"]]}}
+        roles.save_store(d, store)
+        mods = modules.from_store(store, code)
+        self.assertEqual(mods[0]["paths"], ["app/core/"], "a folder one module holds is one line")
+        modules.save(d, mods)
+        back = modules.load(d)
+        self.assertEqual([(m["name"], m["purpose"], m["paths"]) for m in back], [(m["name"], m["purpose"], m["paths"]) for m in mods])
+        for f in code:
+            self.assertEqual(modules.owner(back, f), "engine" if f.startswith("app/core") else "surface")
+        self.assertIsNone(modules.owner(back, "app/core/tests/test_values.py"), "tests belong to no module")
+        self.assertEqual(modules.owner([{"name": "a", "paths": ["app/"]}, {"name": "b", "paths": ["app/core/values.py"]}],
+                                       "app/core/values.py"), "b", "the longest line wins")
+        write(os.path.join(d, modules.FILE), modules.render(back).replace("## surface", "## front"))  # edited by hand
+        v = roles.view(d, g)
+        self.assertTrue(v["modules_file"])
+        self.assertEqual(sorted(a["name"] for a in v["areas"]), ["engine", "front"], "the map reads MODULES.md")
+
+
 class ReceiptTest(unittest.TestCase):
     def test_the_receipt_names_what_changed_and_the_contract_it_broke(self):
         from modfence import receipt

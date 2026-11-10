@@ -407,7 +407,7 @@ function renderCrumbs() {
       if (S.level !== "areas" && A) h += `<span>/</span>` + step(n++, A.name, `data-area="${esc(A.id)}"`, S.level === "roles");
     } else h = step(n++, "Roles", 'data-lv="roles"', S.level === "roles");
     if (S.level === "parts") h += `<span>/</span>` + step(n, S.role === "?" ? "not placed yet" : rname(S.role), `data-role="${esc(S.role)}"`, true);
-    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "area")}</em><button type="button" class="act q" data-regroup>Regroup areas</button><button type="button" class="act q" data-skills>Skills for this project</button><button type="button" class="act q" data-handoff title="The map as about 1k tokens of text for Cursor, Codex or a new session">Copy map for agents</button><button type="button" class="act q" data-lv="modules">All modules</button>`;
+    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "area")}</em>${S.roles.modules_file ? `<span class="act q" title="The modules are read from MODULES.md at the project root; edits here write it back">MODULES.md</span>` : `<button type="button" class="act q" data-regroup>Regroup areas</button><button type="button" class="act" data-savemods title="Write these modules to MODULES.md at the project root, for your team, every agent, the fence and the receipt">Save as MODULES.md</button>`}<button type="button" class="act q" data-skills>Skills for this project</button><button type="button" class="act q" data-handoff title="The map as about 1k tokens of text for Cursor, Codex or a new session">Copy map for agents</button><button type="button" class="act q" data-lv="modules">All modules</button>`;
     if (S.level === "roles" && A) h += `<button type="button" class="act q" data-arename>Rename area</button>`;
     if (S.hiddenLinks && !S.dense) h += `<em title="Strongest ${KEEP_LINKS} links per box">${S.hiddenLinks} weak links hidden</em>`;
     if (S.level === "roles" && !A) h += `<em title="${esc(S.roles.how || "")}">${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}</em>`
@@ -424,6 +424,7 @@ function renderCrumbs() {
   c.querySelectorAll("[data-area]").forEach((b) => (b.onclick = () => openArea(b.dataset.area)));
   $("[data-skills]", c)?.addEventListener("click", openSkills);
   $("[data-handoff]", c)?.addEventListener("click", () => copyForAgents(`/api/handoff?${q()}`, "Map"));
+  $("[data-savemods]", c)?.addEventListener("click", () => rolesDo("save_modules", {}, "Saved MODULES.md at the project root: commit it so your team and every agent share these modules."));
   $("[data-regroup]", c)?.addEventListener("click", () => confirm("Group the roles into areas again? Your area names and moves are replaced.") && proposeAreas());
   $("[data-arename]", c)?.addEventListener("click", () => { const a = S.roles.areas.find((x) => x.id === S.area), n = prompt(`Rename the area "${a.name}":`, a.name); if (n && n.trim() !== a.name) rolesDo("area_rename", { id: a.id, name: n }, "Renamed."); });
   $("[data-propose]", c)?.addEventListener("click", () => (!has || confirm("Propose roles again? Your renames and moves are replaced.")) && proposeRoles());

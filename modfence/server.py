@@ -7,7 +7,7 @@ import atexit, json, os, subprocess, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import analyze, brief, docs, handoff, purpose, roles, runner, scope_guard, skills
+from . import analyze, brief, docs, handoff, modules, purpose, roles, runner, scope_guard, skills
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -329,8 +329,14 @@ def make_handler(app, port):
                     roles.rename_area(root, b.get("id"), b.get("name"))
                 elif action == "area_move":
                     roles.move_role(root, b.get("role"), b.get("id"))
+                elif action == "save_modules":  # golden rule 1: the map's modules become the project's MODULES.md
+                    store = roles.load_store(root)
+                    if not store or not store.get("areas"):
+                        raise LookupError("no modules on the map yet")
                 else:
                     raise LookupError("no such action")
+                if action == "save_modules" or (action in ("area_rename", "area_move") and modules.load(root) is not None):
+                    modules.save(root, modules.from_store(roles.load_store(root), roles.code_files(graph)))
             except ValueError as e:  # a name that cannot be used: say why, change nothing
                 return self.send_json({"error": str(e)}, 400)
             return self.send_json(roles.view(root, graph))
