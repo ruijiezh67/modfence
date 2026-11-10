@@ -646,6 +646,7 @@ class RunnerTest(unittest.TestCase):
 
     def test_done_check_blocks_once_then_lets_the_agent_stop(self):
         d = project()
+        write(os.path.join(d, "tests/__init__.py"), "")  # without it discover finds no test, which also reads as a failure
         write(os.path.join(d, "tests/test_fail.py"), "import unittest\nclass T(unittest.TestCase):\n    def test_x(self):\n        self.fail('no')\n")
         env = dict(os.environ, MODFENCE_ROOT=d, MODFENCE_RUN="r1")
         hook = os.path.join(os.path.dirname(HERE), "modfence", "done_check.py")
@@ -655,6 +656,7 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(second.stdout.strip(), "", "a second stop is let through")
         rec = [json.loads(l) for l in analyze.read_text(os.path.join(d, ".modfence/runs/r1/checks.jsonl")).splitlines()]
         self.assertEqual([(r["ok"], r["blocked"]) for r in rec], [(False, 1), (False, 0)])
+        self.assertIn("failures=1", rec[0]["summary"], "blocked by the failing test, not by finding no tests")
 
     def test_done_check_runs_the_tests_of_the_fence_and_its_users(self):
         d = project()
