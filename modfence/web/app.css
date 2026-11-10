@@ -690,3 +690,4 @@ body[data-view="history"] :is(.crumbs, .legend, .zoom, .hint) { display: none; }
 .handtext { width: 100%; min-height: 160px; margin-top: 8px; box-sizing: border-box; font: 12px/1.4 var(--mono); }
 #runbar { overflow: hidden; white-space: nowrap; }
 #runbar > span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.composer.handing .clabel, .composer.handing #prompt, .composer.handing #route, .composer.handing #chint, .composer.handing #forget { display: none; }

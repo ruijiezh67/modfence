@@ -1558,6 +1558,7 @@ function syncSend() {
   const running = S.job && !S.job.done;
   const b = $("#send"), r = route();
   renderRoute();
+  $("#composer").classList.toggle("handing", !!running && S.job.phase === "hand"); // your agent has the task: no second prompt here
   b.classList.toggle("stop", !!running);
   b.textContent = running ? (S.job.phase === "hand" ? "Review changes" : "Stop") : S.readOnly ? "Explain" : r && !r.full ? "Build" : "Plan";
   b.disabled = !running && (!$("#prompt").value.trim() || !S.claude);
