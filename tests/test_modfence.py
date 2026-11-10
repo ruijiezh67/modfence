@@ -982,9 +982,14 @@ class WebTest(unittest.TestCase):
             self.assertEqual(p.returncode, 0, p.stderr[-500:])
         defined = set(re.findall(r"^(?:async )?function (\w+)\(", js, re.M)) | set(re.findall(r"^const (\w+) = \(", js, re.M))
         # functions the run log, the side bar and the map call by name: one cut too far broke a run's end once
-        for name in ("renderReview", "renderLesson", "renderRequests", "renderChanges", "openSkills", "openFence", "route",
-                     "readEdge", "linkPhrase", "drawFrame", "drawChip", "stressLayout", "placeFree", "boxName", "moveTip"):
+        for name in ("renderRequests", "renderChanges", "openFence", "filesOf", "twice", "showHand", "restoreHand", "rescan",
+                     "switchProject", "readEdge", "linkPhrase", "drawFrame", "drawChip", "stressLayout", "placeFree", "boxName", "moveTip"):
             self.assertIn(name, defined, f"{name} is called but not defined")
+        html = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "modfence", "web", "index.html"), encoding="utf-8").read()
+        ids = set(re.findall(r'id="([\w-]+)"', html)) | set(re.findall(r'id="([\w-]+)"', js))
+        for ref in set(re.findall(r'\$\("#([\w-]+)"', js)):  # an element the page uses but the HTML lost
+            self.assertIn(ref, ids, f"#{ref} is used in app.js but not in index.html")
+        self.assertNotRegex(js, r"(?<![.\w])(prompt|confirm|alert)\(", "VS Code's Simple Browser blocks dialogs: those buttons did nothing")
 
 
 class SkillsTest(unittest.TestCase):

@@ -1,11 +1,10 @@
-/* modfence UI: see the modules, fence the ones the agent may edit, give an instruction, review what changed. */
+/* modfence UI: see the modules, fence one for your agent, review what it changed. As few buttons as the loop needs. */
 "use strict";
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const NODE_W = 220, NODE_H = 76, GAP_X = 36, GAP_Y = 52;
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
-const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || "");
 
 const S = {
   projects: [], p: 0, graph: null, full: null, focus: "", level: null, roles: null, role: null, calls: null, pos: {}, rows: [], view: "graph", selected: null, scope: new Set(), readOnly: false,
@@ -30,7 +29,6 @@ function fillPicker() { // every project this server has, and a way to open anot
     + `<option value="add">Open another project…</option>`;
 }
 async function boot() {
-  applyTheme(store.get("modfence.theme") || "auto");
   const { projects, claude } = await api("/api/projects");
   S.projects = projects; S.claude = claude;
   const saved = Number(store.get("modfence.project") || 0);
@@ -39,35 +37,22 @@ async function boot() {
   const hp = new URLSearchParams(location.hash.slice(1));
   if (hp.get("p") && projects[+hp.get("p")]) S.p = +hp.get("p");
   $("#picker").value = S.p;
-  if (IS_MAC) $("#chint").innerHTML = "<kbd>⌘</kbd> <kbd>Enter</kbd> to send";
   await loadGraph(true);
-  api(`/api/fleet?${q("&count=1")}`).then((r) => { S.fleet = r.count; renderCrumbs(); }).catch(() => {});
-  setView(hp.get("v") || store.get("modfence.view") || "graph");
-  if (hp.get("m") && mod(hp.get("m"))) {
-    if (hp.get("tab")) S.tab = hp.get("tab");
-    select(hp.get("m"));
-    const f = (hp.get("f") || "").split(/[+ ]/).filter(mod); // #...&f=a+b: open with that fence (and its run log)
-    if (f.length) { S.scope = new Set([hp.get("m"), ...f]); afterFenceChange(); }
-  }
 }
 
 async function loadGraph(fit) {
   if (!S.full) $("#stats").textContent = "Reading the project…"; // a big project's first scan takes seconds
   S.full = await api(`/api/graph?${q()}`);
-  S.fn = {};
   try { S.roles = await api(`/api/roles?${q()}`); } catch { S.roles = null; }
-  try { S.docs = await api(`/api/docs?${q()}`); } catch { S.docs = { docs: [], links: {} }; }
+  S.sig = JSON.stringify(S.full) + JSON.stringify(S.roles); S.loadedAt = Date.now(); // a rescan redraws only on a change
   if (!S.level) S.level = S.roles?.areas?.length ? "areas" : S.roles && S.roles.roles.length ? "roles" : "modules";
   regroup();
   if (S.roles && S.roles.status === "none" && S.full.modules.length > ROLE_AT && S.claude && !S.proposed) { S.proposed = true; proposeRoles(); }
   else if (S.roles?.roles.length && !S.roles.areas?.length && S.claude && !S.proposedAreas) { S.proposedAreas = true; proposeAreas(); }
-  renderAltView();
   updateStats();
   restoreHand();
   if (fit) fitView(false);
-  loadTasks();
-  if (S.selected && !mod(S.selected)) closePanel();
-  else if (S.selected) { renderHeader(); renderOverview(); renderFence(); }
+  if (S.selected) { S.fenceSet = new Set(filesOf([...S.scope])); renderHeader(); paintSelection(); }
 }
 
 function mod(id) { return S.graph && (S.graph.modules.find((m) => m.id === id) || S.full.modules.find((m) => m.id === id)); }
@@ -182,11 +167,6 @@ function roleNode(r, kind = "group") {
     meta: plural(files.length, "file"), doors, // doors and roles are in the side bar: the box stays short
     files, lines, names: [], doc: r.purpose || "", members: [...new Set(files.map((f) => S.full.files[f].module))] };
 }
-function usersOf(files) { // roles whose code imports any of these files
-  const fs = new Set(files), fr = fileRoles(), out = new Set();
-  S.full.edges.forEach((e) => e.receipts.forEach((r) => { if (fs.has(r.target_file) && !fs.has(r.file) && fr[r.file] && !kindOf(r.file)) out.add(fr[r.file]); }));
-  return [...out];
-}
 // Golden rule 3: a role named like its function ("recorder" in recorder) reads as that function's core, so the two
 // levels never show two different boxes with one name.
 function boxName(m) {
@@ -253,11 +233,13 @@ function pick(id) { // a click only selects; the card below says what it is and 
   const mine = new Set(m.files), shared = [...new Set(S.full.edges.flatMap((e) => e.receipts).filter((r) => mine.has(r.file) && kindOf(r.target_file) === "shared").map((r) => r.target_file))].sort();
   const doc = folder ? "" : m.doc || mdoc(m);
   const fdoc = (f) => S.full.files[f]?.doc || "";
-  card.innerHTML = `<div class="pk"><b>${esc(name)}</b><button type="button" class="btn quiet" data-x aria-label="Close">${X_ICON}</button></div>`
+  const busy = S.job && !S.job.done && S.job.phase === "hand";
+  card.innerHTML = `<div class="pk"><b>${esc(name)}</b></div>`
     + `<div class="pm mono">${plural(m.files.length, "file")} · ${m.lines.toLocaleString()} ln</div>`
     + (doc ? `<p>${esc(doc)}</p>` : `<p class="none">No description in the code.</p>`)
     // golden rule 3: say what to change right here; the box is the fence, the map stays where it is
-    + (folder || id === "role:?" ? "" : `<div class="ask"><button type="button" class="btn primary" data-hand title="Fence this box for every agent in the project and copy one line to paste into your agent's chat">Fence &amp; copy for my agent</button>`
+    + (folder || id === "role:?" ? "" : busy ? `<div class="ask"><p class="meta">Your agent is fenced to ${esc(S.job.label)}. Review its changes (the bar at the top) before fencing another box.</p></div>`
+      : `<div class="ask"><button type="button" class="btn primary" data-hand title="Fence this box for every agent in the project and copy one line to paste into your agent's chat">Fence &amp; copy for my agent</button>`
       + `<p class="meta">Paste the line into your agent's chat (Claude Code in VS Code) and type the task after it. Edits outside ${esc(name)} are blocked.</p></div>`)
     + `<div class="pa">${role || folder ? `<button type="button" class="btn" data-open>${area ? "Open roles" : role ? "Open parts" : "Open folder"} ▸</button>` : ""}</div>`
     + (out.length ? `<h4>Uses <i>${out.length}</i></h4><ul class="pl">${out.map((e) => link(e, e.target)).join("")}</ul>` : "")
@@ -271,13 +253,12 @@ function pick(id) { // a click only selects; the card below says what it is and 
   card.hidden = false; card.scrollTop = 0;
   if (opening && !S.userCam) fitView();
   card.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => pick(b.dataset.go)));
-  const files = plain ? [id] : m.files, label = area ? name : role ? "role " + name : name;
+  const files = plain ? [id] : m.files, label = area ? name : role ? "role " + name : name; // the box's files: the fence without MODULES.md
   const scope = area && S.roles?.modules_file ? ["@module:" + name] : files; // a module of MODULES.md is fenced as that module
-  const hand = async () => { unpick(); await openFence(files, label, m.doc); await startHand("", scope, label); };
+  const hand = async (ev) => { ev.currentTarget.disabled = true; unpick(); await openFence(scope, label, m.doc); await startHand("", scope, label); };
   $("[data-hand]", card)?.addEventListener("click", hand);
-  $("[data-open]", card)?.addEventListener("click", () => { unpick(); area ? openArea(id.slice(5)) : role ? openRole(id.slice(5)) : select(id); });
-  $("[data-x]", card).onclick = unpick;
-  ($("[data-hand]", card) || $("[data-open]", card) || $("[data-x]", card)).focus();
+  $("[data-open]", card)?.addEventListener("click", () => { unpick(); area ? openArea(id.slice(5)) : role ? openRole(id.slice(5)) : (S.focus = id.slice(0, -1), regroup(), fitView()); });
+  ($("[data-hand]", card) || $("[data-open]", card))?.focus();
   paintSelection();
 }
 function unpick() { const was = !$("#pick").hidden; S.picked = null; $("#pick").hidden = true; paintSelection(); if (was && !S.userCam && !document.body.classList.contains("panel-open")) fitView(); }
@@ -344,39 +325,22 @@ function linked(boxes, edges, nodeOf, roleBox) {
   });
   return all;
 }
-function renameRole(rid) {
-  const r = S.roles.roles.find((x) => x.id === rid);
-  const name = prompt(`Rename the role "${r.name}" (at most 3 words, 24 characters).\n\n${r.purpose || ""}`, r.name);
-  if (name != null && name.trim() !== r.name) rolesDo("rename", { id: rid, name }, "Renamed. Files, fences and history keep it.");
-}
-function roleFiles(rid) { // a sheet: every file of the role, each with a role picker to move it
-  const fr = fileRoles(), files = Object.keys(fr).filter((f) => fr[f] === rid).sort();
-  const opts = (cur) => S.roles.roles.map((r) => `<option value="${esc(r.id)}"${r.id === cur ? " selected" : ""}>${esc(r.name)}</option>`).join("");
-  $("#stitle").textContent = `${rid === "?" ? "Files not placed yet" : rname(rid)}: ${plural(files.length, "file")}`;
-  $("#scode").innerHTML = `<p class="sub">Move a file by picking another role. ${rid === "?" ? "" : `<button class="btn quiet" type="button" data-newrole>New role…</button>`}</p>
-    <ul class="rfiles">${files.map((f) => `<li><span class="mono">${esc(f)}</span><span class="d">${esc(S.full.files[f].doc || "")}</span><select data-f="${esc(f)}" aria-label="Role of ${esc(f)}">${rid === "?" ? `<option selected disabled>choose…</option>` : ""}${opts(rid)}</select></li>`).join("")}</ul>`;
-  $("#scode").querySelectorAll("select[data-f]").forEach((s) => (s.onchange = async () => { if (await rolesDo("move", { path: s.dataset.f, id: s.value }, `Moved to ${rname(s.value)}.`)) s.closest("li").remove(); }));
-  $("[data-newrole]", $("#scode"))?.addEventListener("click", () => { const n = prompt("Name of the new role (at most 3 words):"); if (n) rolesDo("add", { name: n }, "Role added; move files into it.").then(() => roleFiles(rid)); });
-  showSheet(true);
-}
-function fenceRole(rid) { const r = S.roles.roles.find((x) => x.id === rid); fenceFiles(ownFiles(r), "role " + r.name, r.purpose); }
 // The fence for a box without leaving the map: the run panel opens beside it and the level stays as it is.
-function openFence(files, label, doc) {
+function openFence(scope, label, doc) {
   S.fenceLabel = label; S.fenceDoc = doc || "";
-  S.selected = S.full.files[files[0]]?.module || files[0]; S.scope = new Set(files);
+  S.selected = S.full.files[scope[0]]?.module || scope[0]; S.scope = new Set(scope);
   document.body.classList.add("panel-open"); $("#panel").inert = false;
-  renderHeader(); renderOverview(); const talk = afterFenceChange(); setTab("talk", false);
-  return talk; // resolves once the fence's run log is drawn, so a card added after it is not drawn over
+  if (!S.userCam) requestAnimationFrame(() => fitView()); // the map moves left of the panel, so no box hides under it
+  return afterFenceChange(); // resolves once the fence's log is drawn, so a card added after it is not drawn over
+}
+// The project files a fence covers: files, folders, and modules of MODULES.md ("@module:name").
+function filesOf(scope) {
+  const area = (n) => (S.roles?.areas || []).find((a) => a.name === n)?.id;
+  return Object.keys(S.full.files).filter((f) => scope.some((s) => s.startsWith("@module:")
+    ? !!area(s.slice(8)) && S.roles.file_area?.[f] === area(s.slice(8)) : f === s || f.startsWith(s + "/") || (s === "." && !f.includes("/"))));
 }
 function fileList(files, fdoc) {
   return `<ul class="pf">${files.map((f) => `<li><span class="mono">${esc(f.split("/").pop())}</span>${fdoc(f) ? `<span>${esc(fdoc(f))}</span>` : ""}</li>`).join("")}</ul>`;
-}
-function fenceFiles(files, label, doc) { // a role or part as the fence: its files, under one name
-  S.fenceLabel = label; S.fenceDoc = doc || ""; // set first: select() renders the panel for the fence, not one module
-  select(S.full.files[files[0]].module, true);
-  S.scope = new Set(files); renderHeader(); renderOverview();
-  afterFenceChange();
-  toast(`The agent may edit the ${plural(files.length, "file")} of ${label}.`);
 }
 function renderCrumbs() {
   const c = $("#crumbs"), big = S.full.modules.length > GROUP_AT, has = S.roles && S.roles.roles.length;
@@ -387,8 +351,7 @@ function renderCrumbs() {
     const parts = S.focus ? S.focus.split("/") : [];
     h = (has ? step(1, S.roles.areas?.length ? "Modules" : "Roles", `data-lv="${S.roles.areas?.length ? "areas" : "roles"}"`) + `<span>/</span>` : "") + `<button type="button" data-f="" aria-current="${!S.focus}">${esc(S.full.name)}</button>`
       + parts.map((p, i) => `<span>/</span><button type="button" data-f="${esc(parts.slice(0, i + 1).join("/"))}">${esc(p)}</button>`).join("")
-      + (big ? `<em>${plural(S.full.modules.length, "folder")} and files</em>` : "")
-      + (!has && S.claude ? `<button type="button" class="act" data-propose>Group into roles</button>` : "");
+      + (big ? `<em>${plural(S.full.modules.length, "folder")} and files</em>` : "");
   } else {
     const r = S.roles.roles.find((x) => x.id === S.role), A = (S.roles.areas || []).find((a) => a.id === S.area);
     let n = 1;
@@ -397,14 +360,11 @@ function renderCrumbs() {
       if (S.level !== "areas" && A) h += `<span>/</span>` + step(n++, A.name, `data-area="${esc(A.id)}"`, S.level === "roles");
     } else h = step(n++, "Roles", 'data-lv="roles"', S.level === "roles");
     if (S.level === "parts") h += `<span>/</span>` + step(n, S.role === "?" ? "not placed yet" : rname(S.role), `data-role="${esc(S.role)}"`, true);
-    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "module")}</em>${S.roles.modules_file ? `<span class="act q" title="The modules are read from MODULES.md at the project root; edits here write it back">MODULES.md</span>` : `<button type="button" class="act q" data-regroup>Regroup modules</button><button type="button" class="act" data-savemods title="Write these modules to MODULES.md at the project root, for your team, every agent, the fence and the receipt">Save as MODULES.md</button>`}${S.fleet > 1 ? `<button type="button" class="act" data-fleet title="One receipt per git worktree: what each agent changed and may break">Agents (${S.fleet})</button>` : ""}<button type="button" class="act q" data-skills>Skills for this project</button><button type="button" class="act q" data-handoff title="The map as about 1k tokens of text for Cursor, Codex or a new session">Copy map for agents</button><button type="button" class="act q" data-lv="modules" title="Every Python file by folder, with its imports">Folders</button>`;
-    if (S.level === "roles" && A) h += `<button type="button" class="act q" data-arename>Rename module</button>`;
+    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "module")}</em>${S.roles.modules_file ? `<span class="act q" title="The modules come from MODULES.md at the project root: edit it in your editor, and the map follows">MODULES.md</span>` : `<button type="button" class="act" data-savemods title="Write these modules to MODULES.md at the project root: the fence and your agent read it, and you edit it as text">Save as MODULES.md</button>`}`;
     if (S.hiddenLinks && !S.dense) h += `<em title="Strongest ${KEEP_LINKS} links per box">${S.hiddenLinks} weak links hidden</em>`;
     if (S.level === "roles" && !A) h += `<em title="${esc(S.roles.how || "")}">${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}</em>`
-      + (S.roles.status !== "confirmed" ? `<button type="button" class="act" data-confirm>Confirm roles</button>` : "") + `<button type="button" class="act q" data-propose>Propose again</button><button type="button" class="act q" data-lv="modules" title="Every Python file by folder, with its imports">Folders</button>`;
+;
     if (S.level === "parts" && r && S.outside) h += `<em title="${esc(r.purpose || "")}">${S.outside} imports to other roles</em>`;
-    if (r && S.level !== "roles") h += `<button type="button" class="act q" data-rename>Rename</button><button type="button" class="act q" data-files>Files</button><button type="button" class="act" data-fence>Fence this role</button>`;
-    if (S.role === "?" && S.level !== "roles") h += `<button type="button" class="act" data-files>Place files</button>`;
   }
   c.hidden = false;
   c.innerHTML = h + roundLine();
@@ -412,24 +372,9 @@ function renderCrumbs() {
   c.querySelectorAll("[data-lv]").forEach((b) => (b.onclick = () => { S.level = b.dataset.lv; regroup(); fitView(); }));
   c.querySelectorAll("[data-role]").forEach((b) => (b.onclick = () => openRole(b.dataset.role)));
   c.querySelectorAll("[data-area]").forEach((b) => (b.onclick = () => openArea(b.dataset.area)));
-  $("[data-skills]", c)?.addEventListener("click", openSkills);
-  $("[data-fleet]", c)?.addEventListener("click", openFleet);
-  $("[data-handoff]", c)?.addEventListener("click", () => copyForAgents(`/api/handoff?${q()}`, "Map"));
-  $("[data-savemods]", c)?.addEventListener("click", () => rolesDo("save_modules", {}, "Saved MODULES.md at the project root: commit it so your team and every agent share these modules."));
-  $("[data-regroup]", c)?.addEventListener("click", () => confirm("Group the roles into modules again? Your module names and moves are replaced.") && proposeAreas());
-  $("[data-arename]", c)?.addEventListener("click", () => { const a = S.roles.areas.find((x) => x.id === S.area), n = prompt(`Rename the module "${a.name}":`, a.name); if (n && n.trim() !== a.name) rolesDo("area_rename", { id: a.id, name: n }, "Renamed."); });
-  $("[data-propose]", c)?.addEventListener("click", () => (!has || confirm("Propose roles again? Your renames and moves are replaced.")) && proposeRoles());
-  $("[data-confirm]", c)?.addEventListener("click", () => rolesDo("confirm", {}, "Roles confirmed. Rename or move files any time."));
-  $("[data-rename]", c)?.addEventListener("click", () => renameRole(S.role));
-  $("[data-files]", c)?.addEventListener("click", () => roleFiles(S.role));
-  $("[data-fence]", c)?.addEventListener("click", () => fenceRole(S.role));
+  $("[data-savemods]", c)?.addEventListener("click", () => rolesDo("save_modules", {}, "Saved MODULES.md at the project root. Edit it as text; the map and the fence follow it."));
 }
 
-function reveal(id) { // a module hidden in a grouped folder: open the folders down to it
-  if (S.graph.modules.some((m) => m.id === id)) return;
-  S.focus = S.full.modules.some((m) => m.id.startsWith(id + "/")) ? id : parent(id);
-  regroup();
-}
 const inSet = (set, id) => set.has(id) || !!(mod(id)?.members && mod(id).members.some((x) => set.has(x))) || !!(id.includes(":") && mod(id)?.files.some((f) => set.has(f)));
 
 /* ---------------- layout: layered, foundations at the bottom ---------------- */
@@ -712,7 +657,7 @@ function related(id) {
   S.graph.edges.forEach((e) => { if (e.source === id) dep.add(e.target); if (e.target === id) use.add(e.source); });
   return { dep, use };
 }
-function fenced(id) { return S.selected !== null && !S.readOnly && inSet(S.scope, id); }
+function fenced(id) { return S.selected !== null && (inSet(S.scope, id) || !!mod(id)?.files?.some((f) => S.fenceSet?.has(f))); }
 function stateWords(id, rel, focus) {
   const w = [];
   if (id === S.selected) w.push("selected");
@@ -858,7 +803,7 @@ function wireCanvas() {
   });
   const end = (e) => {
     if (!drag) return;
-    if (!drag.moved && e.type === "pointerup" && S.selected) closePanel();
+    if (!drag.moved && e.type === "pointerup") { if (S.picked) unpick(); else if (S.selected) closePanel(); }
     drag = null; c.classList.remove("panning");
   };
   c.addEventListener("pointerup", end);
@@ -872,9 +817,6 @@ function wireCanvas() {
     else if (trackpad) { stopSpring(); S.userCam = true; S.cam.x -= e.deltaX; S.cam.y -= e.deltaY; applyCam(); }
     else zoomAt(Math.exp(-e.deltaY * (e.deltaMode ? 0.06 : 0.0022)), cx, cy);
   }, { passive: false });
-  $("#zin").onclick = () => { const v = viewport(); zoomAt(1.2, v.w / 2, v.h / 2); };
-  $("#zout").onclick = () => { const v = viewport(); zoomAt(1 / 1.2, v.w / 2, v.h / 2); };
-  $("#zfit").onclick = () => { S.userCam = false; fitView(); };
   addEventListener("resize", () => { if (!S.userCam) fitView(false); });
 }
 
@@ -882,18 +824,6 @@ function wireCanvas() {
 // What one module takes from another, by name: the functions and classes behind an import arrow.
 const takes = (e) => [...new Set(e.receipts.map((r) => r.name).filter(Boolean))];
 // Golden rule 3: hovering a line says in plain words what the link is and what it means for a change, with its
-// An optional second look (off by default, golden rule 7): a read-only run that reads only what this run changed and
-// reports real bugs and broken contracts, nothing about style.
-function renderReview(root, job, c) {
-  const files = c && c.files ? c.files.map((f) => f.path) : [];
-  if (!files.length || job.readOnly || job.phase === "plan") return;
-  const b = document.createElement("button");
-  b.className = "btn quiet review"; b.type = "button"; b.textContent = "Review this run";
-  b.title = "A read-only run reads the changed files and reports real bugs or broken contracts (costs a run)";
-  root.appendChild(b);
-  b.onclick = () => { b.disabled = true; startRun(`Review the last change for bugs, nothing else. Changed files: ${files.join(", ")}. Task it did: ${job.prompt}. `
-    + `Read only those files and what they call. Report at most 5 real problems (wrong behaviour, broken callers, missing edge cases), each with file:line and why. No style comments. If none, say so in one line.`, job.scope, true, null); };
-}
 // evidence counted; the line and its two boxes light up. No lists of names to decode.
 function readEdge(e) {
   const a = `<b>${esc(shown(e.source))}</b>`, b = `<b>${esc(shown(e.target))}</b>`, r = e.receipts;
@@ -951,62 +881,21 @@ function moveTip(ev) { const t = $("#tip"); t.style.left = Math.min(ev.clientX +
 function hideTip() { $("#tip").classList.remove("show"); }
 
 /* ---------------- selection, fence & panel ---------------- */
-function onNodeClick(id, ev) {
-  if (/^(role|dir|part|area):/.test(id)) { pick(id); return; }
-  // a click only picks (the card opens it on purpose); shift-click with a module open grows the fence
-  if (!((ev.shiftKey || ev.metaKey || ev.ctrlKey) && S.selected) || mod(id)?.group) { pick(id); return; }
-  if (S.scope.has(id) && S.scope.size > 1) S.scope.delete(id); else S.scope.add(id);
-  if (!S.scope.has(S.selected)) S.selected = [...S.scope][0];
-  afterFenceChange();
-}
-function select(id, keepLabel) {
-  if (id.endsWith("/")) { S.focus = id.slice(0, -1); regroup(); fitView(); return; } // a grouped folder: open it
-  if (!keepLabel) S.fenceLabel = null;
-  if (S.level === "areas" || S.level === "roles" || (S.level === "parts" && !S.graph.modules.some((m) => m.id === id))) { // show the module among its role's parts
-    const fr = fileRoles(), f = (S.full.modules.find((m) => m.id === id) || { files: [] }).files.find((x) => fr[x]);
-    if (f) { S.level = "parts"; S.role = fr[f]; regroup(); } else { S.level = "modules"; regroup(); }
-  }
-  if (S.level === "modules") reveal(id);
-  const opening = !document.body.classList.contains("panel-open");
-  S.selected = id;
-  // A plain click starts a new fence, unless a multi-module fence is set: then the fence is kept and the module is only shown.
-  if (!(S.scope.size > 1 && !opening)) S.scope = new Set([id]);
-  document.body.classList.add("panel-open");
-  $("#panel").inert = false;
-  renderHeader(); renderOverview(); renderFence(); loadTalk(); paintSelection();
-  setTab(S.tab, false);
-  requestAnimationFrame(() => {
-    if (S.view !== "graph") setView("graph");
-    if (opening && !S.userCam) fitView(); else revealNode(id);
-  });
-}
+function onNodeClick(id) { pick(id); }
 function closePanel() {
   const wasOpen = document.body.classList.contains("panel-open");
-  S.selected = null; S.scope.clear();
+  S.selected = null; S.scope.clear(); S.fenceSet = new Set();
   if (wasOpen) api(`/api/fence/clear?${q()}`, {}).catch(() => {}); // agents started by hand are no longer fenced (409 while a run goes: it stays)
   document.body.classList.remove("panel-open");
   $("#panel").inert = true;
   if (wasOpen) requestAnimationFrame(() => S.view === "graph" && !S.userCam && fitView());
   paintSelection();
 }
-function afterFenceChange() { S.forceRoute = null; renderFence(); renderHeader(); paintSelection(); const talk = loadTalk(); syncSend(); return talk; }
-function setTab(t, focus) {
-  S.tab = t;
-  document.querySelectorAll("#seg [role=tab]").forEach((b) => {
-    const on = b.dataset.tab === t;
-    b.setAttribute("aria-selected", String(on));
-    b.tabIndex = on ? 0 : -1;
-    if (on && focus) b.focus();
-  });
-  $("#v-over").hidden = t !== "over";
-  $("#v-talk").hidden = t !== "talk";
-  requestAnimationFrame(() => slideInk($("#seg"), "[aria-selected=true]"));
-  if (t === "talk") scrollTalk();
-}
+function afterFenceChange() { S.fenceSet = new Set(filesOf([...S.scope])); renderHeader(); paintSelection(); return loadTalk(); }
 
 function renderHeader() {
   if (S.fenceLabel) { // a role or part: the panel is about the whole fence
-    const sc = [...S.scope], fs = Object.keys(S.full.files).filter((f) => sc.some((x) => f === x || f.startsWith(x + "/"))); // files or modules
+    const fs = filesOf([...S.scope]);
     $("#mname").textContent = S.fenceLabel; $("#mdoc").textContent = S.fenceDoc || "";
     $("#mfacts").textContent = `${plural(fs.length, "file")} · ${fs.reduce((a, f) => a + S.full.files[f].lines, 0).toLocaleString()} lines`;
     return;
@@ -1018,172 +907,12 @@ function renderHeader() {
   $("#mfacts").textContent = `${plural(m.files.length, "file")} · ${m.lines} lines`;
 }
 
-function relRows(ids, other, dir) {
-  if (!ids.length) return `<p class="none">${dir === "dep" ? "Uses nothing else in this project." : "No other module uses it."}</p>`;
-  return `<div class="rows">${ids.map((id) => {
-    const e = S.graph.edges.find((x) => (dir === "dep" ? x.source === other && x.target === id : x.source === id && x.target === other));
-    const names = e ? takes(e) : [];
-    return `<button class="row rel" data-go="${esc(id)}"><span class="sw ${dir}"></span><span class="k">${esc(shown(id))}</span>
-      <span class="d mono">${names.length ? esc(clip(names.join(", "), 90)) : "the whole module"}</span></button>`;
-  }).join("")}</div>`;
-}
-
-/* The module as functions: the finest grain modfence shows. Purposes are the author's docstrings, else a cached
-   one-sentence summary that the server asks a small model for the first time a module is opened. */
-const describing = new Set();
-async function moduleFns(id, describe) {
-  let v = S.fn[id]; // read into a local: a reload during the wait replaces S.fn
-  if (!v) { try { v = await api(`/api/module?${q("&m=" + encodeURIComponent(id))}`); } catch { return null; } S.fn[id] = v; }
-  if (describe && S.claude && !describing.has(id) && (v.undescribed || !v.purpose)) {
-    describing.add(id); paintFns(id);
-    try {
-      const r = await api(`/api/describe?${q()}`, { module: id });
-      S.fn[id] = v = r;
-      if (r.purpose_source === "ai") { (S.full.ai_purposes ||= {})[id] = r.purpose; }
-      if (r.error) toast(`Could not describe the functions: ${r.error}`, false);
-    } catch (e) { toast(`Could not describe the functions: ${e.message}`, false); }
-    describing.delete(id);
-  }
-  return S.fn[id] || v;
-}
-const AI_TAG = '<i class="ai" title="Written by a small model from the code; the author wrote no docstring">AI</i>';
-const testsIds = () => new Set(S.full.modules.filter((m) => m.kind === "tests").map((m) => m.id));
-const usedElsewhere = (f) => { const t = testsIds(); return f.used_by.some((m) => !t.has(m)); }; // tests use everything; not interface
-function fnRows(v) { // folded: only what other modules use (the module's interface); unfold for all
-  const byFile = {};
-  v.functions.filter((f) => S.allFns || usedElsewhere(f)).forEach((f) => (byFile[f.file] ||= []).push(f));
-  const busy = describing.has(v.module);
-  return Object.entries(byFile).map(([file, fs]) => `<div class="fgroup"><div class="fhead mono">${esc(file.split("/").pop())}<span>${plural(fs.length, "unit")}</span></div>
-    ${fs.map((f) => {
-      const short = f.kind === "method" ? f.name.split(".").pop() : f.name;
-      const call = f.kind === "def" || f.kind === "method";
-      const ref = `\`${f.name}${call ? "()" : ""}\` in ${f.file}`;
-      const desc = f.purpose ? esc(f.purpose) + (f.source === "ai" ? " " + AI_TAG : "") : busy ? '<span class="wait">Describing…</span>' : '<span class="wait">No description</span>';
-      return `<button type="button" class="fn ${f.kind}${short.startsWith("_") ? " private" : ""}" data-ref="${esc(ref)}" title="Insert into the instruction">
-        <span class="fname mono">${f.kind === "class" || f.kind === "const" ? `<em>${f.kind}</em> ` : ""}${esc(short)}${call ? `<span class="args">(${esc(f.args)})</span>` : ""}</span>
-        <span class="fdesc">${desc}</span>
-        ${f.used_by.length ? `<span class="fuse mono" title="Imported by ${esc(f.used_by.map(shown).join(", "))}">${f.used_by.length} ↗</span>` : ""}</button>`;
-    }).join("")}</div>`).join("") || `<p class="none">No functions or classes.</p>`;
-}
-function paintFns(id) {
-  const box = $("#fns"), v = S.fn[id];
-  if (!box || S.selected !== id || !v) return;
-  const used = v.functions.filter(usedElsewhere).length;
-  box.innerHTML = (S.allFns || used ? fnRows(v) : "")
-    + (used < v.functions.length ? `<button type="button" class="btn quiet" data-allfns>${S.allFns ? "Only what other modules use" : `Show all ${v.functions.length}`}</button>` : "");
-  box.querySelectorAll("[data-ref]").forEach((b) => (b.onclick = () => insertRef(b.dataset.ref)));
-  $("[data-allfns]", box)?.addEventListener("click", () => { S.allFns = !S.allFns; paintFns(id); });
-  $("#fncount").textContent = `${used} used by other modules`;
-  if (v.purpose && !mod(id).doc) $("#mdoc").innerHTML = esc(v.purpose) + " " + AI_TAG;
-}
-function insertRef(text) {
-  const ta = $("#prompt"), s = ta.selectionStart ?? ta.value.length;
-  const pad = s && !/\s$/.test(ta.value.slice(0, s)) ? " " : "";
-  ta.setRangeText(pad + text + " ", s, ta.selectionEnd ?? s, "end");
-  ta.focus(); autosize();
-}
-
-function renderOverview() {
-  if (S.fenceLabel) { // the fence's files, one line each
-    const fs = [...S.scope].filter((f) => S.full.files[f]).sort();
-    $("#v-over").innerHTML = `<div class="sect"><h3>Files</h3><div class="rows">${fs.map((f) => `<button class="row" data-file="${esc(f)}"><span class="k">${esc(f.split("/").pop())}</span><span class="d">${esc(S.full.files[f].doc || "")}</span><span class="n">${S.full.files[f].lines} ln</span></button>`).join("")}</div></div>`;
-    $("#v-over").querySelectorAll("[data-file]").forEach((b) => (b.onclick = () => openFile(b.dataset.file)));
-    return;
-  }
-  const m = mod(S.selected); if (!m) return;
-  const { dep, use } = related(m.id);
-  const tasks = S.tasks.filter((t) => t.modules.includes(m.id));
-  $("#v-over").innerHTML = `
-    ${tasks.length ? `<div class="sect"><h3>Exercises</h3><div class="rows">${tasks.map((t, i) => `<button class="task" data-task="${i}" title="${esc(t.summary)}"><b>${esc(t.title)}</b></button>`).join("")}</div></div>` : ""}
-    <div class="sect"><h3>Functions <small id="fncount"></small></h3><div id="fns"><p class="none">Loading…</p></div></div>
-    <div class="sect"><h3>Uses</h3>${relRows([...dep], m.id, "dep")}</div>
-    <div class="sect"><h3>Used by</h3>${relRows([...use], m.id, "use")}</div>
-    <details class="src"><summary>Source files</summary><div class="rows">${m.files.map((f) => {
-      const fi = S.graph.files[f];
-      return `<button class="row" data-file="${esc(f)}"><span class="k">${esc(f.split("/").pop())}</span><span class="d">${esc(fi.error || "")}</span><span class="n">${fi.lines} ln</span></button>`;
-    }).join("")}</div></details>`;
-  const v = $("#v-over");
-  v.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => select(b.dataset.go)));
-  v.querySelectorAll("[data-file]").forEach((b) => (b.onclick = () => openFile(b.dataset.file)));
-  v.querySelectorAll("[data-task]").forEach((b) => (b.onclick = () => useTask(tasks[+b.dataset.task])));
-  const id = m.id;
-  moduleFns(id).then(() => { paintFns(id); return moduleFns(id, true); }).then(() => paintFns(id));
-}
-
-const X_ICON = '<svg viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l6 6M8 2L2 8"/></svg>';
-function renderFence() {
-  if (!S.selected) return;
-  const testsMod = S.full.modules.find((m) => m.kind === "tests");
-  const mode = `<div class="mode" role="group" aria-label="Fence mode">
-    <button type="button" data-ro="0" aria-pressed="${!S.readOnly}" title="Edits only inside the fence; reads everything">Edit</button>
-    <button type="button" data-ro="1" aria-pressed="${S.readOnly}" title="Explains, edits nothing">Explain</button></div>`;
-  let line;
-  if (S.readOnly) {
-    line = `<div class="fline ro"><span class="lab">Read only.</span> ${[...S.scope].map((id) => `<span class="mono">${esc(shown(id))}</span>`).join(", ")}: explain, no edits.</div>`;
-  } else {
-    const chipName = (id) => (id.includes("::") ? id.split("::")[1] + "()" : shown(id));
-    const chips = S.fenceLabel && S.scope.size > 1 ? `<span class="fchip">${esc(S.fenceLabel)} (${plural(S.scope.size, "file")})</span>`
-      : [...S.scope].map((id) => `<span class="fchip">${esc(chipName(id))}${S.scope.size > 1 ? `<button type="button" data-rm="${esc(id)}" aria-label="Remove ${esc(shown(id))} from the fence">${X_ICON}</button>` : ""}</span>`).join("");
-    const add = testsMod && !S.scope.has(testsMod.id) ? `<button type="button" class="fadd" data-add="${esc(testsMod.id)}">+ ${esc(testsMod.id)}</button>` : "";
-    const seal = `<button type="button" class="fseal" data-seal aria-pressed="${!S.unsealed}" title="${S.unsealed ? "The agent may read every file in this run. Click to seal." : "Sealed: other modules' code is hidden; the agent gets their interfaces, so it cannot lean on or break their internals. Click to let it read everything."}">${S.unsealed ? "Unsealed" : "Sealed"}</button>`;
-    line = `<div class="fline"><span class="lab">Can edit:</span>${chips}${add}${seal}</div>`;
-  }
-  const nocli = S.claude ? "" : `<div class="nocli">Claude Code CLI not found. Install it and log in, or start modfence with CLAUDE_BIN set to its path, then restart. Reading the project still works.</div>`;
-  $("#fence").innerHTML = nocli + mode + line;
-  $("[data-seal]", $("#fence"))?.addEventListener("click", () => { S.unsealed = !S.unsealed; renderFence(); });
-  $("#fence").querySelectorAll("[data-ro]").forEach((b) => (b.onclick = () => { S.readOnly = b.dataset.ro === "1"; afterFenceChange(); }));
-  $("#fence").querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { S.scope.delete(b.dataset.rm); if (!S.scope.has(S.selected)) S.selected = [...S.scope][0]; afterFenceChange(); }));
-  $("#fence").querySelectorAll("[data-add]").forEach((b) => (b.onclick = () => { S.scope.add(b.dataset.add); afterFenceChange(); }));
-  syncSend();
-}
 const scopeKey = () => [...S.scope].sort().join("+");
-
-/* ---------------- tasks from TASKS.md ---------------- */
-async function loadTasks() {
-  S.tasks = [];
-  try { S.tasks = parseTasks((await api(`/api/file?${q("&path=TASKS.md")}`)).text); } catch { /* no TASKS.md */ }
-  if (S.selected) renderOverview();
-}
-function parseTasks(text) {
-  // "## 4. Exponent operator (crosses modules: `lexer`, `parser`)" + "Target: `calc.lexer`, `calc.parser`."
-  const ids = S.full.modules.map((m) => m.id);
-  return text.split(/\n(?=## )/).filter((sec) => /^## /.test(sec)).map((sec) => {
-    const lines = sec.split("\n");
-    const head = lines[0].replace(/^##\s*/, "");
-    const num = (head.match(/^(\d+)[.)]/) || [])[1] || "";
-    const title = head.replace(/^\d+[.)]\s*/, "").replace(/\s*\((single module|crosses modules?)[^)]*\)\s*$/i, "").trim();
-    const target = lines.find((l) => /^\s*target/i.test(l)) || "";
-    const ticks = (s) => [...s.matchAll(/`([^`]+)`/g)].map((m) => m[1].replace(/\.py$/, ""));
-    let modules = ticks(target).flatMap((t) => [t.replace(/\./g, "/"), t + ".py"]).filter((t) => ids.includes(t));
-    if (!modules.length) {
-      const short = ticks((head.match(/\(([^)]*)\)/) || [])[1] || "");
-      modules = ids.filter((id) => short.includes(id.split("/").pop()));
-    }
-    const body = lines.slice(1).join("\n").trim();
-    const summary = body.replace(/^target[^\n]*\n?/i, "").replace(/[*`#>]/g, "").replace(/\s+/g, " ").trim();
-    return { title: num ? `${num}. ${title}` : title, body, modules: [...new Set(modules)], level: modules.length > 1 ? `${modules.length} modules` : "1 module", summary };
-  }).filter((t) => t.modules.length);
-}
-function fillPrompt(text) {
-  const ta = $("#prompt");
-  if (ta.value.trim() && ta.value.trim() !== text.trim() && !confirm("Replace the instruction you are writing?")) return false;
-  ta.value = text; autosize(); ta.focus();
-  return true;
-}
-function useTask(t) {
-  if (!fillPrompt(`${t.title}\n\n${t.body}`)) return;
-  S.readOnly = false;
-  // An exercise changes behavior, so its tests must change too: fence the tests module with it.
-  const tests = S.full.modules.filter((m) => m.kind === "tests").map((m) => m.id);
-  S.scope = new Set([S.selected, ...t.modules.filter((m) => m !== S.selected), ...tests]);
-  afterFenceChange();
-}
 
 /* ---------------- runs: a log per fence ---------------- */
 async function loadTalk() {
   const v = $("#v-talk");
   v.innerHTML = "";
-  $("#tcount").textContent = "";
   if (!S.scope.size) return;
   const key = scopeKey();
   let runs = [];
@@ -1193,24 +922,7 @@ async function loadTalk() {
   runs.forEach((r) => { const view = newRun(r.prompt, r.scope, r.at, r.read_only, r.phase); r.events.forEach((e) => view.add(e, true)); view.flush(); });
   const plans = v.querySelectorAll(".plan [data-build]"); // only the newest run's plan can still be built
   plans.forEach((b, i) => (b.disabled = i < plans.length - 1 || v.lastElementChild !== b.closest(".run")));
-  $("#tcount").textContent = runs.length ? String(runs.length) : "";
   if (S.job && !S.job.done && S.job.key === key) S.job.view = attachLive(S.job);
-  if (!v.children.length) renderStarters();
-}
-function renderStarters() {
-  const m = mod(S.selected);
-  const name = shown(m ? m.id : "");
-  const starters = [
-    ["Read only", `Explain what ${name} does, how data flows through it, and which file I should read first.`, true],
-    ["Read only", `Find one bug or unhandled edge case in ${name}. Point to the exact line and explain why, but do not fix it.`, true],
-    ["Plan, then build", `Add one test for ${name} that covers a case the current tests miss, and run the tests.`, false],
-  ];
-  $("#v-talk").innerHTML = `<p class="none">No runs in this fence yet. An edit starts with a plan: the agent reads the project, asks what it needs to know and lists the functions it will touch. You answer, press Build, and review every function it changed.</p>
-    <div class="starters">${starters.map(([k, t], i) => `<button type="button" data-st="${i}"><b>${k}</b>${esc(t)}</button>`).join("")}</div>`;
-  $("#v-talk").querySelectorAll("[data-st]").forEach((b) => (b.onclick = () => {
-    const [, text, ro] = starters[+b.dataset.st];
-    if (fillPrompt(text)) { S.readOnly = ro; afterFenceChange(); }
-  }));
 }
 function attachLive(job) {
   const view = newRun(job.prompt, job.scope, job.at, job.readOnly, job.phase);
@@ -1224,7 +936,7 @@ const hhmm = (t) => (t ? new Date(t * 1000).toLocaleTimeString([], { hour: "2-di
 
 function newRun(prompt, scope, at, readOnly, phase) {
   $("#v-talk .starters")?.remove(); $("#v-talk > p.none")?.remove();
-  scope = scope.map((s) => s.replace("@module:", "module "));
+  scope = scope.length > 3 ? [plural(scope.length, "file")] : scope.map((s) => s.replace("@module:", "module "));
   const root = document.createElement("article");
   root.className = `run${phase ? " " + phase : ""}`;
   const what = phase === "plan" ? "planning, read only" : phase === "build" ? "building, can edit" : readOnly ? "read only" : "can edit";
@@ -1269,10 +981,6 @@ function newRun(prompt, scope, at, readOnly, phase) {
         const d = document.createElement("div"); d.className = "error"; d.textContent = e.text; body.appendChild(d);
       } else if (e.kind === "result") {
         view.result = e;
-      } else if (e.kind === "plan") {
-        if (textEl) { renderText(); textEl = null; }
-        stepsEl = null;
-        renderPlan(body, e.plan, prompt, scope);
       } else if (e.kind === "check") {
         view.check = e;
       } else if (e.kind === "changes") {
@@ -1286,7 +994,7 @@ function newRun(prompt, scope, at, readOnly, phase) {
         st.className = `st ${r && r.ok ? (view.check && !view.check.ok ? "bad" : "ok") : "bad"}`;
         st.textContent = r ? (r.ok ? `${phase === "plan" ? "Planned" : view.check && !view.check.ok ? "Done, check failed" : "Done"}${r.duration_s ? ` · ${r.duration_s}s` : ""}` : "Stopped with an error") : "Stopped";
         if (quiet) { const f = document.createElement("div"); f.className = "rfoot"; f.innerHTML = r ? `<span class="meta">${r.turns ? plural(r.turns, "turn") : ""}${r.cost_usd != null ? ` · $${r.cost_usd.toFixed(3)}` : ""}</span>` : ""; root.appendChild(f); }
-        else { renderChanges(root, view.changes, r, view.check, !replay); if (!replay && view.job) { renderReview(root, view.job, view.changes); renderLesson(root, view.job); } }
+        else renderChanges(root, view.changes, r, view.check);
         if (view.requests?.length) renderRequests(root, view.requests, view.job, replay);
       }
       if (!replay) scrollTalk();
@@ -1297,95 +1005,39 @@ function newRun(prompt, scope, at, readOnly, phase) {
   return view;
 }
 
-/* ---------------- the project's own docs on the map (golden rules 3, 5 and 7) ----------------
-   Docs stay the project's markdown files; modfence places each on the boxes it is about (docs.py) and the user can
-   add or remove a place, on a box or on a link. A run fenced to a box gets pointers to its docs, not their text. */
-const docsOn = (keys) => (S.docs?.docs || []).filter((d) => d.boxes.some((b) => keys.includes(b)));
-// The same map, as text for any agent: paste it into Cursor, Codex or a new session (golden rule 7).
-async function copyForAgents(url, what) {
-  try {
-    const { text, tokens } = await api(url);
-    await navigator.clipboard.writeText(text);
-    toast(`${what} copied for agents: about ${tokens.toLocaleString()} tokens. Paste it at the start of a session.`);
-  } catch (e) { toast(`Could not copy: ${e.message}`, false); }
-}
-async function openSkills(refresh) {
-  $("#stitle").textContent = "Skills for this project";
-  $("#scode").innerHTML = `<p class="sub">Reading the project's libraries and searching skills.sh…</p>`;
-  showSheet(true);
-  let d;
-  try { d = await api(`/api/skills?${q(refresh === true ? "&refresh=1" : "")}`); }
-  catch (e) { $("#scode").innerHTML = `<p class="sub">${esc(e.message)}</p>`; return; }
-  const libs = Object.entries(d.stack?.libs || {}).sort((a, b) => b[1] - a[1]).slice(0, 10);
-  const row = (k) => `<li class="${k.match === "fuzzy" ? "weak" : ""}"><div><b>${esc(k.name)}</b> <span class="mono">${esc(k.source)}</span></div>`
-    + `<span>${esc(k.reason)} · ${k.installs.toLocaleString()} installs · ${k.stars == null ? "stars N/A" : k.stars.toLocaleString() + " stars"}${k.match === "fuzzy" ? " · loose match" : ""}</span>`
-    + `<div class="pa">${k.installed ? `<span class="meta">In this project</span>` : `<button class="btn" type="button" data-inst="${esc(k.source)}|${esc(k.name)}">Add to this project</button>`} <a href="${esc(k.url)}" target="_blank" rel="noopener">Read it</a></div></li>`;
-  $("#scode").innerHTML = `<p class="sub">This project uses ${libs.map(([n, c]) => `<b>${esc(n)}</b> (${c})`).join(", ") || "no third-party library modfence can see"}. `
-    + `Skills are matched to these, kept when installed 1,000+ times and their repo has 100+ stars. A skill is third-party instructions Claude Code will follow in this project: read it before adding. modfence never runs it.</p>`
-    + (d.errors?.length ? `<p class="sub bad">${esc(d.errors.join("; "))}</p>` : "")
-    + `<ul class="pf skills">${(d.skills || []).map(row).join("") || "<li>No skill passed the filters.</li>"}</ul>`
-    + (d.installed?.length ? `<p class="sub">Already in this project: ${d.installed.map(esc).join(", ")}</p>` : "")
-    + `<button class="btn quiet" type="button" data-refresh>Search again</button>`;
-  $("[data-refresh]", $("#scode")).onclick = () => openSkills(true);
-  $("#scode").querySelectorAll("[data-inst]").forEach((b) => (b.onclick = async () => {
-    const [source, skill] = b.dataset.inst.split("|");
-    b.disabled = true;
-    try { const r = await api(`/api/skills/install?${q()}`, { source, skill }); b.outerHTML = `<span class="meta">Added: ${r.written.length} files in .claude/skills/${esc(skill)}</span>`; }
-    catch (e) { b.disabled = false; toast(e.message, false); }
-  }));
-}
-function renderLesson(root, job) { // golden rule 5: what this run taught goes into the docs of the box it changed
-  const fr = fileRoles(), keys = [...new Set(job.scope.flatMap((s) => Object.keys(fr).filter((f) => f === s || f.startsWith(s + "/")).map((f) => "role:" + fr[f])))];
-  const docs = docsOn(keys), rid = keys[0]?.slice(5), fallback = `docs/${(rname(rid) || "notes").replace(/[^a-z0-9]+/gi, "_").toLowerCase()}.md`;
-  const box = document.createElement("div");
-  box.className = "lesson";
-  box.innerHTML = `<label>Anything the agent should know next time? <input type="text" placeholder="e.g. server/ has a copy of this file: change both"></label>`
-    + `<select>${docs.map((d) => `<option value="${esc(d.path)}">${esc(d.path)}</option>`).join("")}<option value="${esc(fallback)}">${esc(fallback)} (new)</option></select>`
-    + `<button class="btn" type="button">Remember</button>`;
-  root.appendChild(box);
-  $("button", box).onclick = async () => {
-    const text = $("input", box).value.trim(), path = $("select", box).value;
-    if (!text) return;
-    try {
-      await api(`/api/docs/lesson?${q()}`, { path, text });
-      if (rid && !docs.some((d) => d.path === path)) await api(`/api/docs/choose?${q()}`, { path, box: "role:" + rid, on: true });
-      S.docs = await api(`/api/docs?${q()}`);
-      box.innerHTML = `<span class="meta">Written under Gotchas in ${esc(path)}.</span>`;
-    } catch (e) { toast(e.message, false); }
-  };
-}
-
 /* Golden rules 4 and 5: the agent stopped at the fence. Each file it needs is a card: the change it wants and why, and
    the user's choice. Approving continues the same conversation with the file (or its whole role) inside the fence. */
-function renderRequests(root, items, job, replay, hand) { // hand: the user's own agent asked; answer it in place
-  const fr = fileRoles(), box = document.createElement("div");
+function renderRequests(root, items, job, replay, hand) { // hand: answers the user's own agent in place
+  const box = document.createElement("div");
   box.className = "requests";
-  box.innerHTML = `<h4>The agent asks to edit outside the fence</h4>` + items.map((it, k) => {
-    const rid = fr[it.path], role = rid && S.roles?.roles.find((r) => r.id === rid);
-    return `<div class="req" data-k="${k}"><div class="rp"><span class="mono">${esc(it.path)}</span>${role ? ` <span class="rr">in ${esc(role.name)}</span>` : ""}</div>`
-      + `<p>${it.why ? esc(it.why) : hand ? "Your agent tried to edit this file. Its reason is in your agent's chat." : "It tried to edit this file; no reason given."}</p>`
-      + (replay || !job ? "" : `<div class="pa"><button class="btn primary" type="button" data-file>Allow this file</button>`
-        + (it.module ? `<button class="btn" type="button" data-mod>Allow all of module ${esc(it.module)}</button>` : role ? `<button class="btn" type="button" data-role>Allow all of ${esc(role.name)}</button>` : "")
-        + `<button class="btn quiet" type="button" data-no>Refuse</button></div>`) + `</div>`;
-  }).join("");
+  box.innerHTML = `<h4>The agent asks to edit outside the fence</h4>` + items.map((it, k) => `<div class="req" data-k="${k}"><div class="rp"><span class="mono">${esc(it.path)}</span>${it.module ? ` <span class="rr">in ${esc(it.module)}</span>` : ""}</div>`
+    + `<p>${it.why ? esc(it.why) : "Your agent tried to edit this file. Its reason is in your agent's chat."}</p>`
+    + (replay || !hand ? "" : `<div class="pa"><button class="btn primary" type="button" data-yes>Allow ${it.module ? "module " + esc(it.module) : "this file"}</button><button class="btn quiet" type="button" data-no>Refuse</button></div>`) + `</div>`).join("");
   root.appendChild(box);
   items.forEach((it) => { const n = [...document.querySelectorAll(".node")].find((x) => mod(x.dataset.id)?.files?.includes(it.path)); n?.classList.add("asks"); });
   box.querySelectorAll(".req").forEach((el) => {
-    const it = items[el.dataset.k], role = S.roles?.roles.find((r) => r.id === fr[it.path]);
-    const go = (paths) => { box.querySelectorAll("button").forEach((b) => (b.disabled = true)); document.querySelectorAll(".node.asks").forEach((n) => n.classList.remove("asks"));
-      if (hand) return hand(el, paths, true);
-      startRun(`Approved: ${paths.length > 1 ? (role ? role.name : plural(paths.length, "file")) : paths[0]}`, [...new Set([...job.scope, ...paths])], false, job.phase, { job: job.id, paths }); };
-    $("[data-file]", el)?.addEventListener("click", () => go([it.path]));
-    $("[data-role]", el)?.addEventListener("click", () => go(ownFiles(role)));
-    $("[data-mod]", el)?.addEventListener("click", () => go(["@module:" + it.module])); // golden rule 4: grant a whole module
-    $("[data-no]", el)?.addEventListener("click", () => { hand?.(el, [it.path], false); el.classList.add("refused"); el.querySelector(".pa").innerHTML = `<span class="meta">Refused. The fence stays as it was.</span>`; document.querySelectorAll(".node.asks").forEach((n) => n.classList.remove("asks")); });
+    const it = items[el.dataset.k];
+    const go = (ok) => { el.querySelectorAll("button").forEach((b) => (b.disabled = true)); document.querySelectorAll(".node.asks").forEach((n) => n.classList.remove("asks"));
+      hand(el, [it.module ? "@module:" + it.module : it.path], ok);
+      if (!ok) { el.classList.add("refused"); el.querySelector(".pa").innerHTML = `<span class="meta">Refused. The fence stays as it was.</span>`; } };
+    $("[data-yes]", el)?.addEventListener("click", () => go(true)); // golden rule 4: a whole module is granted at once
+    $("[data-no]", el)?.addEventListener("click", () => go(false));
+  });
+}
+// A click asks again instead of a confirm dialog, which VS Code's Simple Browser blocks.
+function twice(btn, what, go) {
+  btn.addEventListener("click", () => {
+    if (btn.dataset.armed) return go();
+    const text = btn.textContent;
+    btn.dataset.armed = "1"; btn.textContent = `Click again to ${what}`;
+    setTimeout(() => { delete btn.dataset.armed; btn.textContent = text; }, 4000);
   });
 }
 
 /* A run's changes, read as functions: what was added, changed or removed, and what each now does. The line diff
    is one click further, for whoever wants it. */
 const SYM = { added: "+", changed: "~", removed: "−" };
-function renderChanges(root, c, r, check, live) {
+function renderChanges(root, c, r, check) {
   const files = c && c.files ? c.files : c ? [...c.added, ...c.modified, ...c.deleted].map((p) => ({ path: p, status: "modified", plus: null, minus: null, outside: c.outside_scope.includes(p), revertible: false })) : [];
   const box = document.createElement("div");
   box.className = "changes";
@@ -1399,7 +1051,7 @@ function renderChanges(root, c, r, check, live) {
     + (files.length ? files.map((f, i) => `<div class="cfile${f.outside ? " out" : ""}">
         <div class="cfh"><span class="mono p" title="${esc(f.path)}">${esc(f.path)}</span>${f.outside ? '<span class="tagout">outside fence</span>' : ""}${f.status !== "modified" ? `<span class="st">${f.status}</span>` : ""}
           <span class="s mono">${f.plus == null ? "N/A" : `<span class="plus">+${f.plus}</span> <span class="minus">−${f.minus}</span>`}</span>
-          ${c.run ? `<button class="btn quiet" type="button" data-diff="${i}" aria-expanded="false" title="Show the line diff">Source</button>` : ""}</div>
+</div>
         ${units(f)}</div>`).join("")
       : `<p class="none" style="padding:8px 10px">No files changed.</p>`);
   const foot = document.createElement("div");
@@ -1407,68 +1059,16 @@ function renderChanges(root, c, r, check, live) {
   const sel = check && check.selected, which = sel ? `${plural(sel.files.length, "test file")} covering the fence${sel.users?.length ? ` and ${plural(sel.users.length, "module")} using it` : ""}` : "the whole suite";
   foot.innerHTML = (check ? `<div class="chk ${check.ok ? "ok" : "bad"}">${check.ok ? "Done check passed" : "Done check failed"} (ran ${which}): ${esc(check.summary || "project tests")}${check.blocked ? `. The agent was sent back ${plural(check.blocked, "time")}.` : "."}</div>` : "")
     + (check && check.untested?.length ? `<div class="chk bad">Changed without a test: <span class="mono">${esc(check.untested.join(", "))}</span></div>` : "")
-    + (c && c.commit_message ? `<div class="commit"><span class="mono">${esc(c.commit_message.split("\n")[0])}</span><button class="btn quiet mini" type="button" data-copy title="Copy the drafted commit message">Copy commit message</button></div>` : "")
-    + (c && c.ripple.length ? `<div class="ripple">Uses the changed code: ${c.ripple.map((m) => `<button type="button" data-go="${esc(m)}">${esc(shown(m))}</button>`).join("")} run the tests to check them.</div>` : "")
-    + (files.length ? `<button class="btn" type="button" data-tests>Run tests</button>` : "")
-    + (rev ? `<button class="btn" type="button" data-rev>Revert this run</button>` : "")
+    + (c && c.ripple.length ? `<div class="ripple">Uses the changed code: <span class="mono">${esc(c.ripple.map(shown).join(", "))}</span>. Its tests show whether they still work.</div>` : "")
+    + (rev ? `<button class="btn quiet" type="button" data-rev>Revert this round</button>` : "")
     + (r ? `<span class="meta">${r.turns ? plural(r.turns, "turn") : ""}${r.cost_usd != null ? ` · $${r.cost_usd.toFixed(3)}` : ""}</span>` : "");
   root.appendChild(box);
   root.appendChild(foot);
-  box.querySelectorAll("[data-diff]").forEach((b) => (b.onclick = () => toggleDiff(b, c.run, files[+b.dataset.diff].path)));
-  foot.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => select(b.dataset.go)));
-  $("[data-tests]", foot)?.addEventListener("click", runTests);
-  $("[data-copy]", foot)?.addEventListener("click", () => navigator.clipboard?.writeText(c.commit_message).then(() => toast("Commit message copied."), () => toast("Copy failed: select the text instead.", false)));
-  $("[data-rev]", foot)?.addEventListener("click", () => revert(root, c.run, null, files.length));
-  $("[data-rev-out]", box)?.addEventListener("click", () => revert(root, c.run, outside.map((f) => f.path), outside.length));
-  // What the changed functions do now. A live run asks for summaries of the new code; a replay shows what is cached.
-  const mods = [...new Set(files.filter((f) => f.funcs && f.funcs.length && f.status !== "deleted").map((f) => moduleOf(f.path)))].filter(mod);
-  mods.forEach((id) => moduleFns(id, live).then((v) => v && v.functions.forEach((u) => {
-    const cell = box.querySelector(`[data-unit="${CSS.escape(u.file + "::" + u.name)}"]`);
-    if (cell && u.purpose) cell.innerHTML = esc(u.purpose) + (u.source === "ai" ? " " + AI_TAG : "");
-  })));
-}
-async function toggleDiff(btn, run, path) {
-  const box = btn.closest(".cfile"), open = $("pre.diff", box);
-  if (open) { open.remove(); btn.setAttribute("aria-expanded", "false"); btn.textContent = "Source"; return; }
-  let diff;
-  try { ({ diff } = await api(`/api/diff?${q(`&run=${encodeURIComponent(run)}&path=${encodeURIComponent(path)}`)}`)); }
-  catch (e) { toast(`Could not load the diff: ${e.message}`, false); return; }
-  const pre = document.createElement("pre");
-  pre.className = "diff";
-  pre.innerHTML = diff.split("\n").map((l) => `<span class="${l.startsWith("@@") ? "hunk" : l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : ""}">${esc(l) || " "}</span>`).join("");
-  box.appendChild(pre);
-  btn.setAttribute("aria-expanded", "true"); btn.textContent = "Hide source";
-}
-
-/* The plan card: a planning run's questions (recommended answer preselected), the functions it means to touch, and
-   how we will know it works. Build resumes the same session, so nothing the planner read is read again. */
-function renderPlan(body, p, prompt, scope) {
-  const card = document.createElement("div");
-  card.className = "plan";
-  const plan = p.plan || {}, fns = Array.isArray(plan.functions) ? plan.functions : [];
-  const pick = p.questions.map((x) => (Number.isInteger(x.recommended) && x.options[x.recommended] !== undefined ? x.recommended : 0));
-  card.innerHTML = `<div class="ph">Plan</div>
-    <p class="goal">${esc(plan.goal || "")}</p>
-    ${p.questions.length ? `<ol class="pq">${p.questions.map((x, qi) => `<li><b>${esc(x.q)}</b><div class="opts" role="radiogroup" aria-label="${esc(x.q)}">${x.options.map((o, oi) => `<button type="button" role="radio" data-q="${qi}" data-o="${oi}" aria-checked="${oi === pick[qi]}">${esc(o)}${oi === x.recommended ? '<small>recommended</small>' : ""}</button>`).join("")}</div></li>`).join("")}</ol>` : `<p class="none">No open questions.</p>`}
-    ${fns.length ? `<div class="pf">${fns.map((f) => `<div class="cf ${f.change === "add" ? "added" : f.change === "remove" ? "removed" : "changed"}"><span class="sym">${SYM[f.change === "add" ? "added" : f.change === "remove" ? "removed" : "changed"]}</span><span class="mono nm">${esc(f.name || "")}</span><span class="fdesc">${esc(f.why || "")} <span class="mono fl">${esc(String(f.file || "").split("/").pop())}</span></span></div>`).join("")}</div>` : ""}
-    <p class="pd"><b>Done when:</b> ${esc(String(plan.done || "N/A").replace(/[.。]\s*$/, ""))}. <span class="sub">Before the agent may finish, the project's tests run; if they fail it is sent back once.</span></p>
-    <div class="pa"><button class="btn primary" type="button" data-build>Build</button><span class="sub">Or write a different instruction below.</span></div>`;
-  body.appendChild(card);
-  card.querySelectorAll("[role=radio]").forEach((b) => (b.onclick = () => {
-    pick[+b.dataset.q] = +b.dataset.o;
-    card.querySelectorAll(`[data-q="${b.dataset.q}"]`).forEach((x) => x.setAttribute("aria-checked", String(x === b)));
-  }));
-  $("[data-build]", card).onclick = () => {
-    if (S.job && !S.job.done) { toast("Wait for the current run to finish.", false); return; }
-    const answers = p.questions.map((x, qi) => `- ${x.q} ${x.options[pick[qi]]}`).join("\n");
-    const text = `Build the plan we agreed on.\nRequest: ${prompt}${answers ? `\nAnswers:\n${answers}` : ""}\nDone when: ${plan.done || "the tests pass"}`;
-    document.querySelectorAll(".plan [data-build]").forEach((x) => (x.disabled = true));
-    startRun(text, scope, false, "build");
-  };
+  $("[data-rev]", foot) && twice($("[data-rev]", foot), `revert ${plural(files.length, "file")}`, () => revert(root, c.run, null, files.length));
+  $("[data-rev-out]", box) && twice($("[data-rev-out]", box), `revert ${plural(outside.length, "file")}`, () => revert(root, c.run, outside.map((f) => f.path), outside.length));
 }
 async function revert(root, run, paths, n) {
   if (S.job && !S.job.done) { toast("Wait for the current run to finish.", false); return; }
-  if (!confirm(`Revert ${plural(n, "file")} to how they were before this run? Files edited again since then are left alone.`)) return;
   let res;
   try { res = await api(`/api/revert?${q()}`, { run, paths }); }
   catch (e) { toast(`Revert failed: ${e.message}`, false); return; }
@@ -1479,7 +1079,6 @@ async function revert(root, run, paths, n) {
   S.marks = { changed: new Set(), ripple: new Set(), stats: {} };
   await loadGraph(false);
   toast(`Reverted ${plural(res.reverted.length, "file")}${res.skipped.length ? `, left ${res.skipped.length} alone` : ""}.`);
-  if (S.view === "history") renderHistory();
 }
 
 const fwd = (s) => String(s || "").replace(/\\/g, "/");
@@ -1523,52 +1122,6 @@ function md(src) {
   return out.join("").replace(/\u0000(\d+)\u0000/g, (_, i) => `<pre><code>${esc(blocks[+i].replace(/\n$/, ""))}</code></pre>`);
 }
 
-/* ---------------- composer & runs ---------------- */
-function autosize() { const t = $("#prompt"); t.style.height = "auto"; t.style.height = Math.min(200, Math.max(54, t.scrollHeight)) + "px"; syncSend(); }
-// Golden rule 7: the pipeline routes by what the fence touches. A task inside one role that nothing outside depends
-// on through copies, HTTP or shared history takes the fast path (build at once, lean rule, tests). Anything else takes
-// the full path (plan first; questions only where the task is unclear), and the reasons are shown. One click switches.
-function route(scope = [...S.scope]) {
-  if (!scope.length || S.readOnly) return null;
-  const fr = fileRoles(), sc = scope.map((s) => s.split("::")[0]);
-  const mine = new Set(Object.keys(S.full.files).filter((f) => sc.some((s) => f === s || f.startsWith(s + "/") || s === "." && !f.includes("/"))));
-  const rids = new Set([...mine].map((f) => fr[f]).filter(Boolean)), links = S.roles?.links || [], why = [];
-  if (rids.size > 1) why.push(`spans ${rids.size} roles`);
-  const copies = new Set(links.filter((l) => l.kind === "copy" && mine.has(l.file) !== mine.has(l.target_file)).map((l) => (mine.has(l.file) ? l.file : l.target_file)));
-  if (copies.size) why.push(`${plural(copies.size, "file")} here ${copies.size === 1 ? "has a copy" : "have copies"} outside the fence`);
-  const http = new Set(links.filter((l) => l.kind === "http" && mine.has(l.target_file) && !mine.has(l.file)).map((l) => l.name));
-  if (http.size) why.push(`${plural(http.size, "HTTP route")} served here ${http.size === 1 ? "is" : "are"} called from outside`);
-  const co = (S.roles?.cochange || []).filter(([a, b, n]) => n >= 5 && rids.has(a) !== rids.has(b)).sort((x, y) => y[2] - x[2]);
-  if (co.length) why.push(`usually changes together with ${co.slice(0, 2).map(([a, b]) => rname(rids.has(a) ? b : a)).join(" and ")}`);
-  const full = S.forceRoute ? S.forceRoute === "full" : why.length > 0;
-  return { full, why };
-}
-function renderRoute() {
-  const r = route(), el = $("#route");
-  el.hidden = !r;
-  if (!r) return;
-  el.className = `route ${r.full ? "full" : "fast"}`;
-  el.innerHTML = r.full ? `<b>Full path</b>: plan first${r.why.length ? `, because the fence ${esc(r.why.join("; "))}` : " (your choice)"}.`
-    : `<b>Fast path</b>: build now with the lean rule and the tests${r.why.length ? ` (your choice; the fence ${esc(r.why.join("; "))})` : ": one role, nothing outside depends on it"}.`;
-}
-function syncSend() {
-  const running = S.job && !S.job.done;
-  const b = $("#send"), r = route();
-  renderRoute();
-  $("#composer").classList.toggle("handing", !!running && S.job.phase === "hand"); // your agent has the task: no second prompt here
-  b.classList.toggle("stop", !!running);
-  b.textContent = running ? (S.job.phase === "hand" ? "Review changes" : "Stop") : S.readOnly ? "Explain" : r && !r.full ? "Build" : "Plan";
-  b.disabled = !running && (!$("#prompt").value.trim() || !S.claude);
-}
-
-// Fence coding: an edit starts as a read-only plan you answer and approve; Build then edits inside the fence.
-async function send() {
-  if (S.job && !S.job.done) { await api(S.job.phase === "hand" ? `/api/hand/finish?${q()}` : "/api/cancel", { job: S.job.id }).catch(() => {}); return; }
-  const prompt = $("#prompt").value.trim();
-  if (!prompt || !S.scope.size || !S.claude) return;
-  const r = route();
-  if (await startRun(prompt, [...S.scope], S.readOnly, S.readOnly ? null : r && !r.full ? "build" : "plan")) { $("#prompt").value = ""; autosize(); }
-}
 // The default way to work (golden rules 4 and 5): your own agent does the task. modfence fences the box for every agent
 // started in the project, copies the task with the fence note, marks the boxes your agent changes as it goes, and
 // reviews the result like a run when you say it is done.
@@ -1579,7 +1132,7 @@ async function startHand(prompt, scope, label) {
   let copied = true;
   try { await navigator.clipboard.writeText(res.line); } catch { copied = false; }
   showHand(res, copied);
-  toast(copied ? "Fence on and a line copied: paste it into your agent's chat, then type the task." : "Fence on. Copy the line from the panel.");
+  toast(copied ? "Fence on and a line copied: paste it into your agent's chat, then type the task." : "Fence on. Click the line in the side bar to copy it.");
 }
 async function restoreHand() { // a hand-off outlives a reload: the agent works in a terminal for minutes
   let res;
@@ -1592,22 +1145,37 @@ function showHand(res, copied) {
   const { prompt, scope, label } = res;
   const job = { id: res.job, prompt, scope, readOnly: false, phase: "hand", label, key: [...scope].sort().join("+"), events: [], done: false, at: res.at || Date.now() / 1000, asked: new Set() };
   S.job = job;
+  S.scope = new Set(scope); S.fenceSet = new Set(filesOf(scope)); renderHeader(); // the log is keyed by the fence the server armed
   S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; paintSelection();
-  setTab("talk");
   job.view = newRun(prompt, scope, job.at, false, "hand");
   job.view.job = job;
   const w = document.createElement("div");
   w.className = "handwait";
-  w.innerHTML = `<p><b>Fence on: ${esc(label)}.</b> ${copied ? "A line is copied" : "Copy this line"}: paste it into your agent's chat and type the task after it. The agent reads the fence from <span class="mono">${esc(res.file)}</span>; its edits outside the box are blocked.</p>`
-    + `<textarea class="handtext line" readonly rows="2">${esc(res.line)}</textarea>`
-    + `<p class="meta" data-live>Watching for changes…</p><div class="pa"><button class="btn primary" type="button" data-review>Review changes</button><button class="btn quiet" type="button" data-again>Copy the line again</button></div>`;
+  w.innerHTML = `<p><b>Fence on: ${esc(label)}.</b> ${copied ? "This line is copied" : "Click the line to copy it"}: paste it into your agent's chat and type the task after it. Edits outside the box are blocked.</p>`
+    + `<textarea class="handtext line" readonly rows="2" title="Click to copy">${esc(res.line)}</textarea>`
+    + `<p class="meta" data-live>Watching for changes…</p><div class="pa"><button class="btn primary" type="button" data-review>Review changes</button></div>`;
   job.view.root.appendChild(w);
   job.wait = w;
-  const poll = setInterval(async () => {
-    if (job.done) return clearInterval(poll);
+  $(".handtext", w).onclick = (e) => { // execCommand works where the async clipboard is not allowed (an editor's web view)
+    e.target.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch {}
+    toast(ok ? "Line copied." : "Line selected: press Ctrl+C.");
+  };
+  const answer = async (el, paths, ok) => { // golden rule 4: widen the fence for the agent already working, or not
+    try {
+      const r = await api(`/api/hand/answer?${q()}`, { job: job.id, paths, ok });
+      if (!ok) return;
+      job.scope = r.scope; job.key = [...r.scope].sort().join("+"); S.scope = new Set(r.scope); S.fenceSet = new Set(filesOf(r.scope)); renderHeader(); paintSelection();
+      el.querySelector(".pa").innerHTML = `<span class="meta">Allowed. Tell your agent: <b>approved, continue</b>.</span>`;
+    } catch (e) { toast(e.message, false); }
+  };
+  job.poll = setInterval(async () => {
+    if (job.done || job.reviewing) return clearInterval(job.poll);
     try {
       const s = await api(`/api/hand/status?${q("&job=" + job.id)}`);
-      $("[data-live]", w).textContent = s.changed.length ? `Your agent changed ${plural(s.changed.length, "file")} so far: ${s.changed.slice(0, 4).join(", ")}${s.changed.length > 4 ? " …" : ""}` : "Watching for changes… none yet.";
+      if (job.reviewing) return;
+      $("[data-live]", w) && ($("[data-live]", w).textContent = s.changed.length ? `Your agent changed ${plural(s.changed.length, "file")} so far: ${s.changed.slice(0, 4).join(", ")}${s.changed.length > 4 ? " …" : ""}` : "Watching for changes… none yet.");
       S.marks = { changed: new Set(s.modules), ripple: new Set(), stats: {} }; paintSelection();
       const fresh = s.asks.filter((p) => !job.asked.has(p));
       if (fresh.length) {
@@ -1618,67 +1186,43 @@ function showHand(res, copied) {
       }
     } catch {}
   }, 4000);
-  const answer = async (el, paths, ok) => { // golden rule 4: widen the fence for the agent already working, or not
-    try {
-      const r = await api(`/api/hand/answer?${q()}`, { job: job.id, paths, ok });
-      if (!ok) return;
-      job.scope = r.scope; job.key = [...r.scope].sort().join("+"); S.scope = new Set(r.scope); renderFence(); renderHeader(); paintSelection();
-      el.querySelector(".pa").innerHTML = `<span class="meta">Allowed. Tell your agent: <b>approved, continue</b>.</span>`;
-    } catch (e) { toast(e.message, false); }
+  $("[data-review]", w).onclick = async (e) => { // the review takes a few seconds on a big project: say so
+    clearInterval(job.poll); job.reviewing = true; e.currentTarget.disabled = true; // a poll in flight must not overwrite this
+    $("[data-live]", w).textContent = "Reviewing: the changed functions, the names other modules use, the map…";
+    const btn = e.currentTarget;
+    try { await api(`/api/hand/finish?${q()}`, { job: job.id }); } catch (err) { toast(err.message, false); btn.disabled = false; job.reviewing = false; }
   };
-  $("[data-review]", w).onclick = async () => { clearInterval(poll); w.remove(); try { await api(`/api/hand/finish?${q()}`, { job: job.id }); } catch (e) { toast(e.message, false); } };
-  $("[data-again]", w).onclick = () => navigator.clipboard.writeText(res.line).then(() => toast("Copied."), () => toast("Copy failed.", false));
-  syncSend(); showRunbar(); listen(job);
-}
-async function startRun(prompt, scope, readOnly, phase, approve) {
-  let res;
-  try { res = approve ? await api(`/api/approve?${q()}`, approve) : await api(`/api/ask?${q()}`, { prompt, scope, read_only: readOnly, phase, unsealed: !!S.unsealed }); }
-  catch (e) { toast(e.message, false); return false; }
-  if (phase !== "plan") { S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; paintSelection(); }
-  const key = [...scope].sort().join("+");
-  if (key !== scopeKey()) { S.scope = new Set(scope); afterFenceChange(); }
-  const job = { id: res.job, prompt, scope, readOnly, phase, key, events: [], done: false, at: Date.now() / 1000 };
-  S.job = job;
-  setTab("talk");
-  job.view = newRun(prompt, scope, job.at, readOnly, phase);
-  job.view.job = job;
-  syncSend(); showRunbar();
-  listen(job);
-  return true;
+  showRunbar(); listen(job);
 }
 function listen(job) {
   const es = new EventSource(`/api/events?job=${job.id}&from=${job.events.length}`);
   es.onmessage = (m) => {
     const e = JSON.parse(m.data);
+    job.tries = 0;
     if (e.i < job.events.length) return;
     job.events.push(e);
     if (job.key === scopeKey() && job.view && job.view.root.isConnected) job.view.add(e);
     if (e.kind === "tool" && e.edit) markEditing(e.detail);
     if (e.kind === "changes") onChanges(e);
     if (e.kind === "done") {
-      job.done = true; es.close(); syncSend(); showRunbar();
-      if (job.key === scopeKey()) $("#tcount").textContent = String(Number($("#tcount").textContent || 0) + 1);
+      job.done = true; es.close(); clearInterval(job.poll); job.wait?.remove(); job.wait = null; showRunbar();
       const r = job.events.find((x) => x.kind === "result");
-      const planned = job.events.some((x) => x.kind === "plan");
-      toast(!(r && r.ok) ? "Run stopped." : planned ? "Plan ready. Answer the questions, then Build." : job.phase === "plan" ? "The planner did not return a plan; read its reply." : "Run finished. Review the changed functions in the Runs tab.", !!(r && r.ok));
+      toast(r && r.ok ? "Review ready in the side bar." : "Stopped.", !!(r && r.ok));
     }
   };
-  es.onerror = () => { es.close(); if (!job.done) setTimeout(() => listen(job), 800); };
+  es.onerror = () => { es.close(); job.tries = (job.tries || 0) + 1; if (!job.done && job.tries < 30) setTimeout(() => listen(job), Math.min(10000, 800 * job.tries)); };
 }
 let runTimer = 0;
-function showRunbar() {
+function showRunbar() { // while your agent works: one line at the top; a click shows the fence and its Review button
   const bar = $("#runbar"), job = S.job, on = !!(job && !job.done);
   bar.hidden = !on;
   document.body.classList.toggle("running", on);
   clearInterval(runTimer);
   if (!on) return;
+  bar.onclick = () => { if (!document.body.classList.contains("panel-open")) openFence(job.scope, job.label, ""); };
   const draw = () => {
-    const secs = Math.round(Date.now() / 1000 - job.at);
-    const where = job.label || S.fenceLabel || (job.scope.length > 2 ? plural(job.scope.length, "file") : job.scope.map(shown).join(", "));
-    const what = job.phase === "hand" ? "Your agent is working, fenced to" : job.phase === "plan" ? "Agent planning · read only ·" : job.readOnly ? "Agent running · read only ·" : "Agent building, fenced to";
-    bar.innerHTML = `<span class="dot" aria-hidden="true"></span><span>${what} <b>${esc(where)}</b> · ${secs}s</span><button class="btn" type="button" id="rb-open">Show</button><button class="btn" type="button" id="rb-stop">${job.phase === "hand" ? "Review changes" : "Stop"}</button>`;
-    $("#rb-open").onclick = () => { select(job.scope[0]); S.scope = new Set(job.scope); afterFenceChange(); setTab("talk"); };
-    $("#rb-stop").onclick = () => api(job.phase === "hand" ? `/api/hand/finish?${q()}` : "/api/cancel", { job: job.id }).catch(() => {});
+    const secs = Math.round(Date.now() / 1000 - job.at), open = document.body.classList.contains("panel-open");
+    bar.innerHTML = `<span class="dot" aria-hidden="true"></span><span>Your agent is fenced to <b>${esc(job.label || "")}</b> · ${secs < 120 ? secs + "s" : Math.round(secs / 60) + " min"}${open ? "" : " · click to review"}</span>`;
   };
   draw();
   runTimer = setInterval(draw, 1000);
@@ -1706,64 +1250,6 @@ function markRun(c) { // paint a run's changed modules (green dots, +n −m) and
   paintSelection(); renderCrumbs();
 }
 
-/* ---------------- sheet: file, diff, help, output ---------------- */
-let sheetReturn = null;
-// Golden rule 5: many agents, one worktree each, reviewed as modules: each one's receipt, and its modules on the map.
-async function openFleet() {
-  $("#stitle").textContent = "Agents";
-  $("#scode").innerHTML = `<p class="none">Reading every worktree…</p>`;
-  showSheet(true);
-  let res;
-  try { res = await api(`/api/fleet?${q()}`); } catch (e) { $("#scode").innerHTML = `<p class="none">${esc(e.message)}</p>`; return; }
-  $("#scode").innerHTML = res.agents.map((a, i) => `<div class="agent"><p><b>${esc(a.branch)}</b> <span class="meta">${esc(a.worktree)}</span> `
-    + `${a.ok ? "OK" : `<b class="bad">${esc(a.problems.join(", ") || "check")}</b>`} <button class="btn" type="button" data-show="${i}">Show on map</button></p>`
-    + `<pre class="mono">${esc(a.text)}</pre></div>`).join("") || `<p class="none">No worktrees.</p>`;
-  $("#scode").querySelectorAll("[data-show]").forEach((b) => (b.onclick = () => {
-    const names = res.agents[b.dataset.show].parts, ids = S.graph.modules.filter((m) => names.includes(m.label || m.id) || names.includes(m.id)).map((m) => m.id);
-    S.marks = { changed: new Set(ids), ripple: new Set(), stats: {} }; paintSelection(); showSheet(false);
-  }));
-}
-function showSheet(on) {
-  $("#scrim").classList.toggle("show", on);
-  $("#sheet").hidden = !on;
-  document.body.classList.toggle("sheet-open", on);
-  if (on) { sheetReturn = document.activeElement; $("#sclose").focus(); }
-  else if (sheetReturn && sheetReturn.isConnected) sheetReturn.focus();
-}
-async function openFile(path, lines = []) {
-  let text;
-  try { ({ text } = await api(`/api/file?${q("&path=" + encodeURIComponent(path))}`)); }
-  catch (e) { toast(e.message, false); return; }
-  const hl = new Set(lines);
-  $("#stitle").textContent = path;
-  $("#scode").innerHTML = `<div class="code">${text.split("\n").map((l, i) => `<div class="ln${hl.has(i + 1) ? " hl" : ""}" id="L${i + 1}"><b>${i + 1}</b>${esc(l) || " "}</div>`).join("")}</div>`;
-  showSheet(true);
-  if (lines.length) requestAnimationFrame(() => $(`#L${lines[0]}`)?.scrollIntoView({ block: "center" }));
-}
-function showText(title, text) { $("#stitle").textContent = title; $("#scode").innerHTML = `<pre class="out">${esc(text)}</pre>`; showSheet(true); }
-function showHelp() {
-  $("#stitle").textContent = "How modfence works";
-  $("#scode").innerHTML = `<div class="help">
-    <p>modfence is for fence coding: working with an AI agent on a codebase you read as modules and functions, not lines. The agent is your own Claude Code; modfence decides what it may touch and shows you, function by function, what it did.</p>
-    <h3>An edit in five steps</h3>
-    <ol><li><b>Pick a module.</b> Click it in any view, or press <kbd>/</kbd> and type its name. Its functions are listed with what each one does.</li>
-      <li><b>Set the fence.</b> The selected module is editable. <kbd>Shift</kbd>-click adds more. Switch to <i>Read only</i> for explanations, with no edits at all.</li>
-      <li><b>Say what you want.</b> Click a function to mention it. Press <i>Plan</i>: the agent reads the project, asks what it needs to decide, and lists the functions it will touch.</li>
-      <li><b>Answer and build.</b> Pick the answers (its recommendation is preselected) and press <i>Build</i>. A hook blocks every edit outside the fence; before the agent may finish, the project's tests run, and if they fail it is sent back once.</li>
-      <li><b>Review.</b> Each run lists the functions added, changed and removed, and what they now do. The line diff is behind <i>Source</i>. Run the tests or revert the run.</li></ol>
-    <h3>Inks on the screen</h3>
-    <dl><dt>fence</dt><dd>The modules the agent may edit (pink, hatched).</dd>
-      <dt>uses</dt><dd>Modules this one takes functions from (blue). Hover an arrow to see which names.</dd>
-      <dt>used by</dt><dd>Modules that take functions from this one (orange). Changing those functions can break them.</dd>
-      <dt>changed</dt><dd>Changed by the last run (green dots).</dd>
-      <dt>uses changed code</dt><dd>After a run: modules that use what changed (yellow, dashed). Run the tests.</dd>
-      <dt>AI</dt><dd>A one-line description written by a small model because the author wrote no docstring. Cached until the file changes.</dd>
-      <dt>layers</dt><dd>Modules that import others sit above the ones they import. The bottom layer imports nothing in the project.</dd></dl>
-    <h3>Keys</h3>
-    <dl><dt>/</dt><dd>Find a module</dd><dt>1 2</dt><dd>Modules, History</dd><dt>${IS_MAC ? "⌘" : "Ctrl"} Enter</dt><dd>Run the instruction</dd><dt>Esc</dt><dd>Close the panel or this sheet</dd><dt>?</dt><dd>This help</dd></dl></div>`;
-  showSheet(true);
-}
-
 /* ---------------- tests, toast, theme, search, resize ---------------- */
 let toastT = 0;
 function toast(text, ok = true, ms = 4200, onclick) {
@@ -1775,47 +1261,30 @@ function toast(text, ok = true, ms = 4200, onclick) {
   clearTimeout(toastT);
   toastT = setTimeout(() => t.classList.remove("show"), ms);
 }
-async function runTests() {
-  const b = $("#tests"), lbl = $(".lbl", b);
-  b.classList.remove("ok", "bad"); b.disabled = true; lbl.textContent = "Testing…";
-  try {
-    const r = await api(`/api/tests?${q()}`, {});
-    const ran = (r.summary.match(/Ran (\d+)/) || r.summary.match(/(\d+) passed/) || [])[1];
-    b.classList.add(r.ok ? "ok" : r.ok === false ? "bad" : "");
-    lbl.textContent = r.ok === null ? "No tests" : `Tests: ${ran || "?"} ${r.ok ? "passed" : "· failing"}`;
-    toast(`${r.summary || "No tests found"}. Show output`, r.ok !== false, 8000, () => showText("Test output", r.output || r.summary));
-  } catch (e) { toast(e.message, false); lbl.textContent = "Run tests"; }
-  b.disabled = false;
-}
-function applyTheme(mode) {
-  if (mode === "auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.dataset.theme = mode;
-  store.set("modfence.theme", mode);
-  $("#theme .lbl").textContent = { auto: "Auto", light: "Light", dark: "Dark" }[mode];
-  $("#theme").setAttribute("aria-label", `Appearance: ${mode}. Click to change.`);
-}
 function wireSearch() {
   const input = $("#find"), list = $("#findlist");
   let hits = [], at = 0;
   const close = () => { list.hidden = true; input.setAttribute("aria-expanded", "false"); };
   const draw = () => {
     const t = input.value.trim().toLowerCase();
-    hits = S.full.modules.filter((m) => !t || m.id.toLowerCase().includes(t) || mdoc(m).toLowerCase().includes(t)).slice(0, 12);
+    if (!S.graph) return; // a big project's first scan is still running
+    hits = S.graph.modules.filter((m) => !t || boxName(m).toLowerCase().includes(t) || (m.doc || "").toLowerCase().includes(t)).slice(0, 12); // the boxes on screen
     at = Math.min(at, Math.max(0, hits.length - 1));
-    list.innerHTML = hits.map((m, i) => `<li role="option" id="fo${i}" aria-selected="${i === at}" data-id="${esc(m.id)}">${esc(shown(m.id))}<span>${m.lines} ln</span></li>`).join("") || `<li aria-disabled="true">No module matches</li>`;
+    list.innerHTML = hits.map((m, i) => `<li role="option" id="fo${i}" aria-selected="${i === at}" data-id="${esc(m.id)}">${esc(boxName(m))}<span>${m.lines} ln</span></li>`).join("") || `<li aria-disabled="true">No box matches</li>`;
     list.hidden = false; input.setAttribute("aria-expanded", "true");
     input.setAttribute("aria-activedescendant", hits.length ? `fo${at}` : "");
   };
-  const pick = (id) => { close(); input.value = ""; select(id); };
+  const choose = (id) => { close(); input.value = ""; pick(id); revealNode(id); };
   input.addEventListener("input", () => { at = 0; draw(); });
   input.addEventListener("focus", draw);
   input.addEventListener("blur", () => setTimeout(close, 150));
   input.addEventListener("keydown", (e) => {
     if (e.key === "ArrowDown") { at = Math.min(hits.length - 1, at + 1); draw(); e.preventDefault(); }
     else if (e.key === "ArrowUp") { at = Math.max(0, at - 1); draw(); e.preventDefault(); }
-    else if (e.key === "Enter" && hits[at]) { pick(hits[at].id); e.preventDefault(); }
+    else if (e.key === "Enter" && hits[at]) { choose(hits[at].id); e.preventDefault(); }
     else if (e.key === "Escape") { close(); input.blur(); }
   });
-  list.addEventListener("mousedown", (e) => { const li = e.target.closest("li[data-id]"); if (li) pick(li.dataset.id); });
+  list.addEventListener("mousedown", (e) => { const li = e.target.closest("li[data-id]"); if (li) choose(li.dataset.id); });
 }
 function wireResize() {
   const grip = $("#grip");
@@ -1836,57 +1305,53 @@ function wireResize() {
 
 /* ---------------- wiring ---------------- */
 const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || document.activeElement?.isContentEditable;
+async function switchProject(p) {
+  S.p = p; $("#picker").value = p; store.set("modfence.project", p); location.hash = `p=${p}`;
+  if (S.job) { clearInterval(S.job.poll); S.job = null; showRunbar(); } // found again by restoreHand when you come back
+  unpick(); closePanel(); S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; S.userCam = false; S.focus = ""; S.level = null; S.role = null; S.area = null; S.proposed = false; S.proposedAreas = false;
+  await loadGraph(true);
+}
+// No refresh button: the map reads the project again when you come back to it (after editing MODULES.md, say), and
+// redraws only if something changed, so a card you just opened stays open.
+async function rescan() {
+  if (document.hidden || !S.full || Date.now() - (S.loadedAt || 0) < 3000) return;
+  S.loadedAt = Date.now();
+  try {
+    const [g, r] = await Promise.all([api(`/api/graph?${q()}`), api(`/api/roles?${q()}`).catch(() => null)]);
+    if (JSON.stringify(g) + JSON.stringify(r) === S.sig) return;
+  } catch { return; }
+  await loadGraph(false);
+}
 function wire() {
-  wireCanvas(); wireViews(); wireSearch(); wireResize();
+  wireCanvas(); wireSearch(); wireResize();
   $("#panel").inert = true;
-  $("#picker").onchange = async (e) => {
-    if (e.target.value === "add") {
-      const path = prompt("Folder of the project to open (its full path):");
-      if (!path) { e.target.value = S.p; return; }
-      try { S.p = (await api(`/api/projects/add`, { path })).i; } catch (err) { toast(err.message, false); e.target.value = S.p; return; }
-      S.projects = (await api("/api/projects")).projects; fillPicker(); e.target.value = S.p;
-    } else S.p = Number(e.target.value);
-    store.set("modfence.project", S.p); location.hash = `p=${S.p}`;
-    closePanel(); S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; S.userCam = false; S.focus = ""; S.level = null; S.role = null; S.area = null; S.proposed = false; S.proposedAreas = false;
-    const b = $("#tests"); b.classList.remove("ok", "bad"); $(".lbl", b).textContent = "Run tests";
-    S.fleet = 0;
-    await loadGraph(true);
-    api(`/api/fleet?${q("&count=1")}`).then((r) => { S.fleet = r.count; renderCrumbs(); }).catch(() => {});
+  $("#picker").onchange = (e) => {
+    if (e.target.value !== "add") return switchProject(Number(e.target.value));
+    e.target.value = S.p; e.target.hidden = true; // another folder on the same port: typed here, not in a prompt dialog
+    const i = $("#addpath"); i.hidden = false; i.value = ""; i.focus();
   };
-  $("#refresh").onclick = () => loadGraph(false).then(() => toast("Project re-scanned."));
-  $("#tests").onclick = runTests;
-  $("#help").onclick = showHelp;
-  $("#theme").onclick = () => { const order = ["auto", "light", "dark"], cur = store.get("modfence.theme") || "auto"; applyTheme(order[(order.indexOf(cur) + 1) % 3]); };
+  const addpath = $("#addpath"), done = () => { addpath.hidden = true; $("#picker").hidden = false; };
+  addpath.addEventListener("keydown", async (e) => {
+    if (e.key === "Escape") return done();
+    if (e.key !== "Enter" || !addpath.value.trim()) return;
+    try {
+      const { i } = await api(`/api/projects/add`, { path: addpath.value.trim() });
+      S.projects = (await api("/api/projects")).projects; fillPicker(); done(); await switchProject(i);
+    } catch (err) { toast(err.message, false); }
+  });
+  addpath.addEventListener("blur", () => setTimeout(done, 200));
   $("#close").onclick = closePanel;
-  $("#seg").addEventListener("click", (e) => { const b = e.target.closest("[data-tab]"); if (b) setTab(b.dataset.tab, true); });
-  $("#seg").addEventListener("keydown", (e) => { if (e.key === "ArrowRight" || e.key === "ArrowLeft") { setTab(S.tab === "over" ? "talk" : "over", true); e.preventDefault(); } });
-  $("#prompt").addEventListener("input", autosize);
-  $("#route").addEventListener("click", () => { const r = route(); S.forceRoute = r && r.full ? "fast" : "full"; syncSend(); });
-  $("#prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } });
-  $("#send").onclick = send;
-  $("#forget").onclick = async () => {
-    if (!S.scope.size || (S.job && !S.job.done)) return;
-    if (!confirm(`Clear the run history and the agent's session for the fence ${[...S.scope].map(shown).join(", ")}? Files are not touched.`)) return;
-    await api(`/api/forget?${q()}`, { scope: [...S.scope] }).catch(() => {});
-    loadTalk(); toast("Run history cleared for this fence.");
-  };
-  $("#sclose").onclick = () => showSheet(false);
-  $("#scrim").onclick = () => showSheet(false);
+  addEventListener("focus", rescan);
+  document.addEventListener("visibilitychange", rescan);
   addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
-      if (!$("#sheet").hidden) showSheet(false);
+      if (S.picked) unpick();
       else if (S.selected && !typing()) closePanel();
-      return;
-    }
-    if (!$("#sheet").hidden) {
-      if (e.key === "Tab") { e.preventDefault(); $("#sclose").focus(); } // the sheet has one control: keep focus there
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); $("#find").focus(); $("#find").select(); return; }
     if (typing() || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === "/") { e.preventDefault(); $("#find").focus(); }
-    else if (e.key === "?") { e.preventDefault(); showHelp(); }
-    else if ("12".includes(e.key) && e.key.length === 1) setView(VIEWS[+e.key - 1].id);
   });
 }
 

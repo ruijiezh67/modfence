@@ -234,6 +234,9 @@ def make_handler(app, port):
                     scope = [s for s in b.get("scope") or [] if isinstance(s, str) and s]
                     if not scope:
                         return self.send_json({"error": "need a box"}, 400)
+                    old = app.hands.get(root)
+                    if old is not None and not old.done:  # one fence at a time: a second would orphan the first
+                        return self.send_json({"error": f"Your agent is still fenced to {old.label}: review its changes first."}, 409)
                     job = runner.Handoff(root, scope, prompt, analyze.analyze(root), app.claude, seal=not b.get("unsealed")).start()
                     job.label = str(b.get("label") or ", ".join(job.scope))
                     app.jobs[job.id] = app.hands[root] = job  # one open hand-off per project, found again after a reload

@@ -250,7 +250,8 @@ body:not([data-view="graph"]) .zoom { display: none; }
   position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 9; padding: 6px 12px; border-radius: 6px;
   background: var(--surface); border: 1px solid var(--line); color: var(--text-2); font-size: 12.5px; white-space: nowrap;
 }
-body.panel-open .hint, body:not([data-view="graph"]) .hint, .pick:not([hidden]) ~ .hint { display: none; }
+body.panel-open .hint, .pick:not([hidden]) ~ .hint { display: none; }
+.addpath { width: min(420px, 40vw); }
 /* the picked box: a docked side bar on the right, full height, scrolls on its own */
 .pick { position: absolute; top: 0; right: 0; bottom: 0; z-index: 12; width: min(360px, 100%); overflow-y: auto; overscroll-behavior: contain;
   padding: 14px 16px 20px; background: var(--surface); border-left: 1.5px solid var(--ink); box-shadow: -4px 0 0 var(--fence); }

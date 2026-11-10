@@ -496,7 +496,6 @@ class Handoff(Job):
         for p in self.before:  # as in a run: the fence's own files stay revertible in a big project
             if p not in self.before_bytes and _in_scope(p, self.editable, self.root):
                 self.before_bytes[p] = _read_or_none(os.path.join(self.root, p))
-        self.emit("status", text="Fence on. Paste the line into your agent's chat and type the task; review the changes when it is done.")
         return self
 
     def prompt_text(self):

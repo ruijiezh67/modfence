@@ -15,19 +15,13 @@
   </div>
   <label class="sr" for="picker">Project</label>
   <select id="picker" class="picker"></select>
+  <input id="addpath" class="picker addpath" hidden placeholder="Full path of a project folder, then Enter" aria-label="Open another project">
   <span id="stats" class="stats mono"></span>
-  <nav class="tabs" id="viewseg" aria-label="View"></nav>
   <div class="search" role="search">
     <label class="sr" for="find">Find a module</label>
     <input id="find" type="search" autocomplete="off" placeholder="Find module" aria-controls="findlist" aria-expanded="false" aria-autocomplete="list">
     <kbd>/</kbd>
     <ul id="findlist" class="findlist" role="listbox" hidden></ul>
-  </div>
-  <div class="actions">
-    <button id="tests" class="btn" type="button" title="Run the project's tests (unittest)"><span class="lbl">Run tests</span></button>
-    <button id="refresh" class="btn icon" type="button" title="Re-scan the project" aria-label="Re-scan the project"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M16 10a6 6 0 1 1-1.8-4.3"/><path d="M16 3.5V7h-3.5"/></svg></button>
-    <button id="theme" class="btn" type="button" aria-label="Appearance"><span class="lbl">Auto</span></button>
-    <button id="help" class="btn icon" type="button" aria-label="How modfence works" title="How modfence works (?)"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M8 8a2 2 0 1 1 2.8 1.8c-.5.3-.8.7-.8 1.2v.5"/><circle cx="10" cy="14.2" r=".4" fill="currentColor"/></svg></button>
   </div>
 </header>
 
@@ -49,14 +43,9 @@
   <div class="alt" id="alt" hidden></div>
 
   <div class="legend" id="legend" aria-label="Legend"></div>
-  <div class="zoom" id="zoom">
-    <button class="btn icon" id="zin" type="button" aria-label="Zoom in" title="Zoom in"><svg viewBox="0 0 20 20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M10 5v10M5 10h10"/></svg></button>
-    <button class="btn icon" id="zout" type="button" aria-label="Zoom out" title="Zoom out"><svg viewBox="0 0 20 20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 10h10"/></svg></button>
-    <button class="btn icon" id="zfit" type="button" aria-label="Fit to screen" title="Fit to screen (double-click the canvas)"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 8V4h4M16 8V4h-4M4 12v4h4M16 12v4h-4"/></svg></button>
-  </div>
   <nav class="crumbs" id="crumbs" aria-label="Open folder" hidden></nav>
   <div class="pick" id="pick" role="dialog" aria-label="Selected box" hidden></div>
-  <div class="hint" id="hint">Click a box. <kbd>Shift</kbd>-click: add to fence. <kbd>?</kbd> help</div>
+  <div class="hint" id="hint">Click a box. Drag to move, scroll to zoom, double-click to fit. <kbd>/</kbd> find</div>
 
   <aside class="panel" id="panel" aria-label="Module" inert>
     <div class="grip" id="grip" role="separator" aria-orientation="vertical" aria-label="Resize panel" tabindex="0"></div>
@@ -68,37 +57,15 @@
       </div>
       <button class="btn icon" id="close" type="button" aria-label="Close panel (Esc)" title="Close (Esc)"><svg viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button>
     </div>
-    <div class="ptabs" id="seg" role="tablist" aria-label="Panel">
-      <button role="tab" id="tab-over" aria-controls="v-over" aria-selected="true" data-tab="over">Overview</button>
-      <button role="tab" id="tab-talk" aria-controls="v-talk" aria-selected="false" tabindex="-1" data-tab="talk">Runs <span class="count" id="tcount"></span></button>
-    </div>
     <div class="pbody" id="pbody">
-      <section class="view" id="v-over" role="tabpanel" aria-labelledby="tab-over"></section>
-      <section class="view" id="v-talk" role="tabpanel" aria-labelledby="tab-talk" aria-live="polite" hidden></section>
-    </div>
-    <div class="composer" id="composer">
-      <div class="fence" id="fence"></div>
-      <label class="clabel" for="prompt">Instruction</label>
-      <textarea id="prompt" rows="2" placeholder="Ask, or say what to change"></textarea>
-      <button type="button" class="route" id="route" hidden title="Click to switch between the fast and the full path"></button>
-      <div class="crow">
-        <span class="chint" id="chint"><kbd>Ctrl</kbd> <kbd>Enter</kbd> to send</span>
-        <button class="btn quiet" id="forget" type="button" title="Forget this fence's agent session and run history">Clear runs</button>
-        <button class="btn primary" id="send" type="button" disabled>Run</button>
-      </div>
+      <section class="view" id="v-talk" aria-live="polite"></section>
     </div>
   </aside>
 </main>
 
 <div class="tip" id="tip" role="tooltip"></div>
-<div class="scrim" id="scrim"></div>
-<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="stitle" hidden>
-  <div class="shead"><h2 class="t mono" id="stitle"></h2><button class="btn icon" id="sclose" type="button" aria-label="Close"><svg viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
-  <div class="sbody" id="scode"></div>
-</div>
 <button class="toast" id="toast" type="button" role="status" aria-live="polite"><span id="ttext"></span></button>
 
-<script src="views.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
