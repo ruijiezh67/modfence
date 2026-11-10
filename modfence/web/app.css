@@ -694,3 +694,4 @@ body[data-view="history"] :is(.crumbs, .legend, .zoom, .hint) { display: none; }
 .agent { border-top: 1px solid var(--line); padding: 8px 0; }
 .agent pre { white-space: pre-wrap; font-size: 12px; margin: 6px 0 0; }
 .agent .bad { color: var(--bad); }
+.handtext.line { min-height: 0; height: auto; }

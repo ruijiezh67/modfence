@@ -230,10 +230,10 @@ def make_handler(app, port):
                     except ValueError as e:
                         return self.send_json({"error": str(e)}, 400)
                 if u.path == "/api/hand":  # the default: the user's own agent does the work, fenced
-                    root, prompt = app.project(q), (b.get("prompt") or "").strip()
+                    root, prompt = app.project(q), (b.get("prompt") or "").strip()  # the task is typed in the agent
                     scope = [s for s in b.get("scope") or [] if isinstance(s, str) and s]
-                    if not prompt or not scope:
-                        return self.send_json({"error": "need a task and a box"}, 400)
+                    if not scope:
+                        return self.send_json({"error": "need a box"}, 400)
                     job = runner.Handoff(root, scope, prompt, analyze.analyze(root), app.claude, seal=not b.get("unsealed")).start()
                     job.label = str(b.get("label") or ", ".join(job.scope))
                     app.jobs[job.id] = app.hands[root] = job  # one open hand-off per project, found again after a reload
@@ -379,8 +379,9 @@ def make_handler(app, port):
 
 def hand_info(job):
     text = job.prompt_text()
+    path, line = job.agent_file()
     return {"job": job.id, "prompt": job.prompt, "scope": job.scope, "label": job.label, "text": text,
-            "tokens": len(text) // 4, "at": job.started}
+            "tokens": len(text) // 4, "at": job.started, "file": path, "line": line}
 
 
 def in_vscode():

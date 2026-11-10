@@ -496,11 +496,21 @@ class Handoff(Job):
         for p in self.before:  # as in a run: the fence's own files stay revertible in a big project
             if p not in self.before_bytes and _in_scope(p, self.editable, self.root):
                 self.before_bytes[p] = _read_or_none(os.path.join(self.root, p))
-        self.emit("status", text="Fence on. Paste the task into your agent in this project; review the changes when it is done.")
+        self.emit("status", text="Fence on. Paste the line into your agent's chat and type the task; review the changes when it is done.")
         return self
 
     def prompt_text(self):
         return f"{self.prompt}\n\n---\nmodfence fence for this task (keep to it):\n{self.system_note()}"
+
+    def agent_file(self):
+        """Golden rule 7: the fence note as a file in .modfence/agent/ (git-ignored, for the agent only), and the one
+        line the person pastes into their agent's chat before typing the task there. No chat window in modfence."""
+        name = re.sub(r"[^a-z0-9]+", "-", (self.label or "fence").lower()).strip("-") or "fence"
+        rel = f".modfence/agent/{name}.md"
+        os.makedirs(os.path.join(self.root, ".modfence", "agent"), exist_ok=True)
+        write_text(os.path.join(self.root, rel), f"# modfence fence: {self.label}\n\n{self.system_note()}\n")
+        line = f'Work only in the "{self.label}" module of this repository; first read {rel}. My task: '
+        return rel, line
 
     def changed(self):
         added, modified, deleted = analyze.diff(self.before, analyze.snapshot(self.root))

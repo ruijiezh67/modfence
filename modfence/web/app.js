@@ -257,11 +257,9 @@ function pick(id) { // a click only selects; the card below says what it is and 
     + `<div class="pm mono">${plural(m.files.length, "file")} · ${m.lines.toLocaleString()} ln</div>`
     + (doc ? `<p>${esc(doc)}</p>` : `<p class="none">No description in the code.</p>`)
     // golden rule 3: say what to change right here; the box is the fence, the map stays where it is
-    + (folder || id === "role:?" ? "" : `<div class="ask"><textarea data-q rows="3" placeholder="What should change in ${esc(name)}?"></textarea>`
-      + `<div class="route" data-route></div><div class="pa"><button type="button" class="btn primary" data-hand title="Fence this box and copy the task for Claude Code, Cursor or Codex">Hand to my agent</button>`
-      + `<button type="button" class="btn quiet" data-run title="modfence runs Claude Code itself, headless">Run here</button></div></div>`)
-    + `<div class="pa">${role || folder ? `<button type="button" class="btn" data-open>${area ? "Open roles" : role ? "Open parts" : "Open folder"} ▸</button>` : ""}`
-    + (folder ? "" : `<button type="button" class="btn quiet" data-brief title="What this box uses and what others use from it, as text for any agent">Copy brief for agents</button>`) + `</div>`
+    + (folder || id === "role:?" ? "" : `<div class="ask"><button type="button" class="btn primary" data-hand title="Fence this box for every agent in the project and copy one line to paste into your agent's chat">Fence &amp; copy for my agent</button>`
+      + `<p class="meta">Paste the line into your agent's chat (Claude Code in VS Code) and type the task after it. Edits outside ${esc(name)} are blocked.</p></div>`)
+    + `<div class="pa">${role || folder ? `<button type="button" class="btn" data-open>${area ? "Open roles" : role ? "Open parts" : "Open folder"} ▸</button>` : ""}</div>`
     + (out.length ? `<h4>Uses <i>${out.length}</i></h4><ul class="pl">${out.map((e) => link(e, e.target)).join("")}</ul>` : "")
     + (inn.length ? `<h4>Used by <i>${inn.length}</i></h4><ul class="pl">${inn.map((e) => link(e, e.source)).join("")}</ul>` : "")
     + (area ? `<h4>Roles <i>${m.roles.length}</i></h4><ul class="pf">${m.roles.map((r) => `<li><span class="mono">${esc(r.name)}</span><span>${esc(r.purpose || "")}</span></li>`).join("")}</ul>` : "")
@@ -273,24 +271,13 @@ function pick(id) { // a click only selects; the card below says what it is and 
   card.hidden = false; card.scrollTop = 0;
   if (opening && !S.userCam) fitView();
   card.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => pick(b.dataset.go)));
-  const files = plain ? [id] : m.files, label = role ? "role " + name : name, qbox = $("[data-q]", card);
-  const showRoute = () => { const r = route(files), el = $("[data-route]", card), b = $("[data-run]", card); if (!el || !r) return;
-    el.className = `route ${r.full ? "full" : "fast"}`;
-    el.innerHTML = r.full ? `<b>Plans first</b>: the box ${esc(r.why.join("; ") || "is set to plan")}.` : `<b>Builds now</b>: one role, nothing outside depends on it.`;
-    b.textContent = r.full ? "Run here: plan" : "Run here: build"; };
-  showRoute();
-  $("[data-route]", card)?.addEventListener("click", () => { const r = route(files); S.forceRoute = r && r.full ? "fast" : "full"; showRoute(); });
-  const go = async () => { const prompt = qbox.value.trim(); if (!prompt || !S.claude) return; const r = route(files);
-    openFence(files, label, m.doc); unpick();
-    await startRun(prompt, files, false, r && !r.full ? "build" : "plan"); };
-  const hand = async () => { const prompt = qbox.value.trim(); if (!prompt) return; unpick(); await openFence(files, label, m.doc); await startHand(prompt, files, label); };
-  $("[data-run]", card)?.addEventListener("click", go);
+  const files = plain ? [id] : m.files, label = area ? name : role ? "role " + name : name;
+  const scope = area && S.roles?.modules_file ? ["@module:" + name] : files; // a module of MODULES.md is fenced as that module
+  const hand = async () => { unpick(); await openFence(files, label, m.doc); await startHand("", scope, label); };
   $("[data-hand]", card)?.addEventListener("click", hand);
-  qbox?.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); hand(); } });
   $("[data-open]", card)?.addEventListener("click", () => { unpick(); area ? openArea(id.slice(5)) : role ? openRole(id.slice(5)) : select(id); });
-  $("[data-brief]", card)?.addEventListener("click", () => copyForAgents(`/api/brief?${q("&scope=" + encodeURIComponent(files.join("+")))}`, `Brief of ${name}`));
   $("[data-x]", card).onclick = unpick;
-  (qbox || $("[data-open]", card) || $("[data-x]", card)).focus();
+  ($("[data-hand]", card) || $("[data-open]", card) || $("[data-x]", card)).focus();
   paintSelection();
 }
 function unpick() { const was = !$("#pick").hidden; S.picked = null; $("#pick").hidden = true; paintSelection(); if (was && !S.userCam && !document.body.classList.contains("panel-open")) fitView(); }
@@ -1237,11 +1224,12 @@ const hhmm = (t) => (t ? new Date(t * 1000).toLocaleTimeString([], { hour: "2-di
 
 function newRun(prompt, scope, at, readOnly, phase) {
   $("#v-talk .starters")?.remove(); $("#v-talk > p.none")?.remove();
+  scope = scope.map((s) => s.replace("@module:", "module "));
   const root = document.createElement("article");
   root.className = `run${phase ? " " + phase : ""}`;
   const what = phase === "plan" ? "planning, read only" : phase === "build" ? "building, can edit" : readOnly ? "read only" : "can edit";
   root.innerHTML = `<div class="rhead"><span class="mono">${hhmm(at)}</span><span>${what} <span class="mono">${esc(scope.map(shown).join(", "))}</span></span><span class="st live">${phase === "plan" ? "Planning" : "Running"}</span></div>
-    <p class="instr">${esc(prompt)}</p><div class="rbody"></div>`;
+    ${prompt ? `<p class="instr">${esc(prompt)}</p>` : ""}<div class="rbody"></div>`; // a hand-off's task is typed in the agent
   $("#v-talk").appendChild(root);
   const body = $(".rbody", root), st = $(".rhead .st", root);
   let textEl = null, textBuf = "", stepsEl = null, pending = 0;
@@ -1589,9 +1577,9 @@ async function startHand(prompt, scope, label) {
   try { res = await api(`/api/hand?${q()}`, { prompt, scope, label, unsealed: !!S.unsealed }); }
   catch (e) { toast(e.message, false); return; }
   let copied = true;
-  try { await navigator.clipboard.writeText(res.text); } catch { copied = false; }
+  try { await navigator.clipboard.writeText(res.line); } catch { copied = false; }
   showHand(res, copied);
-  toast(copied ? "Fence on and task copied: paste it into your agent." : "Fence on. Copy the task from the panel.");
+  toast(copied ? "Fence on and a line copied: paste it into your agent's chat, then type the task." : "Fence on. Copy the line from the panel.");
 }
 async function restoreHand() { // a hand-off outlives a reload: the agent works in a terminal for minutes
   let res;
@@ -1610,9 +1598,9 @@ function showHand(res, copied) {
   job.view.job = job;
   const w = document.createElement("div");
   w.className = "handwait";
-  w.innerHTML = `<p><b>Fence on: ${esc(label)}.</b> ${copied ? "The task and its fence note are copied" : "Copy the task below"} (about ${res.tokens.toLocaleString()} tokens): paste it into Claude Code, Cursor or Codex opened in this project. Their edits outside the box are blocked.</p>`
-    + `<p class="meta" data-live>Watching for changes…</p><div class="pa"><button class="btn primary" type="button" data-review>Review changes</button><button class="btn quiet" type="button" data-again>Copy the task again</button></div>`
-    + (copied ? "" : `<textarea class="handtext" readonly>${esc(res.text)}</textarea>`);
+  w.innerHTML = `<p><b>Fence on: ${esc(label)}.</b> ${copied ? "A line is copied" : "Copy this line"}: paste it into your agent's chat and type the task after it. The agent reads the fence from <span class="mono">${esc(res.file)}</span>; its edits outside the box are blocked.</p>`
+    + `<textarea class="handtext line" readonly rows="2">${esc(res.line)}</textarea>`
+    + `<p class="meta" data-live>Watching for changes…</p><div class="pa"><button class="btn primary" type="button" data-review>Review changes</button><button class="btn quiet" type="button" data-again>Copy the line again</button></div>`;
   job.view.root.appendChild(w);
   job.wait = w;
   const poll = setInterval(async () => {
@@ -1639,7 +1627,7 @@ function showHand(res, copied) {
     } catch (e) { toast(e.message, false); }
   };
   $("[data-review]", w).onclick = async () => { clearInterval(poll); w.remove(); try { await api(`/api/hand/finish?${q()}`, { job: job.id }); } catch (e) { toast(e.message, false); } };
-  $("[data-again]", w).onclick = () => navigator.clipboard.writeText(res.text).then(() => toast("Copied."), () => toast("Copy failed.", false));
+  $("[data-again]", w).onclick = () => navigator.clipboard.writeText(res.line).then(() => toast("Copied."), () => toast("Copy failed.", false));
   syncSend(); showRunbar(); listen(job);
 }
 async function startRun(prompt, scope, readOnly, phase, approve) {

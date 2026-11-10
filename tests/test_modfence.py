@@ -1101,6 +1101,11 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(s, 200, data)
         res = json.loads(data)
         self.assertIn("double the limit", res["text"])
+        self.assertTrue(os.path.exists(os.path.join(self.d, res["file"])), "the fence note is a file only the agent reads")
+        self.assertIn(res["file"], res["line"], "the line to paste points the agent at it")
+        s, data = self.req("POST", "/api/hand?p=0", {"prompt": "", "scope": ["app/core"], "label": "core"}, {"X-Modfence": "1"})
+        self.assertEqual(s, 200, "no task in modfence: the person types it in the agent's chat")
+        self.req("POST", "/api/hand/finish?p=0", {"job": json.loads(data)["job"]}, {"X-Modfence": "1"})
         self.assertIn("NEED <path>", runner.Handoff(self.d, ["app/core"], "x", analyze.analyze(self.d), None).system_note() + scope_guard.decide(
             {"tool_name": "Edit", "tool_input": {"file_path": os.path.join(self.d, "app/cli/main.py")}}, self.d, ["app/core"]))
         note = runner.Handoff(self.d, ["app/core"], "x", analyze.analyze(self.d), None, seal=True).system_note()

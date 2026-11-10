@@ -421,7 +421,8 @@ def contract_breaks(graph, files_before_after):
 
 def _user_tree(root, path):
     try:
-        return ast.parse(open(os.path.join(root, path), encoding="utf-8").read())
+        with open(os.path.join(root, path), encoding="utf-8") as f:
+            return ast.parse(f.read())
     except (OSError, SyntaxError, ValueError, UnicodeDecodeError):
         return ast.Module(body=[], type_ignores=[])
 
