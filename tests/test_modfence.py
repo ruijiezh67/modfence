@@ -94,6 +94,22 @@ class AnalyzeTest(unittest.TestCase):
         self.assertEqual(analyze.snapshot(d), before, "a warm snapshot matches")
 
 
+class LearnedRootsTest(unittest.TestCase):
+    def test_a_folder_the_project_puts_on_sys_path_is_learned(self):
+        d = tempfile.mkdtemp(prefix="modfence-test-")
+        _dirs.append(d)
+        for sub in ("srv/core", "srv/api", "lab"):
+            os.makedirs(os.path.join(d, sub))
+        write(os.path.join(d, "srv/core/values.py"), "X = 1\n")
+        for i in range(3):  # srv/ is an import root for its own code: `core.values` from srv/api/ resolves through it
+            write(os.path.join(d, f"srv/api/h{i}.py"), "from core.values import X\n")
+        write(os.path.join(d, "lab/run.py"), "import sys\nsys.path.insert(0, 'srv')\nfrom core.values import X\n")
+        g = analyze.analyze(d)
+        self.assertEqual(g["roots"], ["srv/"])
+        self.assertIn(("lab", "srv/core"), {(e["source"], e["target"]) for e in g["edges"]},
+                      "a program that runs with srv/ on sys.path is linked to what it imports")
+
+
 class FlatProjectTest(unittest.TestCase):
     """Training repos often keep model.py, train.py at the root: each root .py file is its own module."""
 

@@ -58,18 +58,20 @@ def module_of(path, split=()):
     return path if path.endswith(".py") else "."
 
 
-def _resolve(parts, files, here=()):
-    """(project file, parts used) for a dotted import, trying the longest prefix first; (None, 0) if not ours.
-    Import roots tried, shallowest first: the project root, src/, then each directory above the importing file,
-    because big projects often run from a subfolder (backend/ on sys.path, so `kernel.x` is backend/kernel/x.py)."""
-    roots = ["", "src/"] + ["/".join(here[:k]) + "/" for k in range(1, len(here) + 1)]
+def _resolve(parts, files, here=(), learned=()):
+    """(project file, parts used, import root) for a dotted import, trying the longest prefix first; (None, 0, None)
+    if not ours. Import roots tried, shallowest first: the project root, src/, each directory above the importing
+    file (backend/ on sys.path, so `kernel.x` is backend/kernel/x.py), then the roots this project was seen to use
+    (`learned`, from analyze): a folder that puts backend/ on sys.path at run time imports `kernel.x` too."""
+    above = ["/".join(here[:k]) + "/" for k in range(1, len(here) + 1)]
+    roots = ["", "src/"] + above + [r for r in learned if r not in above]
     for n in range(len(parts), 0, -1):
         base = "/".join(parts[:n])
         for prefix in roots:
             for cand in (prefix + base + ".py", prefix + base + "/__init__.py"):
                 if cand in files:
-                    return cand, n
-    return None, 0
+                    return cand, n, prefix
+    return None, 0, None
 
 
 _BODIES = ("body", "orelse", "finalbody", "handlers", "cases")
@@ -86,16 +88,33 @@ def _statements(tree):
             stack.extend(reversed(getattr(node, field, None) or ()))
 
 
-def imports_of(path, tree, files):
+def imports_of(path, tree, files, learned=()):
     """[(target_file, line, name)] for imports that resolve to files in this project. name is what `from x import
     name` took from the file (a function, class ...), or None when the import names a module."""
-    return [(t, line, name) for t, line, name, _ in _resolved(path, [s + ("",) for s in import_specs(path, tree)], files)]
+    return [(t, line, name) for t, line, name, _ in _resolved(path, [s + ("",) for s in import_specs(path, tree)], files, learned)]
 
 
-def _resolved(path, specs, files):
+LEARN_MIN = 3  # ponytail: a folder used as an import root by at least 3 imports is one; fewer is likely an accident
+
+
+def learn_roots(parsed, files):
+    """Golden rule 2: the import roots a project uses, learned from the project itself. A folder through which some
+    file's own imports resolve (backend/ for backend/kernel/a.py importing kernel.b) is on sys.path when that code
+    runs; ordered by how many imports used it."""
+    count = {}
+    for p, imports in parsed:
+        for parts, *_ in imports:
+            _, _, prefix = _resolve(parts, files, p.split("/")[:-1])
+            if prefix not in (None, "", "src/"):
+                count[prefix] = count.get(prefix, 0) + 1
+    return [r for r, c in sorted(count.items(), key=lambda x: (-x[1], x[0]))  # a tests folder is no root for code
+            if c >= LEARN_MIN and not _is_tests(r.rstrip("/"))]
+
+
+def _resolved(path, specs, files, learned=()):
     found = []
     for parts, line, is_from, code in specs:
-        t, used = _resolve(parts, files, path.split("/")[:-1])
+        t, used, _ = _resolve(parts, files, path.split("/")[:-1], learned)
         if t and t != path:
             name = parts[-1] if is_from and used == len(parts) - 1 and parts[-1] != "*" else None
             found.append((t, line, name, code))
@@ -234,11 +253,13 @@ def analyze(root):
     files = set(paths)
     split = split_dirs(paths)
     mods, edges, fileinfo = {}, {}, {}
+    parsed = {p: _parse(os.path.join(root, p), p) for p in paths}
+    learned = learn_roots([(p, r["imports"]) for p, r in parsed.items()], files)
     for p in paths:
-        r = _parse(os.path.join(root, p), p)
+        r = parsed[p]
         info = {"path": p, "module": module_of(p, split), "lines": r["lines"], "mtime": r["mtime"],
                 "doc": r["doc"], "names": r["names"], "error": r["error"]}
-        for target, line, name, code in _resolved(p, r["imports"], files):
+        for target, line, name, code in _resolved(p, r["imports"], files, learned):
             a, b = module_of(p, split), module_of(target, split)
             if a == b:
                 continue
@@ -260,7 +281,7 @@ def analyze(root):
             m["doc"] = next((fileinfo[f]["doc"] for f in m["files"] if fileinfo[f]["doc"]), "")
     return {"root": root, "name": os.path.basename(root), "modules": sorted(mods.values(), key=lambda m: m["id"]),
             "edges": sorted(edges.values(), key=lambda e: (e["source"], e["target"])), "files": fileinfo,
-            "split": sorted(split), "analyzed_at": time.time()}
+            "split": sorted(split), "roots": learned, "analyzed_at": time.time()}
 
 
 _SNAP, _SNAP_LOCK = {}, threading.Lock()  # root -> {rel: (size, mtime_ns, sha1, bytes or None)}

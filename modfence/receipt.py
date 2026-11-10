@@ -51,21 +51,21 @@ def changes(root, since="HEAD"):
             for p, s in sorted(status.items()) if not p.startswith(SKIP)]
 
 
-def _pairs(path, data, files, part):
+def _pairs(path, data, files, part, learned=()):
     """{(part of path, part it imports): line} for one file's source."""
     try:
         tree = ast.parse(data)
     except (SyntaxError, ValueError):
         return {}
     src, out = part(path), {}
-    for target, line, _ in analyze.imports_of(path, tree, files):
+    for target, line, _ in analyze.imports_of(path, tree, files, learned):
         dst = part(target)
         if src and dst and src != dst:
             out.setdefault((src, dst), f"{path}:{line}")
     return out
 
 
-def new_dependencies(root, files, changed, before, part):
+def new_dependencies(root, files, changed, before, part, learned=()):
     """[{"from", "to", "at"}]: part-to-part imports the changed files make now that no file made before."""
     files = set(files)
     base, now = set(), {}
@@ -73,15 +73,15 @@ def new_dependencies(root, files, changed, before, part):
         if path in changed:
             continue
         try:
-            base |= set(_pairs(path, analyze.read_text(os.path.join(root, path)), files, part))
+            base |= set(_pairs(path, analyze.read_text(os.path.join(root, path)), files, part, learned))
         except OSError:
             pass
     for path in changed:
         old = before(path)
         if old is not None:
-            base |= set(_pairs(path, old, files, part))
+            base |= set(_pairs(path, old, files, part, learned))
         if os.path.exists(os.path.join(root, path)):
-            now.update({k: v for k, v in _pairs(path, analyze.read_text(os.path.join(root, path)), files, part).items() if k not in now})
+            now.update({k: v for k, v in _pairs(path, analyze.read_text(os.path.join(root, path)), files, part, learned).items() if k not in now})
     return [{"from": a, "to": b, "at": at} for (a, b), at in sorted(now.items()) if (a, b) not in base]
 
 
@@ -127,7 +127,7 @@ def build(root, since="HEAD"):
                     None if f["status"] == "deleted" else _bytes(os.path.join(root, f["path"])))
         for f in py if f["status"] != "added"})
     part = lambda path: None if modules._is_test(path) else place(path)[0] or (shared is None and analyze.module_of(path, split)) or None
-    new = new_dependencies(root, graph["files"], {f["path"] for f in py if f["status"] != "deleted"}, before, part)
+    new = new_dependencies(root, graph["files"], {f["path"] for f in py if f["status"] != "deleted"}, before, part, graph.get("roots", ()))
     fence = scope_guard.load_fence(root)
     outside = [f["path"] for f in files if not scope_guard.allowed(f["path"], root, fence[1])] if fence else None
     tests = runner.select_tests(graph, [f["path"] for f in py]) if py else None

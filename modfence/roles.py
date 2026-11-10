@@ -33,7 +33,7 @@ def intra_module_edges(graph, files):
     root = graph["root"]
     for p in files:
         r = analyze._parse(os.path.join(root, p), p)
-        for t, _line, _name, _code in analyze._resolved(p, r["imports"], allfiles):
+        for t, _line, _name, _code in analyze._resolved(p, r["imports"], allfiles, graph.get("roots", ())):
             if t in keep and t != p:
                 w[(p, t) if p < t else (t, p)] += 1
     return w
@@ -45,7 +45,7 @@ def importers(graph, files):
     out, allfiles = defaultdict(set), set(graph["files"])
     for p in files:
         r = analyze._parse(os.path.join(graph["root"], p), p)
-        for t, *_ in analyze._resolved(p, r["imports"], allfiles):
+        for t, *_ in analyze._resolved(p, r["imports"], allfiles, graph.get("roots", ())):
             if t != p:
                 out[t].add(p)
     return out

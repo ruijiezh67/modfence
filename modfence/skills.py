@@ -81,7 +81,7 @@ def stack(root, graph):
         for parts, _, _, _ in analyze._parse(os.path.join(root, p), p)["imports"]:
             top = parts[0] if parts else ""
             if (top and top not in own and top not in sys.stdlib_module_names and not top.startswith("_")
-                    and not analyze._resolve(parts, files, p.split("/")[:-1])[0]):
+                    and not analyze._resolve(parts, files, p.split("/")[:-1], graph.get("roots", ()))[0]):
                 names.add(top)
         used[p] = names
     store = roles.load_store(root) or {}
