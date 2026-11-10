@@ -343,6 +343,54 @@ def breaks(old, new):
     return out
 
 
+def _bind(params, npos, kws):
+    """The parameters a call with npos positional arguments and keyword names kws fills; None if it cannot bind."""
+    plain = [p for p in params if not p[0].startswith("*")]
+    pos = [p[0] for p in plain if p[1] == "positional"]
+    if npos > len(pos) and not any(p[0].startswith("*") and not p[0].startswith("**") for p in params):
+        return None
+    filled, names = set(pos[:npos]), {p[0] for p in plain}
+    for k in kws:
+        if k in filled or (k not in names and not any(p[0].startswith("**") for p in params)):
+            return None
+        filled.add(k)
+    return None if any(p[2] and p[0] not in filled for p in plain) else filled
+
+
+def _calls(tree, name):
+    """(positional count, keyword names) of each call of `name` or `x.name`; None for one that unpacks * or **."""
+    for node in ast.walk(tree):
+        f = getattr(node, "func", None)
+        if isinstance(node, ast.Call) and ((isinstance(f, ast.Name) and f.id == name) or (isinstance(f, ast.Attribute) and f.attr == name)):
+            if any(isinstance(a, ast.Starred) for a in node.args) or any(k.arg is None for k in node.keywords):
+                yield None
+            else:
+                yield len(node.args), [k.arg for k in node.keywords]
+
+
+def call_breaks(tree, name, old, new):
+    """Whether a file's own calls of `name` break under the new signature: a call that bound to the old one and does
+    not bind to the new, whose positional arguments now land on other parameters, or that relies on a default that
+    changed. A call that unpacks * or ** cannot be checked and does not count (ponytail: static analysis cannot see
+    what a splat holds)."""
+    oldpos = [p[0] for p in old["params"] if p[1] == "positional"]
+    newpos = [p[0] for p in new["params"] if p[1] == "positional"]
+    olddef = {p[0]: p[3] for p in old["params"] if not p[2]}
+    newdef = {p[0]: p[3] for p in new["params"] if not p[2]}
+    for call in _calls(tree, name):
+        if call is None:
+            continue
+        before = _bind(old["params"], *call)
+        if before is None:
+            continue  # already wrong before the change: not this change's doing
+        after = _bind(new["params"], *call)
+        if after is None or oldpos[:call[0]] != newpos[:call[0]]:
+            return True
+        if any(p not in before and p in olddef and p in newdef and olddef[p] != newdef[p] for p in olddef):
+            return True
+    return False
+
+
 def contract_breaks(graph, files_before_after):
     """Names other modules use (from graph, taken before the run) whose contract the run broke.
     files_before_after: {path: (before bytes or None, after bytes or None)}. Returns [{file, name, change, users}]."""
@@ -358,10 +406,24 @@ def contract_breaks(graph, files_before_after):
         if not old or new is None:  # unreadable before, or does not parse now (the done check reports that)
             continue
         for n in sorted(users[f]):
-            if n in old:
-                for change in breaks(old[n], new.get(n)):
-                    out.append({"file": f, "name": n, "change": change, "users": sorted(set(users[f][n]))})
+            if n not in old:
+                continue
+            changes = breaks(old[n], new.get(n))
+            who = sorted(set(users[f][n]))
+            whole = any(c == "removed" or c.startswith(("was a", "base ")) for c in changes)
+            if changes and not whole and old[n]["params"] is not None and new.get(n, {}).get("params") is not None:
+                # parameters changed: a user breaks only where its own calls do (an import alone does not)
+                who = [u for u in who if call_breaks(_user_tree(graph["root"], u.split(":")[0]), n, old[n], new[n])]
+            for change in changes if who else []:
+                out.append({"file": f, "name": n, "change": change, "users": who})
     return out
+
+
+def _user_tree(root, path):
+    try:
+        return ast.parse(open(os.path.join(root, path), encoding="utf-8").read())
+    except (OSError, SyntaxError, ValueError, UnicodeDecodeError):
+        return ast.Module(body=[], type_ignores=[])
 
 
 _TREES = {}  # (full path, size, mtime) -> ast; the user files of one run, parsed once

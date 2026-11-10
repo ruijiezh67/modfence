@@ -3,7 +3,7 @@
 Run from the modfence folder: python -m unittest discover -s tests -t .
 """
 from collections import Counter
-import atexit, contextlib, http.client, io, json, os, re, shutil, subprocess, sys, tempfile, threading, time, unittest
+import ast, atexit, contextlib, http.client, io, json, os, re, shutil, subprocess, sys, tempfile, threading, time, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -822,6 +822,20 @@ class FencePluginTest(unittest.TestCase):
         self.assertIn("plugin/cli.py\\\" receipt --hook", hooks)
         for f in ("plugin/cli.py", "commands/receipt.md", "commands/fence.md", "skills/modules/SKILL.md"):
             self.assertTrue(os.path.exists(os.path.join(root, f)), f)
+
+
+class CallSiteTest(unittest.TestCase):
+    def test_a_parameter_change_breaks_only_the_calls_that_use_it(self):
+        from modfence import brief
+        old = brief.signatures(b"def f(a, scale=2, *, mode='x'):\n    pass\n")["f"]
+        new = brief.signatures(b"def f(a, *, mode='y'):\n    pass\n")["f"]
+        hits = lambda src: brief.call_breaks(ast.parse(src), "f", old, new)
+        self.assertFalse(hits("f(1, mode='z')\n"), "passes neither the removed nor the changed-default parameter")
+        self.assertTrue(hits("f(1, scale=3, mode='z')\n"), "passes the removed parameter")
+        self.assertTrue(hits("f(1, 3, mode='z')\n"), "passes it by position")
+        self.assertTrue(hits("x.f(1)\n"), "relies on mode's default, which changed")
+        self.assertFalse(hits("f(*args, **kw)\n"), "a splat cannot be checked")
+        self.assertFalse(hits("g = f\n"), "a reference is not a call")
 
 
 class ReceiptTest(unittest.TestCase):
