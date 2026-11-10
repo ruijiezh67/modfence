@@ -1,13 +1,16 @@
 """modfence receipt: what a change touched and what it may break, from git, with no UI and no model (golden rule 5).
 
     modfence receipt [PROJECT] [--since REV] [--json]
+    modfence receipt --fleet [PROJECT] [--base main]   one receipt per git worktree (one per agent), against the base
 
 Compares the working tree with REV (default HEAD), untracked files included, whichever agent or person made the change:
 - the modules it changed, with the lines added and removed;
 - the modules that use them, which the change may break;
 - contract breaks: names another module uses whose signature changed or that went away, with the lines that use them;
 - new cross-module dependencies: a part of the map now importing a part it did not import before, anywhere;
-- the files changed outside the fence, when one is set (.modfence/fence.json);
+- the files changed outside the fence, when one is set (.modfence/fence.json), and the edits the fence blocked;
+- the functions added, changed and removed;
+- whether MODULES.md is still true: lines that match no file, and code files no module claims;
 - the test files that cover the changed modules and their users.
 Exit status 1 when a contract broke, a file outside the fence changed or a new cross-module dependency appeared, so
 a hook or CI can block on it; 0 otherwise; 2 when PROJECT is not a git work tree.
@@ -130,10 +133,23 @@ def build(root, since="HEAD"):
     new = new_dependencies(root, graph["files"], {f["path"] for f in py if f["status"] != "deleted"}, before, part, graph.get("roots", ()))
     fence = scope_guard.load_fence(root)
     outside = [f["path"] for f in files if not scope_guard.allowed(f["path"], root, fence[1])] if fence else None
+    blocked = scope_guard.pending_asks(root, [], ()) if fence else []  # every edit the fence denied this round
+    funcs = []
+    for f in py:
+        now = None if f["status"] == "deleted" else _bytes(os.path.join(root, f["path"]))
+        for u in analyze.function_changes(None if f["status"] == "added" else before(f["path"]), now) or []:
+            if u["name"] != "(module level)":
+                funcs.append({"file": f["path"], **u})
+    stale = None
+    if shared is not None:  # golden rule 1: the map must not go stale (a printed map of a city that keeps building)
+        code = [p for p in graph["files"] if not modules._is_test(p)]
+        stale = {"lines": [f"{m['name']}: {p}" for m in shared for p in m["paths"] if not any(modules.match(p, c) for c in graph["files"])],
+                 "unassigned": [p for p in code if modules.owner(shared, p) is None]}
     tests = runner.select_tests(graph, [f["path"] for f in py]) if py else None
     return {"since": since, "files": files, "modules": [{"id": m, **mods[m]} for m in changed], "users": users,
             "areas": sorted(areas.values(), key=lambda a: -(a["plus"] + a["minus"])), "used_by": used_areas,
-            "contract": contract, "new_dependencies": new, "outside_fence": outside, "tests": tests["files"] if tests else [],
+            "contract": contract, "new_dependencies": new, "outside_fence": outside, "blocked": blocked, "functions": funcs,
+            "map": stale, "tests": tests["files"] if tests else [],
             "ok": not contract and not outside and not new}
 
 
@@ -149,6 +165,9 @@ def text(r):
                    + (": " + ", ".join(a["roles"][:5]) + (" ..." if len(a["roles"]) > 5 else "") if a["roles"] else ""))
     if len(r["areas"]) > 12:
         out.append(f"  ... and {len(r['areas']) - 12} more")
+    if r["functions"]:
+        sym = {"added": "+", "changed": "~", "removed": "-"}
+        out.append("  functions " + ", ".join(f"{sym[u['status']]}{u['name']}" for u in r["functions"][:10]) + (" ..." if len(r["functions"]) > 10 else ""))
     if r["used_by"]:
         out.append("  used by  " + ", ".join(r["used_by"][:12]) + (" ..." if len(r["used_by"]) > 12 else "") + "  (may break)")
     if r["contract"]:
@@ -165,6 +184,13 @@ def text(r):
         out.append("OUTSIDE THE FENCE: " + ", ".join(r["outside_fence"]))
     elif r["outside_fence"] is not None:
         out.append("fence: every change is inside it.")
+    if r["blocked"]:
+        out.append("blocked by the fence: " + ", ".join(r["blocked"][:8]))
+    if r["map"] and (r["map"]["lines"] or r["map"]["unassigned"]):
+        out.append(f"MODULES.md is out of date: {len(r['map']['lines'])} line(s) match no file"
+                   + (f" ({', '.join(r['map']['lines'][:3])})" if r["map"]["lines"] else "")
+                   + f"; {len(r['map']['unassigned'])} code file(s) belong to no module"
+                   + (f" ({', '.join(r['map']['unassigned'][:3])})" if r["map"]["unassigned"] else ""))
     if r["tests"]:
         out.append(f"tests to run ({len(r['tests'])}): " + " ".join(r["tests"][:10]) + (" ..." if len(r["tests"]) > 10 else ""))
     return "\n".join(out)
@@ -176,9 +202,13 @@ def main(argv=None):
     ap.add_argument("--since", default="HEAD", help="git revision to compare the working tree with (default HEAD)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--hook", action="store_true", help="run as a Claude Code Stop hook (reads its JSON on stdin)")
+    ap.add_argument("--fleet", action="store_true", help="one receipt per git worktree, each against --base")
+    ap.add_argument("--base", default="main", help="with --fleet: the branch every agent started from (default main)")
     a = ap.parse_args(argv)
     if a.hook:
         return hook(sys.stdin.read())
+    if a.fleet:
+        return fleet(a.project, a.base)
     try:
         r = build(a.project, a.since)
     except RuntimeError as e:
@@ -214,3 +244,31 @@ def hook(raw):
         return 0
     print(json.dumps({"decision": "block", "reason": text(r) + "\nFix these, or say why they are intended, then stop again."}))
     return 0
+
+
+def fleet(root, base="main"):
+    """Golden rule 5, for many agents: one short receipt per git worktree (one agent each), against where it branched
+    from `base`, so 10 to 100 agents' work is reviewed as modules, not as diffs. Exit 1 when any of them broke something."""
+    try:
+        listing = _git(root, "worktree", "list", "--porcelain").decode("utf-8", "replace")
+    except RuntimeError as e:
+        print(f"modfence receipt: {e}", file=sys.stderr)
+        return 2
+    trees = [line[len("worktree "):] for line in listing.splitlines() if line.startswith("worktree ")]
+    bad = 0
+    for wt in trees:
+        try:
+            since = _git(wt, "merge-base", "HEAD", base).decode().strip()
+            branch = _git(wt, "rev-parse", "--abbrev-ref", "HEAD").decode().strip()
+            r = build(wt, since)
+        except RuntimeError as e:
+            print(f"== {wt}: {e}")
+            continue
+        bad += not r["ok"]
+        problems = [f"{len(r['contract'])} contract break(s)"] * bool(r["contract"]) + \
+                   [f"{len(r['new_dependencies'])} new dependency(ies)"] * bool(r["new_dependencies"]) + \
+                   [f"{len(r['outside_fence'] or [])} outside the fence"] * bool(r["outside_fence"])
+        print(f"== {branch}  ({wt})  {'OK' if r['ok'] else 'CHECK: ' + ', '.join(problems)}")
+        print("\n".join("   " + line for line in text(r).splitlines()[1:]))
+    print(f"{len(trees)} worktree(s), {bad} to check. Cost per agent: N/A (modfence does not see the agents' bills).")
+    return 1 if bad else 0

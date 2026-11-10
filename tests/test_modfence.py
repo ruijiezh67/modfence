@@ -824,6 +824,41 @@ class FencePluginTest(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(root, f)), f)
 
 
+class ReviewLoopTest(unittest.TestCase):
+    def setUp(self):
+        self.d = project()
+        git = lambda *a: subprocess.run(["git", "-C", self.d, *a], capture_output=True, check=True)
+        git("init", "-q", "-b", "main"); git("add", "-A")
+        git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "base")
+        self.git = git
+
+    def test_the_quiz_asks_about_the_round_and_cannot_be_guessed_by_option_count(self):
+        from modfence import quiz, receipt
+        write(os.path.join(self.d, "app/core/values.py"), '"""Values."""\nLIMIT = 3\n\ndef double(x):\n    return 2 * x\n\ndef triple(x):\n    return 3 * x\n')
+        write(os.path.join(self.d, "app/core/extra.py"), "def helper():\n    return 1\n")
+        qs = quiz.questions(self.d, receipt.build(self.d), "seed")
+        self.assertTrue(3 <= len(qs) <= 5)
+        for q, opts, right in qs:
+            self.assertTrue(2 <= len(opts) <= 4 and right and len(right) < len(opts) and right <= set(range(len(opts))), q)
+        self.assertEqual(quiz.questions(self.d, receipt.build(self.d), "seed"), qs, "the same round gives the same quiz")
+
+    def test_fleet_reviews_every_worktree_against_its_base(self):
+        from modfence import receipt
+        wt = tempfile.mkdtemp(prefix="modfence-wt-")
+        shutil.rmtree(wt)
+        self.git("worktree", "add", "-q", "-b", "agent1", wt)
+        _dirs.append(wt)
+        write(os.path.join(wt, "app/core/values.py"), '"""Values."""\nLIMIT = 3\n\ndef double(x, y):\n    return 2 * x\n')
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = receipt.fleet(self.d, "main")
+        out = buf.getvalue()
+        self.assertEqual(code, 1, "one agent broke a contract")
+        self.assertIn("== main", out)
+        self.assertIn("== agent1", out)
+        self.assertIn("CONTRACT BROKEN", out)
+
+
 class CallSiteTest(unittest.TestCase):
     def test_a_parameter_change_breaks_only_the_calls_that_use_it(self):
         from modfence import brief

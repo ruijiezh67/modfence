@@ -1,5 +1,8 @@
 """modfence [PROJECT ...] [--port 8765] [--no-browser] [--test-cmd CMD]
 modfence receipt [PROJECT] [--since REV] [--json]   what a change touched and may break (exit 1 on a break)
+modfence receipt --fleet [PROJECT] [--base main]   one receipt per worktree, for many agents at once
+modfence quiz [PROJECT] [--since REV]              five questions on the round: do you still know what it did?
+modfence fence MODULE | --off                       fence every agent in this project to one module of MODULES.md
 
 With no project given, opens the current directory if it holds Python files, else the bundled examples.
 """
@@ -16,6 +19,9 @@ def main(argv=None):
     if argv[:1] == ["receipt"]:  # what a change touched and broke, in the terminal (golden rule 5)
         from . import receipt
         return receipt.main(argv[1:])
+    if argv[:1] == ["quiz"]:  # do you still know what the agent did? (golden rule 3)
+        from . import quiz
+        return quiz.main(argv[1:])
     if argv[:1] == ["fence"]:  # a fence from the terminal, for any agent in this project (golden rule 4)
         return fence(argv[1:])
     if argv[:1] == ["guard"]:  # the PreToolUse hook itself, as the plugin runs it

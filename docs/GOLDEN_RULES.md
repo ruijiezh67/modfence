@@ -9,6 +9,21 @@ It serves two kinds of user, and every feature must work for at least one of the
 - **Engineers who live in the terminal** and run agents, often several at once or in loops. They get the fence and the receipt as a Claude Code plugin and a command line, with no page to open.
 - **People who need to see the project first**: newcomers, reviewers, anyone taking over code they did not write. They get the map.
 
+## One loop: see, steer, review, understand
+
+modfence is one loop around every agent round, and every step exists in a working form before any step is polished:
+
+| Step | What a person gets | Built as |
+|---|---|---|
+| **See** | the project as modules they can edit, which agents must obey | the map, `MODULES.md` (rules 1 to 3) |
+| **Steer** | an agent kept inside one module; crossing asks first | the fence hook, `modfence fence`, the plugin (rule 4) |
+| **Review** | what each round, or each of many agents, touched, broke, and was blocked from | `modfence receipt`, `--fleet`, the Stop hook (rule 5) |
+| **Understand** | a check that they still know what changed | `modfence quiz`, its score over rounds (rule 3) |
+
+The map checks itself too: the receipt says when `MODULES.md` names folders that are gone or misses new code.
+
+**Not built here:** another loop or background agent runner (crowded, expensive, hard to verify), a general coding assistant or IDE (no measurable win), a generator of architecture diagrams (measured to cost more and go stale), tests of agents against deception (a separate project).
+
 ## What the field taught us
 
 Four lessons from the people who run agents every day (posts on X, 2025-2026) and from our own measurements. The rules below follow from them.
@@ -33,7 +48,8 @@ Imports, git history, copies and runtime links decide the structure, and the ana
 **3. People see modules, and keep understanding them.**
 The map shows the modules, links that say what they mean, and what the last round changed. Inside a module, one level of parts is allowed if it makes the module easier to read. There are no function-level graphs and no decoration.
 *Done when:* someone who did not watch the round can tell, from the map and the receipt alone and in under a minute, which modules changed and what that may break.
-*Next:* measure that (rule 6): ask a person those two questions after a round, with and without modfence.
+`modfence quiz` asks those questions after a round, from the receipt, and keeps the score.
+*Next:* measure it (rule 6): the quiz score after rounds with and without modfence, and whether a person can redraw the modules from memory.
 
 ## B. Agents
 
@@ -44,7 +60,8 @@ While a fence is set, a hook blocks any edit outside the fenced module, so two p
 **5. Every round leaves a receipt, built for review.**
 After a round, the receipt says which modules changed, which modules use them, which names other modules rely on were broken, which cross-module dependencies are new, which files are outside the fence, and which tests to run. It comes from git and static analysis, with no model. On a break it blocks the agent once, then lets it stop. It is shown on the map and in the terminal, and it reads in seconds, because review is the limit (lesson 1).
 *Done when:* `modfence receipt` reports all of these and exits non-zero on a break, and the map highlights the changed boxes.
-*Next:* review many agents at once: one receipt per branch or worktree (`--since main`), then one view that lays the receipts of 10 to 100 parallel agents side by side, by module.
+`modfence receipt --fleet` gives one receipt per worktree, so many agents are reviewed by module.
+*Next:* the same on the map: the receipts of 10 to 100 parallel agents side by side, with each one's cost once it is known.
 
 ## C. Decisions
 
@@ -52,9 +69,9 @@ After a round, the receipt says which modules changed, which modules use them, w
 A claim about tokens, cost, correctness, safety or understanding needs an A/B on a real project, at least 3 runs per arm, with the same task for every arm. Cost is counted per outcome, as dollars per change that passed its tests and was kept, not per run. A value nobody measured is written N/A, never 0. The limits are published with the result. modfence does not claim to save tokens: the measurement so far says it does not.
 *Done when:* every number in the docs links to the run that produced it.
 
-**7. Do the least that works.**
-Before building anything, check whether the codebase, the standard library or Claude Code already does it. A feature works in the terminal first and is drawn on the map second. Anything the agent reads from modfence (fence note, brief) is as short as measurement allows.
-*Done when:* the change is the smallest diff that passes its check, and it adds no dependency.
+**7. Complete first, then the least that works.**
+Every step of the loop works end to end in a plain form before any step is made better: a crude piece that exists beats a polished piece that is missing. Each piece is the least that works: check whether the codebase, the standard library or Claude Code already does it, build it for the terminal first and draw it on the map second, and keep anything the agent reads from modfence (fence note, brief) as short as measurement allows.
+*Done when:* every step in the loop table has a command that runs, and each change is the smallest diff that passes its check and adds no dependency.
 
 ## Using the rules
 
