@@ -18,7 +18,7 @@ modfence is one loop around every agent round, and every step exists in a workin
 | Step | What a person gets | Built as |
 |---|---|---|
 | **See** | the project as modules they can edit, which agents must obey | the map, `MODULES.md` (rules 1 to 3) |
-| **Steer** | an agent kept inside one module; crossing asks first | the fence hook, `modfence fence`, the plugin (rule 4) |
+| **Steer** | the task picks the module just in time; the agent stays inside it; crossing asks first | `modfence jit` and the fence hook in the plugin, `modfence fence` (rule 4) |
 | **Review** | what each round, or each of many agents, touched, broke, and was blocked from | `modfence receipt`, `--fleet`, the Stop hook (rule 5) |
 | **Understand** | a check that they still know what changed | `modfence quiz`, its score over rounds (rule 3) |
 
@@ -56,7 +56,7 @@ The map shows the modules, links that say what they mean, and what the last roun
 ## B. Agents
 
 **4. The fence is a hook, granted per module, and costs no turns or time.**
-While a fence is set, a hook blocks any edit outside the fenced module. A person grants and lifts a module for an agent from the map or from the terminal, and crossing into another module needs that person's approval. The fence must not cost the agent turns or time: hiding other modules' code ("sealed") made agents hit the hook about twice a run for no measured gain, so it is off unless a measurement shows it pays; the hook runs only on the tools that edit. As a side benefit, two agents in two worktrees can hold two modules at once.
+While a fence is set, a hook blocks any edit outside the fenced module. The fence is set just in time: when you give the agent a task, modfence picks the module the task names in the code and shows you the guess, the functions behind it and the other candidates, so you can notice a wrong guess and switch in one click (Michelle Lam's just-in-time objectives, CHI 2026; Elena Glassman's point that people must be able to notice and judge an AI's choice). A fence a person sets from the map or the terminal is kept, and crossing into another module needs that person's approval. The fence must not cost the agent turns or time: hiding other modules' code ("sealed") made agents hit the hook about twice a run for no measured gain, so it is off unless a measurement shows it pays; the hook runs only on the tools that edit. As a side benefit, two agents in two worktrees can hold two modules at once.
 *Done when:* a test shows the hook denying an outside edit by Claude Code and starting only on edit tools, and two fences set in two worktrees of one repository do not affect each other.
 
 **5. Every round leaves a receipt, built for review.**
