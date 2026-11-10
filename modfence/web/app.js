@@ -185,7 +185,7 @@ function usersOf(files) { // roles whose code imports any of these files
   S.full.edges.forEach((e) => e.receipts.forEach((r) => { if (fs.has(r.target_file) && !fs.has(r.file) && fr[r.file] && !kindOf(r.file)) out.add(fr[r.file]); }));
   return [...out];
 }
-// Golden rule 2: a role named like its function ("recorder" in recorder) reads as that function's core, so the two
+// Golden rule 3: a role named like its function ("recorder" in recorder) reads as that function's core, so the two
 // levels never show two different boxes with one name.
 function boxName(m) {
   const n = m.label || label(m.id);
@@ -254,7 +254,7 @@ function pick(id) { // a click only selects; the card below says what it is and 
   card.innerHTML = `<div class="pk"><b>${esc(name)}</b><button type="button" class="btn quiet" data-x aria-label="Close">${X_ICON}</button></div>`
     + `<div class="pm mono">${plural(m.files.length, "file")} · ${m.lines.toLocaleString()} ln</div>`
     + (doc ? `<p>${esc(doc)}</p>` : `<p class="none">No description in the code.</p>`)
-    // golden rule 2: say what to change right here; the box is the fence, the map stays where it is
+    // golden rule 3: say what to change right here; the box is the fence, the map stays where it is
     + (folder || id === "role:?" ? "" : `<div class="ask"><textarea data-q rows="3" placeholder="What should change in ${esc(name)}?"></textarea>`
       + `<div class="route" data-route></div><div class="pa"><button type="button" class="btn primary" data-hand title="Fence this box and copy the task for Claude Code, Cursor or Codex">Hand to my agent</button>`
       + `<button type="button" class="btn quiet" data-run title="modfence runs Claude Code itself, headless">Run here</button></div></div>`)
@@ -568,7 +568,7 @@ function stressLayout(ids, edges, rank) {
   }
   return Object.fromEntries(ids.map((id, i) => [id, { x: Math.round(P[i].x - NODE_W / 2), y: Math.round(P[i].y - NODE_H / 2) }]));
 }
-// Every map (golden rule 2): each link leaves a box side square to it, the links on one side spread along it in the
+// Every map (golden rule 3): each link leaves a box side square to it, the links on one side spread along it in the
 // order of their other ends (so they do not cross at the box), and an S or L curve joins the two ports. A link uses
 // only sides that face the other box; it prefers the pair facing each other along the map's main direction, then a
 // corner (one side up or down, the other sideways), and leaves those when the curve runs far behind another box.
@@ -736,7 +736,7 @@ function diffTag(id) { // a box's added and removed lines; an area, role or part
   const st = S.marks.stats[id] || (mod(id)?.members || []).reduce((a, m) => (S.marks.stats[m] ? { plus: (a?.plus || 0) + S.marks.stats[m].plus, minus: (a?.minus || 0) + S.marks.stats[m].minus } : a), null);
   return st ? `+${st.plus} −${st.minus}` : "";
 }
-function roundLine() { // golden rule 7: which boxes at this level the last run changed, and which use changed code
+function roundLine() { // golden rule 5: which boxes at this level the last run changed, and which use changed code
   if (!S.marks.changed.size) return "";
   const at = (set) => S.graph.modules.filter((m) => inSet(set, m.id)).map((m) => shown(m.id));
   const ch = at(S.marks.changed), rp = at(S.marks.ripple).filter((x) => !ch.includes(x));
@@ -889,8 +889,8 @@ function wireCanvas() {
 /* ---------------- edge tooltip (keyboard users get the same receipts in the panel) ---------------- */
 // What one module takes from another, by name: the functions and classes behind an import arrow.
 const takes = (e) => [...new Set(e.receipts.map((r) => r.name).filter(Boolean))];
-// Golden rule 2: hovering a line says in plain words what the link is and what it means for a change, with its
-// An optional second look (off by default, golden rule 1): a read-only run that reads only what this run changed and
+// Golden rule 3: hovering a line says in plain words what the link is and what it means for a change, with its
+// An optional second look (off by default, golden rule 7): a read-only run that reads only what this run changed and
 // reports real bugs and broken contracts, nothing about style.
 function renderReview(root, job, c) {
   const files = c && c.files ? c.files.map((f) => f.path) : [];
@@ -1304,11 +1304,11 @@ function newRun(prompt, scope, at, readOnly, phase) {
   return view;
 }
 
-/* ---------------- the project's own docs on the map (golden rules 1, 2, 7) ----------------
+/* ---------------- the project's own docs on the map (golden rules 3, 5 and 7) ----------------
    Docs stay the project's markdown files; modfence places each on the boxes it is about (docs.py) and the user can
    add or remove a place, on a box or on a link. A run fenced to a box gets pointers to its docs, not their text. */
 const docsOn = (keys) => (S.docs?.docs || []).filter((d) => d.boxes.some((b) => keys.includes(b)));
-// The same map, as text for any agent: paste it into Cursor, Codex or a new session (golden rule 1).
+// The same map, as text for any agent: paste it into Cursor, Codex or a new session (golden rule 7).
 async function copyForAgents(url, what) {
   try {
     const { text, tokens } = await api(url);
@@ -1341,7 +1341,7 @@ async function openSkills(refresh) {
     catch (e) { b.disabled = false; toast(e.message, false); }
   }));
 }
-function renderLesson(root, job) { // golden rule 7: what this run taught goes into the docs of the box it changed
+function renderLesson(root, job) { // golden rule 5: what this run taught goes into the docs of the box it changed
   const fr = fileRoles(), keys = [...new Set(job.scope.flatMap((s) => Object.keys(fr).filter((f) => f === s || f.startsWith(s + "/")).map((f) => "role:" + fr[f])))];
   const docs = docsOn(keys), rid = keys[0]?.slice(5), fallback = `docs/${(rname(rid) || "notes").replace(/[^a-z0-9]+/gi, "_").toLowerCase()}.md`;
   const box = document.createElement("div");
@@ -1362,7 +1362,7 @@ function renderLesson(root, job) { // golden rule 7: what this run taught goes i
   };
 }
 
-/* Golden rules 4 and 7: the agent stopped at the fence. Each file it needs is a card: the change it wants and why, and
+/* Golden rules 4 and 5: the agent stopped at the fence. Each file it needs is a card: the change it wants and why, and
    the user's choice. Approving continues the same conversation with the file (or its whole role) inside the fence. */
 function renderRequests(root, items, job, replay, hand) { // hand: the user's own agent asked; answer it in place
   const fr = fileRoles(), box = document.createElement("div");
@@ -1531,7 +1531,7 @@ function md(src) {
 
 /* ---------------- composer & runs ---------------- */
 function autosize() { const t = $("#prompt"); t.style.height = "auto"; t.style.height = Math.min(200, Math.max(54, t.scrollHeight)) + "px"; syncSend(); }
-// Golden rule 1: the pipeline routes by what the fence touches. A task inside one role that nothing outside depends
+// Golden rule 7: the pipeline routes by what the fence touches. A task inside one role that nothing outside depends
 // on through copies, HTTP or shared history takes the fast path (build at once, lean rule, tests). Anything else takes
 // the full path (plan first; questions only where the task is unclear), and the reasons are shown. One click switches.
 function route(scope = [...S.scope]) {
@@ -1575,7 +1575,7 @@ async function send() {
   const r = route();
   if (await startRun(prompt, [...S.scope], S.readOnly, S.readOnly ? null : r && !r.full ? "build" : "plan")) { $("#prompt").value = ""; autosize(); }
 }
-// The default way to work (golden rules 4, 7): your own agent does the task. modfence fences the box for every agent
+// The default way to work (golden rules 4 and 5): your own agent does the task. modfence fences the box for every agent
 // started in the project, copies the task with the fence note, marks the boxes your agent changes as it goes, and
 // reviews the result like a run when you say it is done.
 async function startHand(prompt, scope, label) {

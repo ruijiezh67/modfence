@@ -1,4 +1,4 @@
-"""Which way of building the first level of the map is best for module vibe coding? (golden rules 1, 4, 6)
+"""Which way of building the first level of the map is best for module vibe coding? (golden rules 2, 4 and 7)
 
 Vibe coding with modfence is: pick one box, let the agent change it. So a first level is good when a real change fits
 in one box (the fence covers it) and that box is small (the fence is tight: few tokens, little else exposed). Both are

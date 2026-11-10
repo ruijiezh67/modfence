@@ -1,4 +1,4 @@
-"""Can a model read the brief? A cheap comprehension probe of brief.ENCODINGS before any coding run (golden rule 1:
+"""Can a model read the brief? A cheap comprehension probe of brief.ENCODINGS before any coding run (golden rule 7:
 the brief's format is whatever measures best; this probe screens out encodings a model misreads).
 
 For each fence, questions with known answers are generated from brief.facts (deterministic; no model writes them):

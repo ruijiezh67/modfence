@@ -657,7 +657,7 @@ body[data-view="history"] :is(.crumbs, .legend, .zoom, .hint) { display: none; }
 .lesson input { height: 30px; padding: 0 8px; border: 1.5px solid var(--line-2); border-radius: var(--r); background: var(--surface); color: var(--text); }
 .lesson select { height: 30px; max-width: 60%; }
 
-/* golden rule 1: which path a task takes, and why */
+/* golden rule 7: which path a task takes, and why */
 .route { all: unset; display: block; margin: 6px 0 2px; padding: 6px 8px; border-radius: var(--r); font-size: 12.5px; line-height: 1.4; cursor: pointer; color: var(--text-2); border: 1px dashed var(--line-2); }
 .route[hidden] { display: none; }
 .route.fast b { color: var(--ok); }

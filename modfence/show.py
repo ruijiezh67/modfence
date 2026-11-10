@@ -1,7 +1,7 @@
 """The seal's escape hatch, runnable by path from any project: `python <this file> path/to/file.py[::name]`.
 
 Prints a file's interface, or one name's stub with its full docstring, never its body (golden rule 4). Every use shows
-in the run log; frequent use means the brief is missing something (golden rule 1).
+in the run log; frequent use means the brief is missing something (golden rule 7).
 """
 import os, sys
 

@@ -1,4 +1,4 @@
-"""The AI-only brief of a fence (golden rules 1, 4 and 6).
+"""The AI-only brief of a fence (golden rules 2, 4 and 7).
 
 During a sealed run the agent cannot read code outside its fence. This brief is all it sees of the rest of the project.
 It is built from the import graph's receipts and Python's ast, with no model call, and holds three things:
@@ -234,7 +234,7 @@ def show(root, name):
     return _stub(u) + (f'\n"""{doc}"""' if doc else "")
 
 
-# ---------- the contract across a run (golden rule 3): did a run break what other modules use? ----------
+# ---------- the contract across a run (golden rule 5): did a run break what other modules use? ----------
 def _params(fn):
     """[(name, kind, required, default source)] for a def, self/cls dropped."""
     a, out = fn.args, []

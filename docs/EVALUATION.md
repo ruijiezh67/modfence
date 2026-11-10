@@ -153,7 +153,7 @@ The structural metrics and the reference disagree: clustering the import graph g
 
 modfence ships the last row: from 0.42 (best deterministic) to 0.61 ARI for about one cent, and Sonnet at ten times the cost was no better. For scale only, since the systems differ: the best 2026 architecture-recovery method reports ARI 0.51 on eight other systems. Limits: one reference system, one annotator, three runs per row, and the model reads the same docs the reference was built from, which favours it. That is why the result is a proposal the user confirms, not an answer.
 
-## 5. The AI-only brief, sealed runs and contracts (golden rules 1, 3, 4)
+## 5. The AI-only brief, sealed runs and contracts (golden rules 4, 5 and 7)
 
 Measured 2026-11-08. Raw rows: `bench/results/brief_probe_haiku.jsonl`, `bench/results/token_bench_round*.jsonl`.
 
@@ -215,7 +215,7 @@ The real flags on rich include a moved class (`CellTable`, 23 user files), a cha
 
 Recall, that is breaks the check misses, is N/A: it needs labelled breaks, which these histories do not have. Known blind spots: uses through `getattr` or re-exported facades, and behaviour changes that keep the signature.
 
-## 6. Building the first level: which grouping fits vibe coding (golden rules 2, 4, 6)
+## 6. Building the first level: which grouping fits vibe coding (golden rules 2, 3 and 4)
 
 The first level holds at most 7 areas; you pick one, then a role in it, and fence it. A grouping is good for that when a real change fits one area (one fence covers it) and areas are small (a tight fence). `bench/area_bench.py` measures both on each project's own git history, at zero model cost except the model row:
 
@@ -246,7 +246,7 @@ What this says:
 
 Limits: one held-out split per project; public units are deterministic groups, not model-named roles; whether people find these areas easier to pick from is N/A (no user study).
 
-## 7. Building roles: the level you fence (golden rules 4, 6)
+## 7. Building roles: the level you fence (golden rules 2 and 4)
 
 A role is good to fence when a change that touches several files stays inside it. `bench/role_bench.py` scores each way of grouping files on the same five histories (newest 30% held out; commits that change 2 to 30 code files, entry points, doors and shared config left out). Methods make different numbers and sizes of groups, and small groups fit fewer changes by chance alone, so each is compared with its own floor: the same files shuffled among groups of the same sizes, 20 seeds. **Lift** = one-role share minus that floor. **Crumbs** = groups under 2% of the files, which become useless one-file boxes on the map.
 
@@ -267,11 +267,11 @@ What this says:
 - **Merging crumbs first costs some lift** (rich .23 to .08, celery .27 to .20) but leaves no one-file boxes; a map of crumbs is not usable, so the shipped method pays that. On the private project the top-folder term in the similarity removed 7 crumbs (lift .70 to .67).
 - Folders alone swing from best (textual, .79, but one folder holds 42% of the code) to below chance (rich, -.04): a hint, not a rule.
 
-**Then the user chose function granularity anyway.** A first level of observer, inference, memory and so on is what people think in (golden rule 2), and those jobs span folders, which the deterministic signals only approximate: the shipped first level is now functions sorted by a model from blocks code cuts (copies always joined), with roles grouped by history inside each function. On the private project that gives 7 functions and 40 roles with lift .30 (21 crumbs, cover .10); these roles used the whole history, so the number is optimistic. That is the measured price of the granularity people asked for, against .67 for history-only roles (15 roles, cover .14). Cost of one proposal there: $0.18 (the function call with Sonnet $0.17).
+**Then the user chose function granularity anyway.** A first level of observer, inference, memory and so on is what people think in (golden rule 3), and those jobs span folders, which the deterministic signals only approximate: the shipped first level is now functions sorted by a model from blocks code cuts (copies always joined), with roles grouped by history inside each function. On the private project that gives 7 functions and 40 roles with lift .30 (21 crumbs, cover .10); these roles used the whole history, so the number is optimistic. That is the measured price of the granularity people asked for, against .67 for history-only roles (15 roles, cover .14). Cost of one proposal there: $0.18 (the function call with Sonnet $0.17).
 
 Limits: one split per project; 65 to 739 scored commits; the earlier-roles row exists only where such roles were stored; whether people find these roles easier to pick from is N/A.
 
-## 8. The lean rule (golden rule 1, built in)
+## 8. The lean rule (golden rule 7, built in)
 
 Every edit run now carries `runner.LEAN_RULE`, three sentences in the spirit of the ponytail skill: the smallest change that does the task, reuse what the fence and brief have, no new dependency, file, option or abstraction, no code restated in the answer. Measured with `bench/token_bench.py --only sealed,lean` on the four rich tasks, 3 runs each, Claude Code with its default model, 2026-11-09 (`bench/results/token_bench_lean.jsonl`):
 

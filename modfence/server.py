@@ -91,7 +91,7 @@ def make_handler(app, port):
                 if u.path == "/api/roles":
                     root = app.project(q)
                     return self.send_json(roles.view(root, analyze.analyze(root)))
-                if u.path == "/api/handoff":  # the map as text for any agent (golden rule 1)
+                if u.path == "/api/handoff":  # the map as text for any agent (golden rule 7)
                     root = app.project(q)
                     text = handoff.build(root, analyze.analyze(root))
                     return self.send_json({"text": text, "tokens": len(text) // 4})

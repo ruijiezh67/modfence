@@ -1,11 +1,11 @@
 """Does module vibe coding save tokens on a real library? Plain Claude Code against a sealed modfence run, on the four
-rich tasks in bench/token_tasks.py (golden rules 1 and 4; the experiment the survey in research notes calls A0 vs A2).
+rich tasks in bench/token_tasks.py (golden rules 4 and 7; the experiment the survey in research notes calls A0 vs A2).
 
   vibe    Claude Code alone, the task spec only: "just ask the model".
   plain   Claude Code alone. Prompt: the task spec plus "The change belongs in `<module>`." No note, no hooks.
   sealed  modfence: the same prompt; fence = the module; the system note carries the brief; other modules' code is
           hidden. Without the lean rule (runner.LEAN_RULE), as measured before it existed.
-  lean    sealed plus the lean rule (golden rule 1, built in since 2026-11-09). (Round 1 also fenced the tests and its note invited test writing; see docs/EVALUATION.md.)
+  lean    sealed plus the lean rule (golden rule 7, built in since 2026-11-09). (Round 1 also fenced the tests and its note invited test writing; see docs/EVALUATION.md.)
 
 Same prompt text, same fresh copy of rich (no .git) per attempt, CLAUDE_CODE_DISABLE_CLAUDE_MDS=1, no plan step and no
 done check in either arm (so only the context differs). After the run, the hidden acceptance tests and rich's own test

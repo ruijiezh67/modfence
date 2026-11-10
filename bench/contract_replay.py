@@ -1,4 +1,4 @@
-"""Replay a git history through modfence's contract check (golden rule 3), at zero model cost.
+"""Replay a git history through modfence's contract check (golden rule 5), at zero model cost.
 
 For each commit, the parent tree is analyzed (import graph with receipts), and every .py file the commit modified or
 deleted is checked: did it break a name another module used at the parent? Each flag is then sorted by what the commit

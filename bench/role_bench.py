@@ -1,4 +1,4 @@
-"""Which way of grouping files into roles fits vibe coding? (golden rules 4, 6; the level you usually fence)
+"""Which way of grouping files into roles fits vibe coding? (golden rules 2 and 4; the level you usually fence)
 
 A role is good to fence when a real change that touches several files stays inside one role. Methods give different
 numbers and sizes of roles, and smaller roles fit fewer changes by chance alone, so each method is compared with its

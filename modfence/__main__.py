@@ -13,7 +13,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    if argv[:1] == ["receipt"]:  # what a change touched and broke, in the terminal (golden rule 7)
+    if argv[:1] == ["receipt"]:  # what a change touched and broke, in the terminal (golden rule 5)
         from . import receipt
         return receipt.main(argv[1:])
     ap = argparse.ArgumentParser(prog="modfence", description="See your project as modules, and prompt Claude about one module at a time.")

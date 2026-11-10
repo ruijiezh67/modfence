@@ -1,4 +1,4 @@
-"""The map as text for any AI agent (golden rules 1, 2, 7): paste it into Cursor, Codex or a new session so the agent
+"""The map as text for any AI agent (golden rules 3, 5 and 7): paste it into Cursor, Codex or a new session so the agent
 starts from the project's shape instead of exploring it.
 
 One project-level text, deterministic and capped (BUDGET characters, about 1.5k tokens): the functions and their roles,

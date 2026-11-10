@@ -1,4 +1,4 @@
-"""modfence receipt: what a change touched and what it may break, from git, with no UI and no model (golden rule 7).
+"""modfence receipt: what a change touched and what it may break, from git, with no UI and no model (golden rule 5).
 
     modfence receipt [PROJECT] [--since REV] [--json]
 
@@ -56,7 +56,7 @@ def build(root, since="HEAD"):
         m["minus"] += f["minus"] or 0
     changed = sorted(mods)
     users = [m for m in analyze.dependents(graph, changed) if m not in mods]
-    # The map's own level (golden rule 2): the areas and roles of the project, when it has them, else the modules.
+    # The map's own level (golden rule 3): the areas and roles of the project, when it has them, else the modules.
     store = roles.load_store(root) or {}
     role_area = {r: a for a, v in (store.get("areas") or {}).items() for r in v.get("roles", [])}
     name = lambda d, k: ((store.get(d) or {}).get(k) or {}).get("name")

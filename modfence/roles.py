@@ -59,7 +59,7 @@ def hubs(graph, files, share=0.05, floor=8):
     return {f for f in files if len(imp.get(f, ())) >= cut}
 
 
-# ---------- cross-cutting files: not features, so not boxes and not edited by default (golden rules 2, 4, 6) ----------
+# ---------- cross-cutting files: not features, so not boxes and not edited by default (golden rules 2, 3 and 4) ----------
 # Fan-in alone cannot tell settings.py from memory.py (both used by most roles), so position in the import graph is
 # combined with naming conventions most projects follow. ponytail: word lists, extend them when a project disagrees.
 ENTRY = re.compile(r"^(__main__|main|\w+_main|main_\w+|manage|wsgi|asgi|run)$")
@@ -96,7 +96,7 @@ def kinds(graph, role_of):
     return kind, door_of
 
 
-# ---------- runtime links: what talks to what without an import (golden rules 2, 7) ----------
+# ---------- runtime links: what talks to what without an import (golden rules 3 and 5) ----------
 # Separate programs (a desktop app, a demo service, evaluation scripts) call each other over HTTP or start each other,
 # so the import graph shows them as islands. Two string matches, deterministic, every link with its file and line.
 ROUTE = re.compile(r"@\w+\.(?:get|post|put|delete|patch|websocket|api_route|route)\(\s*[\"']([^\"']+)")

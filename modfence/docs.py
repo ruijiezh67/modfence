@@ -1,4 +1,4 @@
-"""The project's own docs, placed on the map (golden rules 1, 2, 7).
+"""The project's own docs, placed on the map (golden rules 3, 5 and 7).
 
 A project's markdown files (README.md, design notes, runbooks) stay where they are, in git. modfence only works out
 which box of the map each one is about, so that:
