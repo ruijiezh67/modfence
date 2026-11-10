@@ -3,7 +3,7 @@
 Run from the modfence folder: python -m unittest discover -s tests -t .
 """
 from collections import Counter
-import atexit, http.client, json, os, re, shutil, subprocess, sys, tempfile, threading, time, unittest
+import atexit, contextlib, http.client, io, json, os, re, shutil, subprocess, sys, tempfile, threading, time, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -749,6 +749,39 @@ class HandoffTest(unittest.TestCase):
         self.assertLessEqual(len(text), handoff.BUDGET)
         for want in ("## Functions", "- engine", "- surface", "roles: core", "surface -> engine: imports"):
             self.assertIn(want, text)
+
+
+class ReceiptTest(unittest.TestCase):
+    def test_the_receipt_names_what_changed_and_the_contract_it_broke(self):
+        from modfence import receipt
+        d = project()
+        git = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True, check=True)
+        git("init", "-q"); git("add", "-A")
+        git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "base")
+        r = receipt.build(d)
+        self.assertEqual((r["files"], r["ok"]), ([], True))
+        self.assertIn("nothing changed", receipt.text(r))
+        write(os.path.join(d, "app/core/values.py"), '"""Values."""\nLIMIT = 3\n\ndef double(x, y):\n    return 2 * x\n')
+        write(os.path.join(d, "app/core/extra.py"), "X = 1\n")  # untracked counts too
+        r = receipt.build(d)
+        self.assertEqual([f["path"] for f in r["files"]], ["app/core/extra.py", "app/core/values.py"])
+        self.assertEqual([a["id"] for a in r["areas"]], ["app/core"])
+        self.assertIn("app/api", r["used_by"], "the module that imports the change may break")
+        self.assertEqual([(c["file"], c["name"]) for c in r["contract"]], [("app/core/values.py", "double")])
+        self.assertTrue(any(u.startswith("app/api/handlers.py:") for u in r["contract"][0]["users"]))
+        self.assertFalse(r["ok"])
+        self.assertIn("CONTRACT BROKEN", receipt.text(r))
+        scope_guard.arm(d, ["app/api"], False)
+        try:
+            self.assertEqual(receipt.build(d)["outside_fence"], ["app/core/extra.py", "app/core/values.py"])
+        finally:
+            scope_guard.disarm(d)
+        quiet = lambda: contextlib.redirect_stdout(io.StringIO())
+        with quiet():
+            self.assertEqual(receipt.main([d]), 1, "a broken contract fails the command, so a hook or CI can block on it")
+        write(os.path.join(d, "app/core/values.py"), '"""Values."""\nLIMIT = 4\n\ndef double(x):\n    return 2 * x\n')
+        with quiet():
+            self.assertEqual(receipt.main([d]), 0, "a change inside the contract passes")
 
 
 class WebTest(unittest.TestCase):

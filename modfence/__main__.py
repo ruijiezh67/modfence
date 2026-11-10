@@ -1,4 +1,5 @@
 """modfence [PROJECT ...] [--port 8765] [--no-browser] [--test-cmd CMD]
+modfence receipt [PROJECT] [--since REV] [--json]   what a change touched and may break (exit 1 on a break)
 
 With no project given, opens the current directory if it holds Python files, else the bundled examples.
 """
@@ -11,6 +12,10 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["receipt"]:  # what a change touched and broke, in the terminal (golden rule 7)
+        from . import receipt
+        return receipt.main(argv[1:])
     ap = argparse.ArgumentParser(prog="modfence", description="See your project as modules, and prompt Claude about one module at a time.")
     ap.add_argument("projects", nargs="*", help="project folders (default: the current directory, else the bundled examples)")
     ap.add_argument("--port", type=int, default=8765)
