@@ -7,7 +7,7 @@ decides them. bench/roles_eval.py scores the methods against a reference built f
 
 Each method returns {file: group}. Files that many others import (settings, utils) go to the group "shared".
 """
-import math, os, re
+import functools, math, os, re
 from collections import Counter, defaultdict
 
 SHARED = "shared"
@@ -104,20 +104,21 @@ PREFIX = re.compile(r"APIRouter\([^)]*prefix\s*=\s*[\"']([^\"']+)")
 DOTTED = re.compile(r"^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+$")
 
 
+@functools.lru_cache(maxsize=4096)  # ponytail: keyed on the file's text; parsing 400 files took 5 s on every map load
 def _strings(text):
     """(string, line) for every string literal; an f-string's holes become {}."""
     import ast
     try:
         tree = ast.parse(text)
     except (SyntaxError, ValueError):
-        return []
+        return ()
     out = []
     for n in ast.walk(tree):
         if isinstance(n, ast.Constant) and isinstance(n.value, str):
             out.append((n.value, n.lineno))
         elif isinstance(n, ast.JoinedStr):
             out.append(("".join(p.value if isinstance(p, ast.Constant) and isinstance(p.value, str) else "{}" for p in n.values), n.lineno))
-    return out
+    return tuple(out)
 
 
 def role_cochange(root, members, least=1):
@@ -147,6 +148,18 @@ def runtime_links(graph, files=None):
                 text[f] = fh.read()
         except OSError:
             pass
+    key = tuple(sorted((f, hash(t)) for f, t in text.items()))
+    if _LINKS.get(root, (None,))[0] == key:  # unchanged files: the same links (each map load asks for them)
+        return _LINKS[root][1]
+    out = _runtime_links(text, top)
+    _LINKS[root] = (key, out)
+    return out
+
+
+_LINKS = {}  # root -> (files and text hashes, links); ponytail: one entry per project, no eviction
+
+
+def _runtime_links(text, top):
     routes = []
     for f, t in text.items():
         m = PREFIX.search(t)
