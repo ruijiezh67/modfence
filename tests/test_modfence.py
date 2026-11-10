@@ -94,6 +94,26 @@ class AnalyzeTest(unittest.TestCase):
         self.assertEqual(analyze.snapshot(d), before, "a warm snapshot matches")
 
 
+class BlocksTest(unittest.TestCase):
+    def test_a_gallery_is_one_block_and_a_flat_catch_all_is_cut_by_imports(self):
+        d = tempfile.mkdtemp(prefix="modfence-test-")
+        _dirs.append(d)
+        files = {"examples/a/a.py": "", "examples/a/tests/test_a.py": "", "examples/b/b.py": "", "examples/b/tests/test_b.py": ""}
+        # a flat package of 8 files whose names share no word: two import communities
+        files.update({f"pkg/{n}.py": f"from pkg import {m}\n" for n, m in
+                      [("alpha", "beta"), ("beta", "gamma"), ("gamma", "alpha"), ("delta", "alpha"),
+                       ("north", "south"), ("south", "east"), ("east", "north"), ("west", "north")]})
+        for rel, text in files.items():
+            os.makedirs(os.path.dirname(os.path.join(d, rel)), exist_ok=True)
+            write(os.path.join(d, rel), text)
+        g = analyze.analyze(d)
+        blk = roles.blocks(g, roles.code_files(g))
+        self.assertEqual({blk["examples/a/a.py"], blk["examples/b/b.py"]}, {"examples"}, "standalone example projects are one block")
+        self.assertEqual(blk["pkg/alpha.py"], blk["pkg/beta.py"])
+        self.assertEqual(blk["pkg/north.py"], blk["pkg/south.py"])
+        self.assertNotEqual(blk["pkg/alpha.py"], blk["pkg/north.py"], "a flat catch-all is cut where its imports part")
+
+
 class LearnedRootsTest(unittest.TestCase):
     def test_a_folder_the_project_puts_on_sys_path_is_learned(self):
         d = tempfile.mkdtemp(prefix="modfence-test-")
@@ -787,6 +807,8 @@ class ModulesTest(unittest.TestCase):
         for f in code:
             self.assertEqual(modules.owner(back, f), "engine" if f.startswith("app/core") else "surface")
         self.assertIsNone(modules.owner(back, "app/core/tests/test_values.py"), "tests belong to no module")
+        self.assertTrue(modules.match(".claude-plugin/", ".claude-plugin/plugin.json"), "a dot folder keeps its dot")
+        self.assertTrue(modules.match("./app/", "app/core/values.py"))
         self.assertEqual(modules.owner([{"name": "a", "paths": ["app/"]}, {"name": "b", "paths": ["app/core/values.py"]}],
                                        "app/core/values.py"), "b", "the longest line wins")
         write(os.path.join(d, modules.FILE), modules.render(back).replace("## surface", "## front"))  # edited by hand

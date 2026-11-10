@@ -143,7 +143,8 @@ def build(root, since="HEAD"):
     stale = None
     if shared is not None:  # golden rule 1: the map must not go stale (a printed map of a city that keeps building)
         code = [p for p in graph["files"] if not modules._is_test(p)]
-        stale = {"lines": [f"{m['name']}: {p}" for m in shared for p in m["paths"] if not any(modules.match(p, c) for c in graph["files"])],
+        every = set(graph["files"]) | set(_git(root, "ls-files").decode("utf-8", "replace").splitlines())  # not only .py: web/, hooks/
+        stale = {"lines": [f"{m['name']}: {p}" for m in shared for p in m["paths"] if not any(modules.match(p, c) for c in every)],
                  "unassigned": [p for p in code if modules.owner(shared, p) is None]}
     tests = runner.select_tests(graph, [f["path"] for f in py]) if py else None
     return {"since": since, "files": files, "modules": [{"id": m, **mods[m]} for m in changed], "users": users,

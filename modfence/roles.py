@@ -582,10 +582,53 @@ FUNC_SYSTEM = (
     "{\"functions\": [{\"name\": \"...\", \"purpose\": \"...\", \"blocks\": [\"<block id>\", ...]}]}")
 
 
+SPLIT_AT = 8  # ponytail: a flat catch-all of 8 or more files is cut by imports; smaller ones read fine whole
+PROJECT_MARKS = ("tests", "test", "pyproject.toml", "setup.py", "setup.cfg")
+
+
+def galleries(root, files):
+    """Folders that hold two or more projects of their own (each with its tests or its packaging), such as examples/
+    or plugins/: each is one block, never spread over the product's functions. The repository root is never one."""
+    kids = defaultdict(set)
+    for f in files:
+        parts = f.split("/")
+        for i in range(1, len(parts) - 1):
+            kids["/".join(parts[:i])].add(parts[i])
+    found = [d for d, cs in kids.items()
+             if sum(any(os.path.exists(os.path.join(root, d, c, m)) for m in PROJECT_MARKS) for c in cs) >= 2]
+    return sorted(d for d in found if not any(d.startswith(o + "/") for o in found))
+
+
 def blocks(graph, files=None, copy_share=0.3):
     """{file: block}: by_folder_words groups, a group joined with another when at least `copy_share` of the smaller
-    one's files are copies of the other's (a platform or demo copy does the same job). Deterministic."""
+    one's files are copies of the other's (a platform or demo copy does the same job). Deterministic. Golden rule 2,
+    learned from the project: a gallery of standalone projects is one block, and a flat folder whose file names share
+    no word (one catch-all group) is cut by its import communities instead."""
+    files = files or code_files(graph)
     fw = by_folder_words(graph, files)
+    gal = galleries(graph["root"], files)
+    for f in fw:
+        d = next((d for d in gal if f.startswith(d + "/")), None)
+        if d:
+            fw[f] = d
+    by_dir = defaultdict(list)
+    for f in fw:
+        by_dir[os.path.dirname(f)].append(f)
+    for folder, fs in by_dir.items():
+        if any(fs[0].startswith(d + "/") for d in gal):
+            continue
+        groups = defaultdict(list)
+        for f in fs:
+            groups[fw[f]].append(f)
+        # names that share no word: a catch-all group (its word is the folder's own name), or every file alone
+        nameless = [g for g in groups.values() if fw[g[0]].rsplit(":", 1)[-1] == os.path.basename(folder)]
+        if len(groups) == len(fs):
+            nameless = [fs]
+        for part in nameless:
+            if len(part) >= SPLIT_AT:
+                sub = by_imports(graph, part, resolution=1.5)
+                if 2 <= len(set(sub.values())) < len(part):
+                    fw.update({f: f"{folder}/{sub[f]}" for f in part})
     size, copies = Counter(fw.values()), Counter()
     for l in runtime_links(graph, sorted(fw)):
         a, b = fw.get(l["file"]), fw.get(l["target_file"])

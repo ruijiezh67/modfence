@@ -60,7 +60,8 @@ def save(root, mods):
 
 
 def match(pattern, path):
-    pattern = pattern.replace("\\", "/").lstrip("./") if pattern not in (".", "./") else ""
+    pattern = pattern.replace("\\", "/")
+    pattern = "" if pattern in (".", "./") else pattern[2:] if pattern.startswith("./") else pattern  # .claude/ keeps its dot
     if pattern.endswith("/"):
         return path.startswith(pattern)
     if any(c in pattern for c in "*?["):
