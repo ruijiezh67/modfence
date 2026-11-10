@@ -940,7 +940,7 @@ function newRun(prompt, scope, at, readOnly, phase) {
   const root = document.createElement("article");
   root.className = `run${phase ? " " + phase : ""}`;
   const what = phase === "plan" ? "planning, read only" : phase === "build" ? "building, can edit" : readOnly ? "read only" : "can edit";
-  root.innerHTML = `<div class="rhead"><span class="mono">${hhmm(at)}</span><span>${what} <span class="mono">${esc(scope.map(shown).join(", "))}</span></span><span class="st live">${phase === "plan" ? "Planning" : "Running"}</span></div>
+  root.innerHTML = `<div class="rhead"><span class="mono">${hhmm(at)}</span><span>${what} <span class="mono">${esc(scope.map(shown).join(", "))}</span></span><span class="st live">${phase === "plan" ? "Planning" : phase === "hand" ? "Fence on" : "Running"}</span></div>
     ${prompt ? `<p class="instr">${esc(prompt)}</p>` : ""}<div class="rbody"></div>`; // a hand-off's task is typed in the agent
   $("#v-talk").appendChild(root);
   const body = $(".rbody", root), st = $(".rhead .st", root);
@@ -1153,7 +1153,7 @@ function showHand(res, copied) {
   w.className = "handwait";
   w.innerHTML = `<p><b>Fence on: ${esc(label)}.</b> ${copied ? "This line is copied" : "Click the line to copy it"}: paste it into your agent's chat and type the task after it. Edits outside the box are blocked.</p>`
     + `<textarea class="handtext line" readonly rows="2" title="Click to copy">${esc(res.line)}</textarea>`
-    + `<p class="meta" data-live>Watching for changes…</p><div class="pa"><button class="btn primary" type="button" data-review>Review changes</button></div>`;
+    + `<p class="meta" data-live>No edits yet. Nothing runs until you paste the line and a task into your agent.</p><div class="pa"><button class="btn primary" type="button" data-review>Review changes</button></div>`;
   job.view.root.appendChild(w);
   job.wait = w;
   $(".handtext", w).onclick = (e) => { // execCommand works where the async clipboard is not allowed (an editor's web view)
@@ -1175,7 +1175,8 @@ function showHand(res, copied) {
     try {
       const s = await api(`/api/hand/status?${q("&job=" + job.id)}`);
       if (job.reviewing) return;
-      $("[data-live]", w) && ($("[data-live]", w).textContent = s.changed.length ? `Your agent changed ${plural(s.changed.length, "file")} so far: ${s.changed.slice(0, 4).join(", ")}${s.changed.length > 4 ? " …" : ""}` : "Watching for changes… none yet.");
+      job.changed = s.changed.length;
+      $("[data-live]", w) && ($("[data-live]", w).textContent = s.changed.length ? `Your agent changed ${plural(s.changed.length, "file")} so far: ${s.changed.slice(0, 4).join(", ")}${s.changed.length > 4 ? " …" : ""}` : "No edits yet. Nothing runs until you paste the line and a task into your agent.");
       S.marks = { changed: new Set(s.modules), ripple: new Set(), stats: {} }; paintSelection();
       const fresh = s.asks.filter((p) => !job.asked.has(p));
       if (fresh.length) {
@@ -1220,9 +1221,9 @@ function showRunbar() { // while your agent works: one line at the top; a click 
   clearInterval(runTimer);
   if (!on) return;
   bar.onclick = () => { if (!document.body.classList.contains("panel-open")) openFence(job.scope, job.label, ""); };
-  const draw = () => {
-    const secs = Math.round(Date.now() / 1000 - job.at), open = document.body.classList.contains("panel-open");
-    bar.innerHTML = `<span class="dot" aria-hidden="true"></span><span>Your agent is fenced to <b>${esc(job.label || "")}</b> · ${secs < 120 ? secs + "s" : Math.round(secs / 60) + " min"}${open ? "" : " · click to review"}</span>`;
+  const draw = () => { // nothing runs here: modfence only holds the fence until your agent edits inside it
+    const n = job.changed || 0, open = document.body.classList.contains("panel-open");
+    bar.innerHTML = `<span class="dot" aria-hidden="true"></span><span>Fence on <b>${esc(job.label || "")}</b> · ${n ? `your agent changed ${plural(n, "file")}` : "no agent edit yet"}${open ? "" : " · click to review"}</span>`;
   };
   draw();
   runTimer = setInterval(draw, 1000);
