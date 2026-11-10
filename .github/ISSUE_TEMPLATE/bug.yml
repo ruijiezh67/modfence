@@ -1,0 +1,25 @@
+name: Bug
+description: Something does not work as described.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: A public project or one of the bundled examples if you can.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console output or screenshot
+      description: The terminal running modfence, and the browser console if the page misbehaves.
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: modfence, Python, OS, browser, Claude Code (`claude --version`)

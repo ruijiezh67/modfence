@@ -4,16 +4,33 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "modfence"
-version = "0.2.0"
-description = "Fence coding: see a Python project as modules, aim Claude Code at one of them, review each run by function."
+version = "0.3.0"
+description = "Understand your project as modules, then direct the AI one module at a time: a local code map where every box fences your coding agent."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Ruijie Zheng", email = "ruijiezh@umich.edu" }]
 dependencies = []
+keywords = ["ai-agents", "claude-code", "code-map", "dependency-graph", "vibe-coding", "developer-tools", "guardrails"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Web Environment",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development",
+  "Topic :: Software Development :: Quality Assurance",
+]
 
 [project.urls]
 Homepage = "https://github.com/ruijiezh67/modfence"
+Issues = "https://github.com/ruijiezh67/modfence/issues"
+Changelog = "https://github.com/ruijiezh67/modfence/blob/main/CHANGELOG.md"
 
 [project.scripts]
 modfence = "modfence.__main__:main"

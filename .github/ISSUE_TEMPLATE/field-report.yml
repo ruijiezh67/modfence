@@ -1,0 +1,39 @@
+name: Field report
+description: You tried modfence on a real project. Tell us how it went.
+title: "Field report: "
+labels: ["field report"]
+body:
+  - type: markdown
+    attributes:
+      value: "Thanks for trying modfence. Rough notes are fine. Please do not paste private code."
+  - type: input
+    id: size
+    attributes:
+      label: Project size
+      description: Roughly how many Python files and lines? (shown at the top of the map)
+      placeholder: "e.g. 400 files, 90k lines"
+    validations:
+      required: true
+  - type: dropdown
+    id: functions
+    attributes:
+      label: Did the first-level functions match how you think about the project?
+      options: ["Yes, mostly", "Partly", "No"]
+    validations:
+      required: true
+  - type: textarea
+    id: task
+    attributes:
+      label: What did you ask the agent to do, and what happened?
+      description: Fast path or plan first? Did it ask to cross the fence? Did the tests pass? Cost if you saw it.
+    validations:
+      required: true
+  - type: textarea
+    id: confusing
+    attributes:
+      label: What confused you or got in the way?
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: modfence (commit or version), Python, OS, Claude Code version (`claude --version`)

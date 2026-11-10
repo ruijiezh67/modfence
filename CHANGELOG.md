@@ -1,0 +1,27 @@
+# Changelog
+
+## 0.3.0 (2026-11-09)
+
+The map became a place to direct an agent from, and every part of a run became visible.
+
+- **Functions first.** The first level is at most 7 functions (observer, inference, memory ...), sorted by one model call from blocks that code cuts and that keep copies of the same code together; inside a function, roles are grouped by git co-change, imports and folders and only named by a model.
+- **Links with evidence.** HTTP calls matched to route decorators, files started by path, copied code, and co-change from git join imports, so separate programs are no longer islands. Boxes with no link are listed apart.
+- **Readable layout.** Cores on top, what uses them below, in at most 4 rows; inside a function, its roles sit in a frame and the other functions outside. Hovering a line explains it in plain words.
+- **Ask in the side bar.** The picked box takes your instruction directly; the map stays where it is.
+- **Ask before crossing the fence.** The agent stops and asks for files outside the fence; you allow a file, a role, or nothing.
+- **Routing and the lean rule.** Self-contained tasks build at once, others plan first; every edit run carries a short lean rule (output tokens −9% measured).
+- **Tests.** The done check runs the tests covering the fence and its users, and sends the agent back once when it adds branching logic without a test.
+- **Review.** Drafted commit messages, an optional review run, and lessons written into the project's docs.
+- **Project docs and skills.** The project's markdown docs are placed on the roles they describe and passed to runs as pointers; skills from skills.sh are matched to the project's libraries and added to the project on a click.
+- **Agents you start yourself** are fenced too while a fence is set.
+- Golden rule 7: modules isolate, and every round says which modules it changed.
+
+## 0.2.0 (2026-11-08)
+
+- Sealed runs: the agent sees other modules only through a compact brief.
+- Module contract check after each run.
+- Roles and parts as the two levels of the map; function graphs removed.
+
+## 0.1.0 (2026-11-06)
+
+- First release: the module graph, fenced Claude Code runs, plan and build, History with diff and revert.

@@ -3,7 +3,7 @@
 Run from the modfence folder: python -m unittest discover -s tests -t .
 """
 from collections import Counter
-import atexit, http.client, json, os, shutil, subprocess, sys, tempfile, threading, time, unittest
+import atexit, http.client, json, os, re, shutil, subprocess, sys, tempfile, threading, time, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -730,6 +730,22 @@ class RunnerTest(unittest.TestCase):
         while not job.done:
             time.sleep(0.05)
         self.assertTrue(any(e["kind"] == "error" and "not found" in e["text"] for e in job.events))
+
+
+class WebTest(unittest.TestCase):
+    """The page has no build step and no browser in CI: check what a typo or a cut too far would break."""
+
+    def test_app_js_parses_and_every_called_view_function_exists(self):
+        js = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "modfence", "web", "app.js"), encoding="utf-8").read()
+        node = shutil.which("node")
+        if node:
+            p = subprocess.run([node, "--check", "-"], input=js, capture_output=True, text=True, encoding="utf-8")
+            self.assertEqual(p.returncode, 0, p.stderr[-500:])
+        defined = set(re.findall(r"^(?:async )?function (\w+)\(", js, re.M)) | set(re.findall(r"^const (\w+) = \(", js, re.M))
+        # functions the run log, the side bar and the map call by name: one cut too far broke a run's end once
+        for name in ("renderReview", "renderLesson", "renderRequests", "renderChanges", "openSkills", "openFence", "route",
+                     "readEdge", "linkPhrase", "drawFrame", "drawChip", "stressLayout", "placeFree", "boxName", "moveTip"):
+            self.assertIn(name, defined, f"{name} is called but not defined")
 
 
 class SkillsTest(unittest.TestCase):
