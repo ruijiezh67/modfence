@@ -1096,6 +1096,23 @@ class ServerTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.d, ".modfence", "fence.json")), "the fence comes off after the review")
         self.assertEqual(json.loads(self.req("GET", "/api/hand/active?p=0")[1]), {}, "a reviewed hand-off is closed")
 
+    def test_allow_a_whole_module_of_modules_md(self):
+        path = os.path.join(self.d, "MODULES.md")
+        write(path, "# Modules\n\n## core\n- app/core/\n\n## rest\n- app/\n")
+        try:
+            res = json.loads(self.req("POST", "/api/hand?p=0", {"prompt": "x", "scope": ["app/core"], "label": "core", "unsealed": True}, {"X-Modfence": "1"})[1])
+            env = {k: v for k, v in os.environ.items() if not k.startswith("MODFENCE_")}
+            hook = lambda p: subprocess.run([sys.executable, scope_guard.__file__, self.d], env=env, capture_output=True, text=True,
+                                            input=json.dumps({"tool_name": "Edit", "tool_input": {"file_path": os.path.join(self.d, p)}})).returncode
+            self.assertEqual(hook("app/api/handlers.py"), 2)
+            status = json.loads(self.req("GET", f"/api/hand/status?p=0&job={res['job']}")[1])
+            self.assertEqual(status["owners"], {"app/api/handlers.py": "rest"}, "the card can offer the whole module")
+            self.req("POST", "/api/hand/answer?p=0", {"job": res["job"], "paths": ["@module:rest"], "ok": True}, {"X-Modfence": "1"})
+            self.assertEqual((hook("app/api/handlers.py"), hook("app/cli/main.py")), (0, 0), "the whole module is granted")
+            self.req("POST", "/api/hand/finish?p=0", {"job": res["job"]}, {"X-Modfence": "1"})
+        finally:
+            os.remove(path)
+
     def test_your_agent_hits_the_fence_and_you_allow_the_file(self):
         res = json.loads(self.req("POST", "/api/hand?p=0", {"prompt": "x", "scope": ["app/core"], "label": "core"}, {"X-Modfence": "1"})[1])
         env = {k: v for k, v in os.environ.items() if not k.startswith("MODFENCE_")}  # an agent the user started by hand

@@ -106,6 +106,7 @@ def make_handler(app, port):
                     split = set(job.graph.get("split", ()))
                     return self.send_json({"changed": changed, "done": job.done, "scope": job.scope,
                                            "asks": scope_guard.pending_asks(job.root, job.scope, job.answered),
+                                           "owners": {p: modules.owner(modules.load(job.root), p) for p in scope_guard.pending_asks(job.root, job.scope, job.answered)},
                                            "modules": sorted({analyze.module_of(p, split) for p in changed if p.endswith(".py")})})
                 if u.path == "/api/brief":  # one box's brief: what it uses and what others use from it
                     root, scope = app.project(q), [s for s in (q.get("scope") or [""])[0].split("+") if s]

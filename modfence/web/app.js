@@ -1374,7 +1374,7 @@ function renderRequests(root, items, job, replay, hand) { // hand: the user's ow
     return `<div class="req" data-k="${k}"><div class="rp"><span class="mono">${esc(it.path)}</span>${role ? ` <span class="rr">in ${esc(role.name)}</span>` : ""}</div>`
       + `<p>${it.why ? esc(it.why) : hand ? "Your agent tried to edit this file. Its reason is in your agent's chat." : "It tried to edit this file; no reason given."}</p>`
       + (replay || !job ? "" : `<div class="pa"><button class="btn primary" type="button" data-file>Allow this file</button>`
-        + (role ? `<button class="btn" type="button" data-role>Allow all of ${esc(role.name)}</button>` : "")
+        + (it.module ? `<button class="btn" type="button" data-mod>Allow all of module ${esc(it.module)}</button>` : role ? `<button class="btn" type="button" data-role>Allow all of ${esc(role.name)}</button>` : "")
         + `<button class="btn quiet" type="button" data-no>Refuse</button></div>`) + `</div>`;
   }).join("");
   root.appendChild(box);
@@ -1386,6 +1386,7 @@ function renderRequests(root, items, job, replay, hand) { // hand: the user's ow
       startRun(`Approved: ${paths.length > 1 ? (role ? role.name : plural(paths.length, "file")) : paths[0]}`, [...new Set([...job.scope, ...paths])], false, job.phase, { job: job.id, paths }); };
     $("[data-file]", el)?.addEventListener("click", () => go([it.path]));
     $("[data-role]", el)?.addEventListener("click", () => go(ownFiles(role)));
+    $("[data-mod]", el)?.addEventListener("click", () => go(["@module:" + it.module])); // golden rule 4: grant a whole module
     $("[data-no]", el)?.addEventListener("click", () => { hand?.(el, [it.path], false); el.classList.add("refused"); el.querySelector(".pa").innerHTML = `<span class="meta">Refused. The fence stays as it was.</span>`; document.querySelectorAll(".node.asks").forEach((n) => n.classList.remove("asks")); });
   });
 }
@@ -1621,7 +1622,7 @@ function showHand(res, copied) {
       if (fresh.length) {
         fresh.forEach((p) => job.asked.add(p));
         if (!w.isConnected || !document.body.classList.contains("panel-open")) await openFence(job.scope, job.label, "");
-        renderRequests(w, fresh.map((path) => ({ path })), job, false, answer); scrollTalk();
+        renderRequests(w, fresh.map((path) => ({ path, module: s.owners?.[path] })), job, false, answer); scrollTalk();
         toast(`Your agent asks to edit ${fresh.length > 1 ? plural(fresh.length, "file") + " outside the fence" : fresh[0]}.`);
       }
     } catch {}

@@ -11,7 +11,7 @@ ripple of the change.
 """
 import ast, difflib, glob, hashlib, itertools, json, os, re, shutil, subprocess, sys, threading, time
 
-from . import analyze, brief
+from . import analyze, brief, modules
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GUARD = os.path.join(HERE, "scope_guard.py")
@@ -279,7 +279,7 @@ class Job:
         before = analyze.snapshot(self.root)
         self.before_bytes = analyze.snapshot_bytes(self.root)
         for p in before:  # the fence's own files stay revertible in a project too big for the byte budget
-            if p not in self.before_bytes and _in_scope(p, self.editable):
+            if p not in self.before_bytes and _in_scope(p, self.editable, self.root):
                 self.before_bytes[p] = _read_or_none(os.path.join(self.root, p))
         try:
             if self.phase == "build":  # the test gate's baseline: the done check runs in another process
@@ -384,7 +384,7 @@ class Job:
         why = {rel(m.group(1).strip()): m.group(2).strip() for m in re.finditer(r"^[ \t*>-]*NEED\s+`?([^`:\n]+?)`?\s*:\s*(.+)$", text, re.M)}
         seen, out = set(), []
         for p in blocked + list(why):
-            if p and p not in seen and not _in_scope(p, self.editable):
+            if p and p not in seen and not _in_scope(p, self.editable, self.root):
                 seen.add(p)
                 out.append({"path": p, "why": why.get(p, "")})
         return out
@@ -394,7 +394,7 @@ class Job:
             after = analyze.snapshot(self.root)
             added, modified, deleted = analyze.diff(before, after)
             changed = [p for p in added + modified + deleted if not p.startswith(".modfence/")]
-            outside = [p for p in changed if not _in_scope(p, self.editable)]
+            outside = [p for p in changed if not _in_scope(p, self.editable, self.root)]
             graph = analyze.analyze(self.root)
             split = set(graph.get("split", ()))
             changed_mods = sorted({analyze.module_of(p, split) for p in changed if p.endswith(".py")})
@@ -453,7 +453,7 @@ class Handoff(Job):
         self.before = analyze.snapshot(self.root)
         self.before_bytes = analyze.snapshot_bytes(self.root)
         for p in self.before:  # as in a run: the fence's own files stay revertible in a big project
-            if p not in self.before_bytes and _in_scope(p, self.editable):
+            if p not in self.before_bytes and _in_scope(p, self.editable, self.root):
                 self.before_bytes[p] = _read_or_none(os.path.join(self.root, p))
         self.emit("status", text="Fence on. Paste the task into your agent in this project; review the changes when it is done.")
         return self
@@ -653,9 +653,13 @@ def parse_plan(text):
     return {"questions": qs[:4], "plan": obj["plan"]}
 
 
-def _in_scope(path, scope):
+def _in_scope(path, scope, root=None):
+    """Is path inside the scope? An "@module:NAME" entry is a module of root's MODULES.md (golden rule 1)."""
     for s in scope:
-        if s in (".", ""):
+        if s.startswith("@module:"):
+            if root and modules.owner(modules.load(root), path) == s[len("@module:"):]:
+                return True
+        elif s in (".", ""):
             if "/" not in path:
                 return True
         elif path == s or path.startswith(s.strip("/") + "/"):
@@ -724,7 +728,7 @@ def select_tests(graph, editable):
     test file does, so the full suite runs."""
     kind = {m["id"]: m["kind"] for m in graph["modules"]}
     code = lambda m: kind.get(m) != "tests" and not is_test(m)  # a root test file is a module of its own
-    fence = sorted({f["module"] for p, f in graph["files"].items() if _in_scope(p, editable) and code(f["module"])})
+    fence = sorted({f["module"] for p, f in graph["files"].items() if _in_scope(p, editable, graph.get("root")) and code(f["module"])})
     users = [m for m in analyze.dependents(graph, fence) if code(m)]
     targets = set(fence) | set(users)
     files = sorted({r["file"] for e in graph["edges"] if e["target"] in targets for r in e["receipts"] if is_test(r["file"])}
@@ -734,7 +738,7 @@ def select_tests(graph, editable):
 
 def fence_texts(root, editable):
     """{path: text} of the .py files a build run may edit, and of every test file: the test gate's baseline."""
-    return {p: analyze.read_text(os.path.join(root, p)) for p in analyze.walk(root) if _in_scope(p, editable) or is_test(p)}
+    return {p: analyze.read_text(os.path.join(root, p)) for p in analyze.walk(root) if _in_scope(p, editable, root) or is_test(p)}
 
 
 BRANCHES = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.Match, ast.BoolOp, ast.IfExp, ast.comprehension)
