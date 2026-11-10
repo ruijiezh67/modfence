@@ -10,6 +10,7 @@ const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || "");
 const S = {
   projects: [], p: 0, graph: null, full: null, focus: "", level: null, roles: null, role: null, calls: null, pos: {}, rows: [], view: "graph", selected: null, scope: new Set(), readOnly: false,
   tab: "over", marks: { changed: new Set(), ripple: new Set(), stats: {} }, job: null, tasks: [], claude: null, fn: {},
+  unsealed: true, // golden rule 4: sealing made agents hit the hook about twice a run for no measured gain; one click turns it on
   cam: { x: 0, y: 0, k: 1 }, camV: { x: 0, y: 0, k: 0 }, camTarget: null, raf: 0, userCam: false,
 };
 
