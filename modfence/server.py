@@ -21,6 +21,17 @@ class App:
         self.jobs, self.active, self.lock = {}, {}, threading.Lock()
         self.hands = {}  # project root -> its open hand-off, found again after a reload
 
+    def add(self, path):
+        """The index of a project folder, added if new (one server, one port, any number of projects)."""
+        path = os.path.abspath(path)
+        if path not in self.projects:
+            if not os.path.isdir(path) or not analyze.walk(path):
+                raise ValueError(f"no Python files in {path}")
+            scope_guard.disarm(path)  # as at start: no fence left over from a server that was killed
+            self.projects.append(path)
+            threading.Thread(target=analyze.analyze, args=(path,), daemon=True).start()
+        return self.projects.index(path)
+
     def project(self, q):
         i = int((q.get("p") or ["0"])[0])
         if not 0 <= i < len(self.projects):
@@ -204,6 +215,11 @@ def make_handler(app, port):
                     reverted, skipped = runner.revert_run(app.project(q), b.get("run") or "", b.get("paths") or None)
                     scope_guard.disarm(app.project(q))  # the run was discarded
                     return self.send_json({"reverted": reverted, "skipped": skipped})
+                if u.path == "/api/projects/add":  # another folder on the same server: the picker, or a second `modfence`
+                    try:
+                        return self.send_json({"i": app.add(str(b.get("path") or "").strip().strip('"'))})
+                    except ValueError as e:
+                        return self.send_json({"error": str(e)}, 400)
                 if u.path == "/api/hand":  # the default: the user's own agent does the work, fenced
                     root, prompt = app.project(q), (b.get("prompt") or "").strip()
                     scope = [s for s in b.get("scope") or [] if isinstance(s, str) and s]
@@ -352,6 +368,40 @@ def hand_info(job):
             "tokens": len(text) // 4, "at": job.started}
 
 
+def in_vscode():
+    return os.environ.get("TERM_PROGRAM") == "vscode"  # VS Code's terminal: its own browser opens the link
+
+
+def join_running(port, projects, open_browser=True):
+    """When a modfence already serves this port, hand it the projects and open the first one there: one server,
+    one port. True if it did."""
+    import urllib.request
+    base = f"http://127.0.0.1:{port}"
+    try:
+        with urllib.request.urlopen(base + "/api/projects", timeout=1) as r:
+            if "projects" not in json.loads(r.read()):
+                return False
+    except (OSError, ValueError):
+        return False
+    first = None
+    for p in projects:
+        req = urllib.request.Request(base + "/api/projects/add", json.dumps({"path": p}).encode(), method="POST",
+                                     headers={"Content-Type": "application/json", "X-Modfence": "1"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                i = json.loads(r.read())["i"]
+        except (OSError, ValueError, KeyError) as e:
+            print(f"modfence: could not add {p}: {e}", file=sys.stderr)
+            continue
+        first = i if first is None else first
+    url = f"{base}/#p={first or 0}"
+    print(f"modfence: already running; added to it: {url}", flush=True)
+    if open_browser and not in_vscode():
+        import webbrowser
+        webbrowser.open(url)
+    return True
+
+
 class QuietServer(ThreadingHTTPServer):
     daemon_threads = True
     # On Windows SO_REUSEADDR lets a second server bind a port the first still holds, and requests then land on
@@ -390,9 +440,11 @@ def serve(projects, port=8765, claude_bin=None, open_browser=True):
             analyze.analyze(p)
             analyze.snapshot(p)
     threading.Thread(target=warm, daemon=True).start()
-    if open_browser:
+    if open_browser and not in_vscode():
         import webbrowser
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    elif in_vscode():
+        print("  Ctrl+click the link to open it, or Ctrl+Shift+P > Simple Browser: Show and paste it.", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

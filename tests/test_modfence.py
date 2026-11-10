@@ -956,6 +956,16 @@ class ServerTest(unittest.TestCase):
         self.req("POST", "/api/hand/finish?p=0", {"job": res["job"]}, {"X-Modfence": "1"})
         self.assertFalse(os.path.exists(os.path.join(self.d, scope_guard.ASKS_FILE)), "requests go with the fence")
 
+    def test_one_server_takes_another_project(self):
+        other, empty = project(), tempfile.mkdtemp(prefix="modfence-test-")
+        _dirs.append(empty)
+        add = lambda p: self.req("POST", "/api/projects/add", {"path": p}, {"X-Modfence": "1"})
+        self.assertEqual(json.loads(add(self.d)[1])["i"], 0, "a folder already served keeps its index")
+        i = json.loads(add(other)[1])["i"]
+        self.assertEqual(json.loads(add(other)[1])["i"], i, "adding twice is one project")
+        self.assertIn(os.path.abspath(other), [p["path"] for p in json.loads(self.req("GET", "/api/projects")[1])["projects"]])
+        self.assertEqual(add(empty)[0], 400, "a folder with no Python files is refused")
+
     def test_handoff_and_brief_as_text(self):
         s, data = self.req("GET", "/api/handoff?p=0")
         self.assertEqual(s, 200)

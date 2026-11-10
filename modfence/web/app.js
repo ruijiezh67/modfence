@@ -24,17 +24,20 @@ async function api(path, body) {
 const q = (extra = "") => `p=${S.p}${extra}`;
 
 /* ---------------- boot ---------------- */
+function fillPicker() { // every project this server has, and a way to open another folder on the same port
+  $("#picker").innerHTML = S.projects.map((p) => `<option value="${p.i}" title="${esc(p.path)}">${esc(p.name)}</option>`).join("")
+    + `<option value="add">Open another project…</option>`;
+}
 async function boot() {
   applyTheme(store.get("modfence.theme") || "auto");
   const { projects, claude } = await api("/api/projects");
   S.projects = projects; S.claude = claude;
   const saved = Number(store.get("modfence.project") || 0);
   S.p = projects[saved] ? saved : 0;
-  $("#picker").innerHTML = projects.map((p) => `<option value="${p.i}">${esc(p.name)}</option>`).join("");
+  fillPicker();
   const hp = new URLSearchParams(location.hash.slice(1));
   if (hp.get("p") && projects[+hp.get("p")]) S.p = +hp.get("p");
   $("#picker").value = S.p;
-  $("#picker").hidden = projects.length < 2; // one project (the usual case): nothing to pick
   if (IS_MAC) $("#chint").innerHTML = "<kbd>⌘</kbd> <kbd>Enter</kbd> to send";
   await loadGraph(true);
   setView(hp.get("v") || store.get("modfence.view") || "graph");
@@ -1828,7 +1831,13 @@ function wire() {
   wireCanvas(); wireViews(); wireSearch(); wireResize();
   $("#panel").inert = true;
   $("#picker").onchange = async (e) => {
-    S.p = Number(e.target.value); store.set("modfence.project", S.p);
+    if (e.target.value === "add") {
+      const path = prompt("Folder of the project to open (its full path):");
+      if (!path) { e.target.value = S.p; return; }
+      try { S.p = (await api(`/api/projects/add`, { path })).i; } catch (err) { toast(err.message, false); e.target.value = S.p; return; }
+      S.projects = (await api("/api/projects")).projects; fillPicker(); e.target.value = S.p;
+    } else S.p = Number(e.target.value);
+    store.set("modfence.project", S.p); location.hash = `p=${S.p}`;
     closePanel(); S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; S.userCam = false; S.focus = ""; S.level = null; S.role = null; S.area = null; S.proposed = false; S.proposedAreas = false;
     const b = $("#tests"); b.classList.remove("ok", "bad"); $(".lbl", b).textContent = "Run tests";
     await loadGraph(true);

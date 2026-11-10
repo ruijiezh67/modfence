@@ -6,7 +6,7 @@ With no project given, opens the current directory if it holds Python files, els
 import argparse, glob, os, sys
 
 from .analyze import walk
-from .server import serve
+from .server import join_running, serve
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -30,6 +30,8 @@ def main(argv=None):
     if not projects:
         print("modfence: no Python files here; pass a project folder", file=sys.stderr)
         return 2
+    if join_running(a.port, projects, open_browser=not a.no_browser):  # one server, one port, many projects
+        return 0
     serve(projects, port=a.port, claude_bin=a.claude, open_browser=not a.no_browser)
     return 0
 
