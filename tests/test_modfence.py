@@ -886,6 +886,10 @@ class ServerTest(unittest.TestCase):
         self.assertIn("double the limit", res["text"])
         self.assertIn("NEED <path>", runner.Handoff(self.d, ["app/core"], "x", analyze.analyze(self.d), None).system_note() + scope_guard.decide(
             {"tool_name": "Edit", "tool_input": {"file_path": os.path.join(self.d, "app/cli/main.py")}}, self.d, ["app/core"]))
+        note = runner.Handoff(self.d, ["app/core"], "x", analyze.analyze(self.d), None, seal=True).system_note()
+        self.assertIn("make that edit anyway", note, "your agent's answer never reaches modfence: it asks by trying the edit")
+        self.assertIn("python -m unittest path/to/test_file.py", note, "no pytest config: the note does not send the agent to pytest")
+        self.assertNotIn("make that edit anyway", runner.context_note(analyze.analyze(self.d), ["app/core"]))
         self.assertEqual(load(os.path.join(self.d, ".modfence", "fence.json"))["files"], ["app/core"], "every agent in the project is fenced")
         write(os.path.join(self.d, "app/core/values.py"), "LIMIT = 20\n\ndef double(x):\n    return 2 * x\n")  # your agent's edit
         s, data = self.req("GET", f"/api/hand/status?p=0&job={res['job']}")

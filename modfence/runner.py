@@ -122,9 +122,11 @@ LEAN_RULE = ("Lean: make the smallest change that does the task. Reuse what the 
              "restate code in your answer.")
 
 
-def context_note(graph, scope, read_only=False, phase=None, sealed=False, lean=True):
+def context_note(graph, scope, read_only=False, phase=None, sealed=False, lean=True, hand=False, tests=None):
     """System note telling the agent which modules it works on and how they connect to the rest. Sealed (golden
-    rule 4): the rest of the project is the brief, not code it may read."""
+    rule 4): the rest of the project is the brief, not code it may read. hand: the user's own agent, whose answer
+    modfence never sees, so a file it needs is asked for by trying the edit (the hook turns the denial into a request
+    card). tests: how to run one test file in this project (default: pytest)."""
     mods = {m["id"]: m for m in graph["modules"]}
     out_edges = [e for e in graph["edges"] if e["source"] in scope and e["target"] not in scope]
     in_edges = [e for e in graph["edges"] if e["target"] in scope and e["source"] not in scope]
@@ -138,13 +140,17 @@ def context_note(graph, scope, read_only=False, phase=None, sealed=False, lean=T
                 "hints rather than finished solutions unless the user asks for one.")
     else:
         rule = (("You may read any file in the project, but you" if not sealed else "You") + " may only create or edit files inside: " + where
-                + ". A hook blocks edits anywhere else. If the request needs a change in another module, do what you can "
-                  "inside the scope, then say exactly which module needs what change, and why.")
+                + ". A hook blocks edits anywhere else. " + (
+                    "If the request needs a change in another module, first do everything inside the scope, then make "
+                    "that edit anyway: the hook blocks it and modfence shows the user a request for that file. Say which "
+                    "file you need and why, and when the user says it is approved, make the edit again." if hand else
+                    "If the request needs a change in another module, do what you can inside the scope, then say exactly "
+                    "which module needs what change, and why."))
     if sealed:
         rule += (" This run is sealed: you can read and search only the fence and the tests; other modules' code is "
                  "hidden so you cannot depend on or break their internals. What they offer, and what the fence must keep "
                  f"working, is in the brief below. For one definition's docstring run: {show_command()} path/to/file.py::name . "
-                 "To check behaviour run the tests (python -m pytest path/to/test_file.py -q); python -c, cat and shell "
+                 f"To check behaviour run the tests ({tests or 'python -m pytest path/to/test_file.py -q'}); python -c, cat and shell "
                  "chaining or redirection are blocked in this run, so do not try them.")
     lines = [f"You are working in modfence on project `{graph['name']}`, focused on module(s): "
              + ", ".join(f"`{s}`" for s in scope) + ".", rule, ""]
@@ -252,7 +258,8 @@ class Job:
             self.emit("status", text="Cancelled.")
 
     def system_note(self):
-        return context_note(self.graph, self.scope, self.read_only, self.phase, self.sealed, self.lean)
+        return context_note(self.graph, self.scope, self.read_only, self.phase, self.sealed, self.lean,
+                            hand=isinstance(self, Handoff), tests=test_hint(self.root))
 
     def _settings_file(self):
         p = os.path.join(state_dir(self.root), f"settings-{self.id}.json")
@@ -695,6 +702,14 @@ def test_command(root):
         if os.path.isdir(os.path.join(root, d)):
             return [py, "-m", "unittest", "discover", "-s", d, "-t", "."]
     return None
+
+
+def test_hint(root):
+    """One test file's command for the agent's note, in the runner this project uses (no pytest: unittest)."""
+    cmd = test_command(root)
+    if isinstance(cmd, str):
+        return cmd
+    return "python -m pytest path/to/test_file.py -q" if cmd and "pytest" in cmd else "python -m unittest path/to/test_file.py"
 
 
 def is_test(path):
