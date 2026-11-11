@@ -313,6 +313,27 @@ What the rounds did show:
 - **A pointer can mislead.** The "likely start" listed functions that scored close to the right one, and the agent
   searched them (one extra turn). A rarity-weighted score would separate them; not done.
 
+## 10. Does stopping at a decision point save rework? (2026-11-11)
+
+When a prompt leaves a setting open ("train it longer", "use a smaller learning rate", "make the training faster"),
+the plugin's protocol has the agent write 2-3 readings and wait for a pick on the Intents page. Is that cheaper than
+letting it guess and correcting it afterwards? Toy project (a config and a deterministic script written for the probe),
+Haiku 5.5, a simulated person whose goal for each task was drawn once with `random.Random(7)` from plausible values
+(epochs 40; lr 0.005; epochs 2). Plain arm: after a wrong result the person says "Not what I meant: I want KEY=VALUE"
+in the same session. Mod arm: the person picks the reading that holds the goal, else writes it.
+
+| Arm | Runs | Right in the end | Corrections | Mean cost | Mean time |
+|---|---|---|---|---|---|
+| plain | 9 | 9/9 | 9 | $0.0141 | 36.6 s |
+| with the plugin | 9 | 9/9 | 2 | $0.0109 (-23%) | 38.1 s |
+
+Every plain first guess missed (epochs 50 or 100, lr 0.001, "already fast"). The plugin's agent stopped in 7 of 9 runs
+and was right first time in all 7; twice it did not stop on "make the training faster" and then cost more than plain.
+A plain run that guesses right costs $0.0062, so stopping pays only when the agent would guess right less than about
+41% of the time. The person's time on the page is not counted. Before a protocol change (6eb826a: "a word like
+longer, smaller, faster ... with no number leaves that setting open"), the agent did not stop on "use a smaller
+learning rate" at all.
+
 ## How modfence compares with popular tools
 
 Star counts are from the GitHub API on 2026-11-06. Feature cells come from each project's README and docs ([research notes](../../research_notes/Modmap%20next%20step%20priorities/competitor_tools.md)); N/A means not found in their docs.
