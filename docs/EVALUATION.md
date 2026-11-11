@@ -358,7 +358,9 @@ would guess right less than about 73% to 76% of the time. The person's time on t
 
 Reproduce the TinyDB part with `python bench/ambiguity_probe.py --repo PATH/tinydb --runs 3`. It now runs `claude -p
 --restricted --strict-mcp-config` (no code-running tools, no user settings, no MCP servers), which roughly halves the cost
-of both arms in a smoke run, so its numbers are not comparable with the table below (run with Bash disallowed instead).
+of both arms, so its numbers are not comparable with the table below (run with Bash disallowed instead). Its own round
+(`bench/results/ambiguity.jsonl`, 504fa4f, 9 runs per arm): plain $0.0081, 16.2 s; with the plugin $0.0083 (+2%), 22.6 s
+(+40%: runs are short, so the hooks' few seconds show), 1 stop, the same 6 corrections.
 
 **On a real repository it did not pay.** Three one-constant requests on TinyDB ("make the query cache bigger", "use a
 shorter name for the default table", "make the caching middleware write to disk more often"), goals drawn the same way
