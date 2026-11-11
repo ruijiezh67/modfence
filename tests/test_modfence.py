@@ -957,6 +957,18 @@ class JitTest(unittest.TestCase):
         self.assertEqual(self.jit.choose(self.jit.candidates(self.d, task + ". Do not run the tests; only read and edit the code.")),
                          self.jit.choose(self.jit.candidates(self.d, task)))
 
+    def test_a_task_fence_is_soft_and_a_person_fence_is_hard(self):
+        # five ways the picker guessed wrong denied the right edit and failed the task (2026-11-11): the person chose soft
+        import modfence
+        modfence.fence_for("double_value should respect the limit when doubling a value", os.path.join(self.d, "app"))
+        first = modfence.check_edit("app/api/handlers.py", self.d)
+        self.assertIn("say why", first, "first try: denied, with a way through")
+        self.assertIsNone(modfence.check_edit("app/api/handlers.py", self.d), "second try at the same file: through")
+        self.assertEqual(scope_guard.crossed(self.d), ["app/api/handlers.py"], "and recorded")
+        scope_guard.arm(self.d, ["@module:core"], False, "core")  # the person's own fence
+        self.assertIn("outside", modfence.check_edit("app/cli/main.py", self.d))
+        self.assertIn("outside", modfence.check_edit("app/cli/main.py", self.d) or "", "a person's fence stays hard")
+
     def test_an_open_question_holds_edits_until_the_answer(self):
         # TinyDB probe: with no shell to wait in, the agent wrote its intent and edited the code anyway
         from modfence import mod

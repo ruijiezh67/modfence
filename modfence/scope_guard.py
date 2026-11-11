@@ -32,7 +32,8 @@ LOCAL_SETTINGS = os.path.join(".claude", "settings.local.json")
 # Golden rule 4 (no turns, no time): the hook starts a Python process, about 0.35 s on Windows, so it runs only on the
 # tools that can edit; a sealed fence also checks reads, searches and commands.
 EDIT_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|mcp__.*"
-ASKS_FILE = os.path.join(".modfence", "asks.jsonl")  # edits the fence file's fence denied: the UI shows them for approval
+ASKS_FILE = os.path.join(".modfence", "asks.jsonl")
+CROSSED_FILE = os.path.join(".modfence", "crossed.jsonl")  # edits a task's (soft) fence let through on a second try  # edits the fence file's fence denied: the UI shows them for approval
 SEAL_TOOLS = ("Read", "Grep", "Bash")
 BASH_OK = re.compile(r"^\s*(\S*python[0-9.]*(\.exe)?\"?\s+-m\s+(pytest|unittest)\b|pytest\b|git\s+(status|diff|log)\b|ls\b|"
                      r"\S*python[0-9.]*(\.exe)?\"?\s+\"?\S*show\.py\"?\s)")
@@ -191,6 +192,33 @@ def log_ask(root, path):
     return " modfence shows the user this request; they will tell you when it is approved."
 
 
+def soft(root):
+    """A fence the task picked (JIT) is soft: it guessed the module from words, and a wrong guess cost whole tasks. A
+    fence the person set is hard."""
+    return (_read_json(os.path.join(root, FENCE_FILE)) or {}).get("by") == "jit"
+
+
+def cross(root, path, scope):
+    """Second try at a file a soft fence denied: let it through and record it (the map and the receipt show it)."""
+    if path not in pending_asks(root, scope):
+        return False
+    with open(os.path.join(root, CROSSED_FILE), "a", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps({"path": path, "at": datetime.now().astimezone().isoformat(timespec="seconds")}) + "\n")
+    return True
+
+
+def crossed(root):
+    try:
+        with open(os.path.join(root, CROSSED_FILE), encoding="utf-8") as f:
+            return [json.loads(line)["path"] for line in f if line.strip()]
+    except (OSError, ValueError, KeyError):
+        return []
+
+
+SOFT = ("This fence was picked from your task's words and may be wrong. If the task needs this file, say why in one "
+        "line, then make the same edit again: it will go through, and the user sees it.")
+
+
 def pending_asks(root, scope, answered=()):
     """The files an agent was denied since the fence was armed, oldest first, minus those answered or now inside."""
     try:
@@ -198,7 +226,8 @@ def pending_asks(root, scope, answered=()):
             paths = [json.loads(line)["path"] for line in f if line.strip()]
     except (OSError, ValueError, KeyError):
         return []
-    return [p for p in dict.fromkeys(paths) if p not in answered and not allowed(p, root, scope)]
+    gone = set(crossed(root))  # let through on a second try: done, not a request any more
+    return [p for p in dict.fromkeys(paths) if p not in answered and p not in gone and not allowed(p, root, scope)]
 
 
 def main():
@@ -212,6 +241,10 @@ def main():
             return 0
         asked = None if "MODFENCE_ROOT" in os.environ else []  # an agent the user started: modfence's UI asks the user
         reason = decide(event, *fence, asked=asked)
+        if asked and soft(fence[0]):
+            if cross(fence[0], asked[0], fence[1]):
+                return 0
+            reason = reason.split(" Do not try")[0] + " " + SOFT
         if asked:
             reason += log_ask(fence[0], asked[0])
     except Exception as e:  # fail closed

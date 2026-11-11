@@ -139,6 +139,10 @@ def check_edit(path, root=None):
         return None
     asked = []
     reason = scope_guard.decide({"tool_name": "Write", "tool_input": {"file_path": path}}, *fence, asked=asked)
+    if asked and scope_guard.soft(fence[0]):  # as the hook: a task's fence lets a second try through
+        if scope_guard.cross(fence[0], asked[0], fence[1]):
+            return None
+        reason = reason.split(" Do not try")[0] + " " + scope_guard.SOFT
     return reason + scope_guard.log_ask(fence[0], asked[0]) if asked else reason
 
 

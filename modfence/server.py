@@ -116,7 +116,8 @@ def make_handler(app, port):
                     f = scope_guard._read_json(os.path.join(root, scope_guard.FENCE_FILE))
                     asks = scope_guard.pending_asks(root, f["files"], f.get("refused", ())) if f else []
                     mods = modules.load(root) or []
-                    return self.send_json({"fence": f, "asks": asks, "owners": {a: modules.owner(mods, a) for a in asks}})
+                    return self.send_json({"fence": f, "asks": asks, "owners": {a: modules.owner(mods, a) for a in asks},
+                                           "crossed": sorted(set(scope_guard.crossed(root))) if f else []})
                 if u.path == "/api/fleet":  # golden rule 5: every agent's worktree, reviewed by module on the map
                     root = app.project(q)
                     try:

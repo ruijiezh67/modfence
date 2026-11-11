@@ -134,6 +134,9 @@ def build(root, since="HEAD"):
     new = new_dependencies(root, graph["files"], {f["path"] for f in py if f["status"] != "deleted"}, before, part, graph.get("roots", ()))
     fence = scope_guard.load_fence(root)
     outside = [f["path"] for f in files if not scope_guard.allowed(f["path"], root, fence[1])] if fence else None
+    said = set(scope_guard.crossed(root))  # let through by a soft fence after the agent said why: shown, not a failure
+    explained = [f for f in outside or [] if f in said]
+    outside = [f for f in outside if f not in said] if outside is not None else None
     blocked = scope_guard.pending_asks(root, [], ()) if fence else []  # every edit the fence denied this round
     funcs = []
     for f in py:
@@ -150,7 +153,7 @@ def build(root, since="HEAD"):
     tests = runner.select_tests(graph, [f["path"] for f in py]) if py else None
     return {"since": since, "files": files, "modules": [{"id": m, **mods[m]} for m in changed], "users": users,
             "areas": sorted(areas.values(), key=lambda a: -(a["plus"] + a["minus"])), "used_by": used_areas,
-            "contract": contract, "new_dependencies": new, "outside_fence": outside, "blocked": blocked, "functions": funcs,
+            "contract": contract, "new_dependencies": new, "outside_fence": outside, "crossed": explained, "blocked": blocked, "functions": funcs,
             "map": stale, "tests": tests["files"] if tests else [],
             "ok": not contract and not outside and not new}
 
@@ -184,6 +187,8 @@ def text(r):
             out.append(f"  {d['from']} -> {d['to']}  ({d['at']})")
     if r["outside_fence"]:
         out.append("OUTSIDE THE FENCE: " + ", ".join(r["outside_fence"]))
+    if r.get("crossed"):
+        out.append("crossed the task's fence after saying why: " + ", ".join(r["crossed"]))
     elif r["outside_fence"] is not None:
         out.append("fence: every change is inside it.")
     if r["blocked"]:
