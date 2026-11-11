@@ -356,6 +356,10 @@ correction. The plugin's agent stopped in 9 of 9 runs and was right first time i
 reading held epochs 40 or 2). A plain run that guesses right costs $0.0066 to $0.0079, so stopping pays when the agent
 would guess right less than about 73% to 76% of the time. The person's time on the page is not counted.
 
+Reproduce the TinyDB part with `python bench/ambiguity_probe.py --repo PATH/tinydb --runs 3`. It now runs `claude -p
+--restricted --strict-mcp-config` (no code-running tools, no user settings, no MCP servers), which roughly halves the cost
+of both arms in a smoke run, so its numbers are not comparable with the table below (run with Bash disallowed instead).
+
 **On a real repository it did not pay.** Three one-constant requests on TinyDB ("make the query cache bigger", "use a
 shorter name for the default table", "make the caching middleware write to disk more often"), goals drawn the same way
 (100, 'default', 500), edit-only (no shell, so the agent writes its intent and ends its turn; the answer comes with
