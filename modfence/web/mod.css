@@ -105,6 +105,9 @@ details.node > summary::before { content: "+ "; } details.node[open] > summary::
 .cost::before { content: "→ "; color: var(--text-3); }
 .step { font-size: 13.5px; color: var(--text-3); padding: 8px 12px; }
 .step.here { color: var(--text); font-weight: 650; border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); }
+.fencen { display: block; margin-top: 8px; text-decoration: none; color: var(--text); font-size: 13.5px; border-style: dashed; background: repeating-linear-gradient(45deg, var(--accent-soft) 0 3px, transparent 3px 9px), var(--surface); }
+.fencen .sc { display: block; margin-top: 4px; font: 500 12px var(--mono); color: var(--text-2); }
+.fencen b { color: var(--accent-ink); }
 .step .sc { display: block; margin-top: 4px; font: 500 12px var(--mono); color: var(--text-2); }
 
 /* a value is a chip: where it came from is a word, a glyph and a style, never colour alone */

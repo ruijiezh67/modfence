@@ -38,6 +38,7 @@ setInterval(() => { const i = S.data?.intents.find((x) => x.id === S.cur), el = 
 
 async function load(first) {
   try { S.data = await api(`/api/mod?${q()}`); } catch (e) { $("#main").innerHTML = `<p class="empty">${esc(e.message)}</p>`; return; }
+  try { S.fence = await api(`/api/fence?${q()}`); } catch { S.fence = null; } // what the agent may edit, shown beside where it stopped
   const waiting = S.data.intents.find((i) => left(i) > 0 && !S.seen.has(i.id));
   if (waiting) { S.seen.add(waiting.id); select(waiting.id); document.title = "● modfence: your agent is waiting"; return; }
   if (first) return select(S.data.intents[0]?.id || "project");
@@ -117,12 +118,19 @@ function drawIntent(i) {
     + (done ? "" : `<div class="node reading own${S.pick === "own" ? " on" : ""}" id="n-own"><div class="rh"><kbd>${cands.length + 1}</kbd><b class="rn">None of these</b></div><input type="text" id="own" placeholder="Say it in your own words" value="${esc(S.own)}"></div>`)
     + `</div><div class="col plan">${plan.map((p, k) => `<div class="node step${k === 1 ? " here" : ""}" id="n-p${k}">${k === 1 ? `<span class="nl">The agent stopped here</span>` : ""}<span class="st" title="${esc(p)}">${esc(p || (k ? "next" : "before"))}</span>`
       + (k === 1 && multi && !pc ? `<span class="sc">cost depends on your pick</span>` // no reading's cost stands in as a default
-        : k === 1 && sc.pick ? `<span class="sc">${scaleText(sc)}</span>` : "") + `</div>`).join("")}</div>`
+        : k === 1 && sc.pick ? `<span class="sc">${scaleText(sc)}</span>` : "") + `</div>`).join("")}${fenceNode()}</div>`
     + `</div>`
     + `<p class="legend"><span class="chip guess"><span class="cv">x</span><span class="cm">?</span></span> guessed <span class="chip memory"><span class="cv">x</span><span class="cd">date</span></span> remembered <span class="chip user"><span class="cv">x</span></span> you said <span class="chip default"><span class="cv">x</span></span> default${done ? "" : " · click a value to change it"}</p>`
     + (done ? `<p class="done">You chose: ${esc(i.choice?.kind === "own" ? i.choice.text : i.choice?.name || cands[i.choice?.index]?.name || "")}. Your agent has it.</p>`
       : `<div class="bar"><span class="what" id="what"></span><button type="button" class="go" id="go" disabled>Continue <kbd>Enter</kbd></button></div>`);
   wireIntent(i);
+}
+function fenceNode() { // the scope the agent works in, so an answer is read against it
+  const f = S.fence?.fence, n = S.fence?.asks?.length || 0;
+  if (!f) return "";
+  const mods = (f.files || []).map((x) => String(x).replace(/^@module:/, "")).join(" + ");
+  return `<a class="node fencen" href="/#p=${S.p}" title="Open the map"><span class="nl">It may edit</span>${esc(mods || f.label || "")}`
+    + `<span class="sc">${f.by === "jit" ? "picked from your task" : "set by you"}${n ? ` · <b>${n} request${n > 1 ? "s" : ""}</b> on the map` : ""}</span></a>`;
 }
 function wires() { // curves between the nodes, drawn after layout and on resize
   const g = $("#graph"), svg = $("#wires");
