@@ -7,7 +7,7 @@ import atexit, json, os, subprocess, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import analyze, brief, docs, handoff, modules, purpose, receipt, roles, runner, scope_guard, skills
+from . import analyze, brief, docs, handoff, mod, modules, purpose, receipt, roles, runner, scope_guard, skills
 
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -108,6 +108,9 @@ def make_handler(app, port):
                                            "asks": scope_guard.pending_asks(job.root, job.scope, job.answered),
                                            "owners": {p: modules.owner(modules.load(job.root), p) for p in scope_guard.pending_asks(job.root, job.scope, job.answered)},
                                            "modules": sorted({analyze.module_of(p, split) for p in changed if p.endswith(".py")})})
+                if u.path == "/api/mod":  # the .mod page: the project (modules, confirmed settings) and the intents
+                    root = app.project(q)
+                    return self.send_json({"project": mod.load_project(root), "intents": mod.intents(root)[:40]})
                 if u.path == "/api/fence":  # the fence agents in this project have now (set by the task, the map or the terminal)
                     root = app.project(q)
                     f = scope_guard._read_json(os.path.join(root, scope_guard.FENCE_FILE))
@@ -286,6 +289,23 @@ def make_handler(app, port):
                     else:
                         docs.add_lesson(root, path, str(b.get("text") or ""))
                     return self.send_json({"ok": True})
+                if u.path == "/api/mod/answer":  # the person's reading and setting changes; a waiting agent goes on
+                    try:
+                        mod.answer(app.project(q), str(b.get("id") or ""), b.get("choice") or {}, b.get("edits") or {})
+                    except ValueError as e:
+                        return self.send_json({"error": str(e)}, 400)
+                    return self.send_json({"ok": True})
+                if u.path == "/api/mod/project":  # modules and confirmed settings, edited on the page (no MODULES.md)
+                    root = app.project(q)
+                    p = mod.load_project(root) or {"modules": None, "settings": []}
+                    if isinstance(b.get("modules"), list):
+                        p["modules"] = [{"name": str(m.get("name") or "").strip(), "purpose": str(m.get("purpose") or "").strip(),
+                                         "paths": [str(x).strip() for x in m.get("paths") or [] if str(x).strip()]}
+                                        for m in b["modules"] if str(m.get("name") or "").strip()]
+                    if isinstance(b.get("forget"), str):
+                        p["settings"] = [s for s in p.get("settings") or [] if s.get("key") != b["forget"]]
+                    mod.save_project(root, p)
+                    return self.send_json({"ok": True, "project": mod.load_project(root)})
                 if u.path == "/api/fence/set":  # the person switches the task's fence, allows a module it blocked, or refuses
                     root = app.project(q)
                     f = scope_guard._read_json(os.path.join(root, scope_guard.FENCE_FILE))
