@@ -150,7 +150,12 @@ kbd { font: 600 11px var(--mono); border: 1px solid currentColor; border-radius:
 .toast { position: fixed; right: 18px; bottom: 74px; background: var(--text); color: var(--bg); padding: 8px 12px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity 160ms; pointer-events: none; }
 .toast.show { opacity: 1; }
 @media (max-width: 900px) {
-  body { grid-template-columns: 1fr; } .side { display: none; } .bar { left: 0; } .graph { grid-template-columns: 1fr; } .wires, .cap { display: none; }
+  body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } .bar { left: 0; } .graph { grid-template-columns: 1fr; } .wires, .cap { display: none; }
+  /* a VS Code side pane is often this narrow: the sidebar becomes one strip on top, the intents scroll sideways */
+  .side { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-right: 0; border-bottom: 1.5px solid var(--line); overflow-x: auto; overflow-y: hidden; }
+  .side h2, .item span { display: none; } .brand { margin: 0; flex: none; } .brand select { max-width: 140px; }
+  .list { display: flex; gap: 4px; } .item, .item.proj { width: auto; white-space: nowrap; padding: 5px 8px; }
+  .item b { font-weight: 600; max-width: 22ch; display: block; overflow: hidden; text-overflow: ellipsis; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 

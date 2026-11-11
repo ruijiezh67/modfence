@@ -104,7 +104,7 @@ function drawIntent(i) {
       + (r.editing && !done ? `<textarea class="rd-in" rows="2" aria-label="Description">${esc(desc)}</textarea>` : desc ? `<p class="rd" title="${esc(desc)}">${esc(desc)}</p>` : "")
       + (keys.length ? `<p class="diffs">${keys.map((key) => { const ch = (r.differs || {})[key] !== undefined, v = ch ? r.differs[key] : (c.differs || {})[key] ?? "—";
         return `<span class="chip alt${ch ? " changed" : ""}" data-ci="${ci}" data-dk="${esc(key)}"><span class="ck">${esc(key)}</span>${done ? `<span class="cv">${esc(v)}</span>` : `<button type="button" class="cv" title="Change this value">${esc(v)}</button>`}</span>`; }).join(" ")}</p>` : "")
-      + (c.scale && multi ? `<p class="cost">${scaleText(c.scale)}</p>` : "")
+      + (c.scale && multi && ["pick", "runs", "cost", "time"].some((f) => c.scale[f] != null) ? `<p class="cost">${scaleText(c.scale)}</p>` : "") // an empty scale says nothing
       + (c.evidence ? `<p class="ev" title="${esc(c.evidence)}"><b>why</b> ${esc(c.evidence)}</p>` : "") + `</div>`;
   };
   $("#main").innerHTML = `<p class="state" id="state" role="status" title="${esc(i.id)}">${stateText(i)}</p>`
