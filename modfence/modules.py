@@ -1,4 +1,5 @@
-"""MODULES.md: the project's first-level modules, one file that people, agents, the fence, the receipt and CI all read
+"""The project's first-level modules, kept in .mod/project.mod (mod.py). This file still reads a MODULES.md, the
+format they had before, and renders one for people who want it. MODULES.md: the project's first-level modules, one file that people, agents, the fence, the receipt and CI all read
 (golden rule 1).
 
     # Modules
@@ -35,12 +36,20 @@ def parse(text):
     return mods
 
 
-def load(root):
+def load_markdown(root):
+    """The modules of a MODULES.md, for a project that has no .mod/project.mod yet."""
     try:
         with open(os.path.join(root, FILE), encoding="utf-8") as f:
             return parse(f.read())
     except OSError:
         return None
+
+
+def load(root):
+    """The project's modules: .mod/project.mod (which replaces MODULES.md), else MODULES.md as it was."""
+    from . import mod
+    p = mod.load_project(root)
+    return None if p is None else p.get("modules")
 
 
 def render(mods):
@@ -55,8 +64,11 @@ def render(mods):
 
 
 def save(root, mods):
-    with open(os.path.join(root, FILE), "w", encoding="utf-8", newline="\n") as f:
-        f.write(render(mods))
+    """Into .mod/project.mod, keeping its settings (golden rule 1: the modules are the project's, people change them)."""
+    from . import mod
+    p = mod.load_project(root) or {"settings": []}
+    p["modules"] = [{"name": m["name"], "purpose": m.get("purpose", ""), "paths": list(m["paths"])} for m in mods]
+    mod.save_project(root, p)
 
 
 def match(pattern, path):

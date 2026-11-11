@@ -12,6 +12,17 @@
         ]
       }
     ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=python; command -v python >/dev/null 2>&1 || P=python3; \"$P\" \"${CLAUDE_PLUGIN_ROOT}/plugin/cli.py\" mod session-hook",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

@@ -814,12 +814,51 @@ class ModulesTest(unittest.TestCase):
         self.assertTrue(modules.match("./app/", "app/core/values.py"))
         self.assertEqual(modules.owner([{"name": "a", "paths": ["app/"]}, {"name": "b", "paths": ["app/core/values.py"]}],
                                        "app/core/values.py"), "b", "the longest line wins")
-        write(os.path.join(d, modules.FILE), modules.render(back).replace("## surface", "## front"))  # edited by hand
+        self.assertTrue(os.path.isfile(os.path.join(d, ".mod", "project.mod")), ".mod/project.mod replaces MODULES.md")
+        self.assertFalse(os.path.exists(os.path.join(d, modules.FILE)))
+        back[1]["name"] = "front"  # renamed on the page
+        modules.save(d, back)
         v = roles.view(d, g)
         self.assertTrue(v["modules_file"])
-        self.assertEqual(sorted(a["name"] for a in v["areas"]), ["engine", "front"], "the map reads MODULES.md")
+        self.assertEqual(sorted(a["name"] for a in v["areas"]), ["engine", "front"], "the map reads the project's .mod")
         names = {a["id"]: a["name"] for a in v["areas"]}
         self.assertEqual(names[v["file_area"]["app/core/values.py"]], "engine", "a box holds the files MODULES.md gives it")
+
+
+class ModTest(unittest.TestCase):
+    """.mod: the agent writes what it understood, waits for the person's answer on the page, never asks twice."""
+
+    def test_an_intent_waits_for_the_answer_and_is_not_asked_again(self):
+        from modfence import mod
+        d = project()
+        mod.save_intent(d, "r1", {"words": "rerun the bench", "candidates": [{"name": "one try"}]})
+        code, text = mod.wait(d, "r1", seconds=0)
+        self.assertEqual(code, 2)
+        self.assertIn("2 or 3 distinct readings", text, "a bad file comes back with what to fix")
+        intent = {"words": "rerun the bench",
+                  "candidates": [{"name": "one try", "evidence": "the user said 'rerun'", "differs": {"runs": "1"}},
+                                 {"name": "full grid", "evidence": "results_rich2.jsonl", "differs": {"runs": "60"}}],
+                  "settings": [{"key": "model", "value": "sonnet", "source": "default", "from": None},
+                               {"key": "runs", "value": "3", "source": "memory", "at": "2026-11-10", "from": None}],
+                  "scale": {"pick": "full", "runs": 60}}
+        mod.save_intent(d, "r1", intent)
+        self.assertEqual(mod.wait(d, "r1", seconds=0)[0], 3, "no answer yet: the agent stops instead of guessing")
+        self.assertEqual(mod.load_intent(d, "r1")["status"], "waiting")
+        with self.assertRaises(ValueError):
+            mod.answer(d, "r1", {"kind": "pick", "index": 5})
+        mod.answer(d, "r1", {"kind": "pick", "index": 1}, {"runs": "2"})
+        code, text = mod.wait(d, "r1", seconds=0)
+        self.assertEqual(code, 0)
+        self.assertIn('"full grid"', text)
+        self.assertIn("runs=2 (changed by the user)", text)
+        settings = {s["key"]: s for s in mod.load_project(d)["settings"]}
+        self.assertEqual((settings["runs"]["value"], settings["runs"]["source"]), ("2", "user"), "confirmed once, for good")
+        self.assertNotIn("model", settings, "a default the person did not touch is not a confirmation")
+        ctx = mod.context(d)
+        self.assertIn("runs=2", ctx)
+        self.assertIn("mod wait", ctx)
+        self.assertLess(len(ctx) // 4, 400, "the agent's context stays a few hundred tokens")
+        self.assertTrue(os.path.isfile(os.path.join(d, ".mod", ".gitignore")), ".mod stays out of git unless the person shares it")
 
 
 class JitTest(unittest.TestCase):

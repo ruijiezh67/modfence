@@ -5,7 +5,7 @@ and the other candidates (in Claude Code and on the map), and switch with one co
 yourself is never replaced; a short follow-up ("continue", "approved") keeps the fence it has."""
 import json, os, re, sys
 
-from . import analyze, modules, scope_guard
+from . import analyze, mod, modules, scope_guard
 from .runner import _words, is_test
 
 DEF = re.compile(r"^[ \t]*(?:async[ \t]+)?(?:def|class)[ \t]+(\w+)", re.M)
@@ -52,10 +52,10 @@ def choose(cands):
 
 
 def project_root(cwd):
-    """The nearest folder at or above cwd with a MODULES.md."""
+    """The nearest folder at or above cwd with a .mod/project.mod (or a MODULES.md from before)."""
     d = os.path.abspath(cwd or os.getcwd())
     while True:
-        if os.path.isfile(os.path.join(d, modules.FILE)):
+        if mod.has_project(d):
             return d
         up = os.path.dirname(d)
         if up == d:
@@ -83,7 +83,7 @@ def apply(root, task):
 def message(pick, cands):
     """(for the agent, for the person). Short: the agent reads it on every turn of the task."""
     names = lambda c: ", ".join(dict.fromkeys(w[2] for w in c["where"]))
-    agent = (f"modfence: for this task you may edit only module {' and '.join(pick)} of MODULES.md (and tests); an edit "
+    agent = (f"modfence: for this task you may edit only module {' and '.join(pick)} (and tests); an edit "
              "elsewhere is blocked until the user approves it, so try it and say why. Likely start: "
              + "; ".join(f"{p}:{n} {name}" for p, n, name in cands[0]["where"]))
     others = [c for c in cands if c["module"] not in pick]
