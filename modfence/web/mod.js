@@ -115,7 +115,7 @@ function drawIntent(i) {
     + (open.length ? `<div class="node assume" id="n-assume"><span class="nl">${open.length} value${open.length > 1 ? "s" : ""} you never said</span><p class="chips">${open.map((s) => chip(s, !done)).join(" ")}</p></div>` : "")
     + (rest.length ? `<details class="node more"><summary>${rest.length} ${rest.every((s) => s.source === "default") ? "default" : "more value"}${rest.length > 1 ? "s" : ""}</summary><p class="chips">${rest.map((s) => chip(s, !done)).join(" ")}</p></details>` : "")
     + `</div><div class="col">${order.map(node).join("")}`
-    + (done ? "" : `<div class="node reading own${S.pick === "own" ? " on" : ""}" id="n-own"><div class="rh"><kbd>${cands.length + 1}</kbd><b class="rn">None of these</b></div><input type="text" id="own" placeholder="Say it in your own words" value="${esc(S.own)}"></div>`)
+    + (done ? "" : `<div class="node reading own${S.pick === "own" ? " on" : ""}" id="n-own"><div class="rh"><kbd>${cands.length + 1}</kbd><b class="rn">None of these</b></div><input type="text" id="own" placeholder="Say it in your own words${keys.length ? `, e.g. ${esc(keys.map((k) => k + " …").join(", "))}` : ""}" value="${esc(S.own)}"></div>`)
     + `</div><div class="col plan">${plan.map((p, k) => `<div class="node step${k === 1 ? " here" : ""}" id="n-p${k}">${k === 1 ? `<span class="nl">The agent stopped here</span>` : ""}<span class="st" title="${esc(p)}">${esc(p || (k ? "next" : "before"))}</span>`
       + (k === 1 && multi && !pc ? `<span class="sc">cost depends on your pick</span>` // no reading's cost stands in as a default
         : k === 1 && sc.pick ? `<span class="sc">${scaleText(sc)}</span>` : "") + `</div>`).join("")}${fenceNode()}</div>`
