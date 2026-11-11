@@ -37,7 +37,9 @@ The older hand-off (`runner.Handoff`: snapshot, a line to paste, *Review changes
 
 The SessionStart hook prints `mod.context()`: modules by name, confirmed settings, the last intent's answer and the protocol (about 430 tokens, once per session and after each compaction). The agent writes the intent and runs `modfence mod wait <id>`, which checks the file, marks it waiting and blocks up to 110 s. The page (`web/mod.html`) polls `/api/mod`, jumps to a waiting intent and posts `/api/mod/answer`; `mod.answer` records the choice, writes changed, guessed and remembered settings into the project as confirmed, and the wait returns one paragraph for the agent: the reading (or the person's wording of it), its values with the person's edits, its scale, weights the person set, deleted readings and the settings, each value said once. The page also sends where the picked reading stood on screen and the time to answer; the Project view counts them (how often the first one shown was picked), so rubber-stamping shows.
 
-When the wait runs out, the agent says in one line that the readings wait on the page and stops; the page counts the 110 s down and then says the agent stopped. An answer given after that is added to the person's next message by the `UserPromptSubmit` hook (`mod.undelivered`, once), so "continue" needs no second wait.
+When the wait runs out, the agent says in one line that the readings wait on the page and stops; the page counts the 110 s down and then says the agent stopped. An answer given after that is added to the person's next message by the `UserPromptSubmit` hook (`mod.undelivered`, once), so "continue" needs no second wait. If nothing serves the page, `mod wait` returns at once and the agent tells the person to start it or answer in the chat. An agent with no shell writes the intent and ends its turn.
+
+While the newest intent is unanswered (and under 30 minutes old), the fence denies every edit except to `.mod/intents/`, so an agent that asked cannot guess anyway; the person's next chat message counts as the answer if they did not answer on the page.
 
 ## An agent you run yourself (Claude API, Agent SDK, any tool loop)
 
