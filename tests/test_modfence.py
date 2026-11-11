@@ -994,7 +994,7 @@ class FencePluginTest(unittest.TestCase):
         hooks = analyze.read_text(os.path.join(root, "hooks", "hooks.json"))
         self.assertIn("plugin/cli.py\\\" guard", hooks)
         self.assertIn("plugin/cli.py\\\" receipt --hook", hooks)
-        for f in ("plugin/cli.py", "commands/receipt.md", "commands/fence.md", "skills/modules/SKILL.md"):
+        for f in ("plugin/cli.py", "commands/receipt.md", "commands/fence.md"):
             self.assertTrue(os.path.exists(os.path.join(root, f)), f)
 
 

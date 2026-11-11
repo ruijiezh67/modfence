@@ -1,5 +1,5 @@
 ---
-description: Fence agents in this project to one module of MODULES.md; --allow widens it, --off lifts it, nothing shows what was blocked
+description: Fence agents in this project to one module (from .mod/project.mod); --allow widens it, --off lifts it, nothing shows what was blocked
 argument-hint: <module> | --allow <module or path> | --off
 allowed-tools: Bash(python:*), Bash(python3:*)
 ---
