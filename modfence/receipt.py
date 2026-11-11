@@ -18,7 +18,7 @@ a hook or CI can block on it; 0 otherwise; 2 when PROJECT is not a git work tree
 --hook: a Claude Code Stop hook. Only in a project with MODULES.md; on a problem it blocks the agent's stop once with
 the receipt as the reason, and lets the second stop through.
 """
-import argparse, ast, json, os, subprocess, sys
+import argparse, ast, functools, json, os, subprocess, sys
 
 from . import analyze, brief, modules, roles, runner, scope_guard
 
@@ -72,19 +72,20 @@ def new_dependencies(root, files, changed, before, part, learned=()):
     """[{"from", "to", "at"}]: part-to-part imports the changed files make now that no file made before."""
     files = set(files)
     base, now = set(), {}
-    for path in files:
-        if path in changed:
-            continue
-        try:
-            base |= set(_pairs(path, analyze.read_text(os.path.join(root, path)), files, part, learned))
-        except OSError:
-            pass
     for path in changed:
         old = before(path)
         if old is not None:
             base |= set(_pairs(path, old, files, part, learned))
         if os.path.exists(os.path.join(root, path)):
             now.update({k: v for k, v in _pairs(path, analyze.read_text(os.path.join(root, path)), files, part, learned).items() if k not in now})
+    srcs = {a for (a, b) in now if (a, b) not in base}
+    for path in files:  # only the parts a changed file now imports from can hold an older pair (was every file: 1.4 s on rich)
+        if path in changed or part(path) not in srcs:
+            continue
+        try:
+            base |= set(_pairs(path, analyze.read_text(os.path.join(root, path)), files, part, learned))
+        except OSError:
+            pass
     return [{"from": a, "to": b, "at": at} for (a, b), at in sorted(now.items()) if (a, b) not in base]
 
 
@@ -107,8 +108,8 @@ def build(root, since="HEAD"):
     role_area = {r: a for a, v in (store.get("areas") or {}).items() for r in v.get("roles", [])}
     name = lambda d, k: ((store.get(d) or {}).get(k) or {}).get("name")
     shared = modules.load(root)  # MODULES.md first (golden rule 1), then the map's own areas
-    place = lambda path: ((modules.owner(shared, path) if shared is not None else name("areas", role_area.get((store.get("files") or {}).get(path)))),
-                          name("roles", (store.get("files") or {}).get(path)))
+    place = functools.lru_cache(maxsize=None)(lambda path: ((modules.owner(shared, path) if shared is not None else name("areas", role_area.get((store.get("files") or {}).get(path)))),
+                          name("roles", (store.get("files") or {}).get(path))))  # memo: owner() matched 137k times
     areas = {}
     for f in py:
         area, role = place(f["path"])
@@ -129,7 +130,7 @@ def build(root, since="HEAD"):
         f["path"]: (None if f["status"] == "added" else before(f["path"]),
                     None if f["status"] == "deleted" else _bytes(os.path.join(root, f["path"])))
         for f in py if f["status"] != "added"})
-    part = lambda path: None if modules._is_test(path) else place(path)[0] or (shared is None and analyze.module_of(path, split)) or None
+    part = functools.lru_cache(maxsize=None)(lambda path: None if modules._is_test(path) else place(path)[0] or (shared is None and analyze.module_of(path, split)) or None)
     new = new_dependencies(root, graph["files"], {f["path"] for f in py if f["status"] != "deleted"}, before, part, graph.get("roots", ()))
     fence = scope_guard.load_fence(root)
     outside = [f["path"] for f in files if not scope_guard.allowed(f["path"], root, fence[1])] if fence else None
@@ -237,6 +238,8 @@ def hook(raw):
     if modules.load(root) is None:
         return 0
     try:
+        if not changes(root, "HEAD"):  # a turn that changed nothing: no receipt (it cost 2.7 s on rich, every stop)
+            return 0
         r = build(root)
     except Exception as e:  # a receipt that cannot be made never traps the agent
         print(f"modfence receipt skipped: {type(e).__name__}: {e}", file=sys.stderr)
