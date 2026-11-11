@@ -3,7 +3,7 @@ that moment, finds the module of .mod/project.mod it most likely lives in, fence
 to start. No model: the task's words against each module's function names and code. You see the guess, its evidence
 and the other candidates (in Claude Code and on the map), and switch with one command or click. A fence you set
 yourself is never replaced; a short follow-up ("continue", "approved") keeps the fence it has."""
-import json, os, re, sys
+import json, math, os, re, sys
 
 from . import analyze, mod, modules, scope_guard
 from .runner import _words, is_test
@@ -28,7 +28,7 @@ def candidates(root, task, mods=None, k=3):
     mods = mods if mods is not None else modules.load(root)
     if not q or not mods:
         return []
-    found = {}
+    found, df, n = {}, {}, 0  # df: how many functions use each task word (for where to start, not for the module)
     for path in analyze.walk(root):
         m = modules.owner(mods, path)
         if not m or is_test(path):
@@ -41,16 +41,25 @@ def candidates(root, task, mods=None, k=3):
         defs = [(d.start(), d.group(1)) for d in DEF.finditer(text)]
         for i, (at, name) in enumerate(defs):
             body = text[at:defs[i + 1][0] if i + 1 < len(defs) else len(text)]
-            s = 3 * len(q & _words(name)) + len(q & _words(body)) + in_file
+            nw, bw = q & _words(name), q & _words(body)
+            n += 1
+            for w in bw:
+                df[w] = df.get(w, 0) + 1
+            s = 3 * len(nw) + len(bw) + in_file
             if s >= 3:
-                found.setdefault(m, []).append((s, path, text.count("\n", 0, at) + 1, name))
+                found.setdefault(m, []).append((s, path, text.count("\n", 0, at) + 1, name, nw, bw))
     out = []
     for mm in mods:
         fs, named = found.get(mm["name"], []), NAMED * len(q & _words(mm["name"] + " " + (mm.get("purpose") or "")))
         if not fs and not named:
             continue
         fs.sort(key=lambda f: (-f[0], f[1], f[2]))
-        out.append({"module": mm["name"], "score": named + sum(f[0] for f in fs[:WHERE]), "where": [list(f[1:]) for f in fs[:WHERE]]})
+        # where to start: the same words weighted by rarity, so "count" outweighs "table" and "document", and only the
+        # places close to the best (TinyDB: count, _read_table and _update_table scored 10, 9, 9; the agent searched all three)
+        rare = lambda f: sum(math.log((n + 1) / (df.get(w, 0) + 1)) * (3 if w in f[4] else 1) for w in f[4] | f[5])
+        top = sorted(fs[:2 * WHERE], key=lambda f: (-rare(f), f[1], f[2]))
+        where = [f for f in top[:WHERE] if rare(f) >= 0.75 * rare(top[0])] if top else []
+        out.append({"module": mm["name"], "score": named + sum(f[0] for f in fs[:WHERE]), "where": [list(f[1:4]) for f in where]})
     return sorted(out, key=lambda c: (-c["score"], c["module"]))[:k]
 
 
@@ -95,7 +104,7 @@ def message(pick, cands):
     names = lambda c: ", ".join(dict.fromkeys(w[2] for w in c["where"]))
     agent = (f"modfence: for this task you may edit only module {' and '.join(pick)} (and tests); an edit "
              "elsewhere is blocked until the user approves it, so try it and say why. Likely start: "
-             + "; ".join(f"{p}:{n} {name}" for p, n, name in cands[0]["where"]))
+             + "; ".join(f"{p}:{n} {name}" for c in cands if c["module"] in pick for p, n, name in c["where"][:2]))  # each fenced module's
     others = [c for c in cands if c["module"] not in pick]
     person = (f"modfence fenced this task to {' + '.join(pick)} ({names(cands[0])})"
               + ("; other candidates: " + ", ".join(f"{c['module']} ({names(c)})" for c in others) if others else "")

@@ -934,6 +934,14 @@ class JitTest(unittest.TestCase):
         self.assertEqual(self.jit.choose(self.jit.candidates(self.d, task + ". Do not run the tests; only read and edit the code.")),
                          self.jit.choose(self.jit.candidates(self.d, task)))
 
+    def test_where_to_start_weighs_rare_words(self):
+        # TinyDB T2: count, _read_table and _update_table were all "likely starts"; the agent searched all three
+        body = '    """The table\'s documents, read from the table."""\n    return table, documents, number\n\n'
+        write(os.path.join(self.d, "app/core/table.py"), "def count(cond):\n    return len(search(cond))\n\n"
+              + "".join(f"def {n}(table):\n{body}" for n in ("_read_table", "_update_table", "_table_docs", "_all_tables")))
+        c = self.jit.candidates(self.d, "make Table.count work without a condition: then it returns the number of all documents")
+        self.assertEqual([w[2] for w in c[0]["where"]], ["count"])
+
     def test_a_fence_the_person_set_is_kept(self):
         scope_guard.arm(self.d, ["@module:cli"], False, "cli")
         self.assertEqual(self.hook("double_value should respect the limit when doubling a value"), "")
