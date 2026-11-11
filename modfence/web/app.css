@@ -195,7 +195,7 @@ body.panel-open .canvas, body.panel-open .alt { right: var(--panel-w); }
 .arrow.dep { fill: var(--dep); fill-opacity: 1; }
 .arrow.use { fill: var(--use-ink); fill-opacity: 1; }
 .hatch-bg { fill: var(--fence-soft); }
-.hatch-line { stroke: var(--fence-line); stroke-width: 2.5; }
+.hatch-line { stroke: var(--fence-line); stroke-width: 1.5; opacity: 0.55; } /* light enough to read the box's text through */
 .dot-fill { fill: var(--ok-ink); fill-opacity: 0.35; }
 
 .node { cursor: pointer; outline: none; }
@@ -262,7 +262,7 @@ body.panel-open .crumbs { max-width: calc(100% - var(--panel-w) - 32px); }
 body.panel-open .zoom { right: calc(var(--panel-w) + 12px); }
 body:not([data-view="graph"]) .zoom { display: none; }
 .hint {
-  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 9; padding: 6px 12px; border-radius: 6px;
+  position: absolute; right: 60px; bottom: 12px; z-index: 9; padding: 6px 12px; border-radius: 6px; /* right of the legend, left of zoom */
   background: var(--surface); border: 1px solid var(--line); color: var(--text-2); font-size: 12.5px; white-space: nowrap;
 }
 body.panel-open .hint, .pick:not([hidden]) ~ .hint { display: none; }
@@ -647,7 +647,7 @@ details.src[open]::details-content, .msec details[open]::details-content { block
   body:not(.panel-open) .panel { transform: translateY(32px); }
   @starting-style { body.panel-open .panel { transform: translateY(32px); opacity: 0; } }
   body.panel-open .zoom { right: 12px; }
-  .hint { white-space: normal; width: calc(100% - 24px); }
+  .hint { display: none; } /* no room beside the legend; the boxes say they can be clicked */
 }
 body[data-view="history"] :is(.crumbs, .legend, .zoom, .hint) { display: none; }
 .fseal { float: right; margin-top: 4px; font: 12px var(--mono); padding: 2px 8px; border: 1.5px solid var(--ink); border-radius: var(--r); background: var(--ink); color: var(--surface); cursor: pointer; }

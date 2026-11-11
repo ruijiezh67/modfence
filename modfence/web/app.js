@@ -719,7 +719,7 @@ function renderLegend(focus) {
   const items = [];
   if (focus) items.push(["var(--select)", "", "selected"], ["var(--dep)", "", "uses"], ["var(--use)", "", "used by"]);
   if (S.free && S.graph.edges.some((e) => e.kind)) items.push(["var(--text-3)", "line", "imports"], ["var(--text-3)", "dash", "calls over HTTP or starts"], ["var(--text-3)", "dashdot", "copied code"], ["var(--text-3)", "dot", "changed together (git)"]);
-  if (S.selected && !S.readOnly) items.push(["var(--fence)", "hatch", "editable (in the fence)"]);
+  if ((S.selected && !S.readOnly) || S.fenceOn) items.push(["var(--fence)", "hatch", "editable (in the fence)"]);
   if (S.marks.changed.size) items.push(["var(--ok)", "", "changed by the last run"]);
   if (S.marks.ripple.size) items.push(["var(--warn)", "", "uses changed code"]);
   const DASH = { line: "", dash: "6 4", dashdot: "8 3 2 3", dot: "2 3" }; // a link is shown as a line, a box as a box
