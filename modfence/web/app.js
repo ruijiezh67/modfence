@@ -241,7 +241,7 @@ function pick(id) { // a click only selects; the card below says what it is and 
     + `<div class="pm mono">${plural(m.files.length, "file")} · ${m.lines.toLocaleString()} ln</div>`
     + (doc ? `<p>${esc(doc)}</p>` : `<p class="none">No description in the code.</p>`)
     // golden rule 3: say what to change right here; the box is the fence, the map stays where it is
-    + (folder || id === "role:?" ? "" : `<p class="meta">To change it, give your agent the task in Claude Code: modfence fences the module the task needs (the top bar shows which, and why).</p>`)
+    + (folder || id === "role:?" ? "" : `<p class="meta">To change it, just give your agent the task: the fence picks this module when the task needs it.</p>`)
     + `<div class="pa">${role || folder ? `<button type="button" class="btn" data-open>${area ? "Open roles" : role ? "Open parts" : "Open folder"} ▸</button>` : ""}</div>`
     + (out.length ? `<h4>Uses <i>${out.length}</i></h4><ul class="pl">${out.map((e) => link(e, e.target)).join("")}</ul>` : "")
     + (inn.length ? `<h4>Used by <i>${inn.length}</i></h4><ul class="pl">${inn.map((e) => link(e, e.source)).join("")}</ul>` : "")

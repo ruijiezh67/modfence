@@ -65,6 +65,7 @@ function select(id) {
    into it. Nothing is preselected or recommended, and the order is shuffled per intent. */
 const SRCWORD = { guess: "guessed", memory: "remembered", user: "you said", default: "default" };
 const rx = (ci) => (S.rx[ci] ||= {});
+const scaleText = (sc) => `${{ one: "one run", sample: "a sample", full: "everything" }[sc.pick] || esc(sc.pick || "")} · ${sc.runs != null ? esc(sc.runs) + " runs" : "runs N/A"} · ${esc(sc.cost || "cost N/A")} · ${esc(sc.time || "time N/A")}`;
 function chip(s, editable) {
   const v = S.edits[s.key] ?? s.value, changed = S.edits[s.key] !== undefined;
   return `<span class="chip ${changed ? "user changed" : s.source}" data-key="${esc(s.key)}" title="${esc(s.key)}: ${changed ? "changed by you" : SRCWORD[s.source] || s.source}${s.source === "memory" && s.at ? " on " + esc(s.at) : ""}">`
@@ -84,6 +85,7 @@ function drawIntent(i) {
   const open = settings.filter((s) => s.source === "guess" || s.source === "memory");
   const took = settings.filter((s) => !open.includes(s) && s.from && quote.includes(`data-key="${esc(s.key)}"`)), rest = settings.filter((s) => !open.includes(s) && !took.includes(s));
   const pc = typeof S.pick === "number" ? cands[S.pick] : done && i.choice?.kind === "pick" ? cands[i.choice.index] : null;
+  const multi = new Set(cands.map((c) => JSON.stringify(c.scale || null))).size > 1; // a cost line only where they differ
   const sc = pc?.scale || i.scale || {}, plan = Array.isArray(i.plan) && i.plan.length ? i.plan : ["", "this step", ""];
   const node = (ci, k) => {
     const c = cands[ci], r = rx(ci), name = r.name ?? c.name, desc = r.description ?? c.description ?? "", w = r.weight ?? 0; // the agent's own weight is never shown: it would read as a recommendation
@@ -96,6 +98,7 @@ function drawIntent(i) {
       + (keys.length ? `<p class="diffs">${keys.map((key) => { const ch = (r.differs || {})[key] !== undefined, v = ch ? r.differs[key] : (c.differs || {})[key] ?? "—";
         return `<span class="chip alt${ch ? " changed" : ""}" data-ci="${ci}" data-dk="${esc(key)}"><span class="ck">${esc(key)}</span>${done ? `<span class="cv">${esc(v)}</span>` : `<button type="button" class="cv" title="Change this value">${esc(v)}</button>`}</span>`; }).join(" ")}</p>` : "")
       + `<div class="wt" title="Weight: how much this matters to you (1-10)">${[...Array(10).keys()].map((t) => `<button type="button" class="tick${t < w ? " f" : ""}" data-w="${ci}:${t + 1}" aria-label="Weight ${t + 1}"${done ? " disabled" : ""}></button>`).join("")}<span>${w ? `weight ${w}` : "how much it matters"}</span></div>`
+      + (c.scale && multi ? `<p class="cost">${scaleText(c.scale)}</p>` : "")
       + (c.evidence ? `<p class="ev">because ${esc(c.evidence)}</p>` : "") + `</div>`;
   };
   $("#main").innerHTML = `<p class="state" id="state">${stateText(i)} · ${esc(i.id)}</p>`
@@ -109,7 +112,8 @@ function drawIntent(i) {
     + `</div><div class="col">${order.map(node).join("")}`
     + (done ? "" : `<div class="node reading own${S.pick === "own" ? " on" : ""}" id="n-own"><div class="rh"><kbd>${cands.length + 1}</kbd><b class="rn">None of these</b></div><input type="text" id="own" placeholder="Say it in your own words" value="${esc(S.own)}"></div>`)
     + `</div><div class="col plan">${plan.map((p, k) => `<div class="node step${k === 1 ? " here" : ""}" id="n-p${k}">${k === 1 ? `<span class="nl">The agent stopped here</span>` : ""}${esc(p || (k ? "next" : "before"))}`
-      + (k === 1 && sc.pick ? `<span class="sc">${{ one: "one run", sample: "a sample", full: "everything" }[sc.pick] || esc(sc.pick)} · ${sc.runs != null ? esc(sc.runs) + " runs" : "runs N/A"} · ${esc(sc.cost || "cost N/A")} · ${esc(sc.time || "time N/A")}</span>` : "") + `</div>`).join("")}</div>`
+      + (k === 1 && multi && !pc ? `<span class="sc">cost depends on your pick</span>` // no reading's cost stands in as a default
+        : k === 1 && sc.pick ? `<span class="sc">${scaleText(sc)}</span>` : "") + `</div>`).join("")}</div>`
     + `</div>`
     + `<p class="legend"><span class="chip guess"><span class="cv">x</span><span class="cm">?</span></span> guessed <span class="chip memory"><span class="cv">x</span><span class="cd">date</span></span> remembered <span class="chip user"><span class="cv">x</span></span> you said <span class="chip default"><span class="cv">x</span></span> default${done ? "" : " · click a value to change it"}</p>`
     + (done ? `<p class="done">You chose: ${esc(i.choice?.kind === "own" ? i.choice.text : i.choice?.name || cands[i.choice?.index]?.name || "")}. Your agent has it.</p>`
