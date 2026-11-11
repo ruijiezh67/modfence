@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "P=python; command -v python >/dev/null 2>&1 || P=python3; \"$P\" \"${CLAUDE_PLUGIN_ROOT}/plugin/cli.py\" guard",
+            "command": "P=python; command -v python >/dev/null 2>&1 || P=python3; \"$P\" -S \"${CLAUDE_PLUGIN_ROOT}/plugin/cli.py\" guard",
             "timeout": 10
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "P=python; command -v python >/dev/null 2>&1 || P=python3; \"$P\" \"${CLAUDE_PLUGIN_ROOT}/plugin/cli.py\" mod session-hook",
+            "command": "P=python; command -v python >/dev/null 2>&1 || P=python3; \"$P\" -S \"${CLAUDE_PLUGIN_ROOT}/plugin/cli.py\" mod session-hook",
             "timeout": 20
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "P=python; command -v python >/dev/null 2>&1 || P=python3; \"$P\" \"${CLAUDE_PLUGIN_ROOT}/plugin/cli.py\" jit --hook",
+            "command": "P=python; command -v python >/dev/null 2>&1 || P=python3; \"$P\" -S \"${CLAUDE_PLUGIN_ROOT}/plugin/cli.py\" jit --hook",
             "timeout": 20
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "P=python; command -v python >/dev/null 2>&1 || P=python3; \"$P\" \"${CLAUDE_PLUGIN_ROOT}/plugin/cli.py\" receipt --hook",
+            "command": "P=python; command -v python >/dev/null 2>&1 || P=python3; \"$P\" -S \"${CLAUDE_PLUGIN_ROOT}/plugin/cli.py\" receipt --hook",
             "timeout": 120
           }
         ]
