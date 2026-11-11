@@ -97,11 +97,11 @@ function drawIntent(i) {
     return `<div class="node reading${S.pick === ci ? " on" : ""}" id="n-r${ci}" data-ci="${ci}" role="button" tabindex="0" aria-pressed="${S.pick === ci}">`
       + `<div class="rh"><kbd>${k + 1}</kbd>` + (r.editing && !done
         ? `<input class="rn-in" value="${esc(name)}" aria-label="Reading name">` : `<b class="rn">${esc(name)}</b>`)
+      + `<span class="wt" title="How much this matters to you (1-10)">${[...Array(10).keys()].map((t) => `<button type="button" class="tick${t < w ? " f" : ""}" data-w="${ci}:${t + 1}" aria-label="Weight ${t + 1}"${done ? " disabled" : ""}></button>`).join("")}${w ? `<span>${w}</span>` : ""}</span>` // in the head row: one line less per reading
       + (done ? "" : `<span class="tools"><button type="button" data-edit="${ci}" title="Edit this reading">${r.editing ? "Done" : "Edit"}</button><button type="button" data-del="${ci}" title="Delete: this is not what I meant" aria-label="Delete">×</button></span>`) + `</div>`
       + (r.editing && !done ? `<textarea class="rd-in" rows="2" aria-label="Description">${esc(desc)}</textarea>` : desc ? `<p class="rd" title="${esc(desc)}">${esc(desc)}</p>` : "")
       + (keys.length ? `<p class="diffs">${keys.map((key) => { const ch = (r.differs || {})[key] !== undefined, v = ch ? r.differs[key] : (c.differs || {})[key] ?? "—";
         return `<span class="chip alt${ch ? " changed" : ""}" data-ci="${ci}" data-dk="${esc(key)}"><span class="ck">${esc(key)}</span>${done ? `<span class="cv">${esc(v)}</span>` : `<button type="button" class="cv" title="Change this value">${esc(v)}</button>`}</span>`; }).join(" ")}</p>` : "")
-      + `<div class="wt" title="Weight: how much this matters to you (1-10)">${[...Array(10).keys()].map((t) => `<button type="button" class="tick${t < w ? " f" : ""}" data-w="${ci}:${t + 1}" aria-label="Weight ${t + 1}"${done ? " disabled" : ""}></button>`).join("")}<span>${w ? `weight ${w}` : "how much it matters"}</span></div>`
       + (c.scale && multi ? `<p class="cost">${scaleText(c.scale)}</p>` : "")
       + (c.evidence ? `<p class="ev" title="because ${esc(c.evidence)}">because ${esc(c.evidence)}</p>` : "") + `</div>`;
   };

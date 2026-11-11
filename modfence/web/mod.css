@@ -89,17 +89,17 @@ details.node > summary::before { content: "+ "; } details.node[open] > summary::
 .rn { font-size: 15px; line-height: 1.3; }
 .rn-in { flex: 1; font: 700 15px var(--font); border: 1.5px solid var(--text); border-radius: 4px; padding: 2px 6px; background: var(--bg); color: var(--text); }
 .rd-in { font: 13px/1.45 var(--font); border: 1.5px solid var(--text); border-radius: 4px; padding: 4px 6px; background: var(--bg); color: var(--text); resize: vertical; }
-.tools { margin-left: auto; display: flex; gap: 2px; opacity: 0.55; }
+.tools { display: flex; gap: 2px; opacity: 0.55; }
 .reading:hover .tools, .reading:focus-within .tools { opacity: 1; }
 .tools button, .link { border: 0; background: none; font-size: 12px; color: var(--text-3); cursor: pointer; padding: 2px 5px; border-radius: 3px; }
 .tools button:hover, .link:hover { background: var(--sunken); color: var(--text); }
 .rd { margin: 0; font-size: 13px; color: var(--text-2); }
 .diffs { margin: 0; display: flex; flex-wrap: wrap; gap: 5px; }
-.wt { display: flex; align-items: center; gap: 2px; }
+.wt { margin-left: auto; display: flex; align-items: center; gap: 2px; align-self: center; }
 .tick { width: 9px; height: 9px; border-radius: 2px; border: 1px solid var(--line-2); background: transparent; padding: 0; cursor: pointer; }
 .tick.f { background: var(--text-3); border-color: var(--text-3); }
 .tick:disabled { cursor: default; }
-.wt span { margin-left: 6px; font-size: 11.5px; color: var(--text-3); }
+.wt span { margin-left: 4px; font: 600 11px var(--mono); color: var(--text-2); }
 .ev { margin: 0; font-size: 12px; color: var(--text-3); }
 .cost { margin: 0; font: 600 12px var(--mono); color: var(--text-2); }
 .cost::before { content: "→ "; color: var(--text-3); }
