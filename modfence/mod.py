@@ -184,6 +184,30 @@ def reply(intent):
     return head + ". Settings: " + ("; ".join(rows) or "none") + ". Follow exactly this; ask again only if it turns out impossible."
 
 
+OPEN_FOR = 1800  # s: an unanswered intent older than this no longer holds the agent back
+
+
+def open_intent(root):
+    """The newest intent still waiting for the person, if it is younger than OPEN_FOR; else None."""
+    for i in intents(root)[:1]:
+        if i.get("status") != "answered" and time.time() - i["mtime"] < OPEN_FOR:
+            return i
+    return None
+
+
+def answer_in_chat(root, text):
+    """The person wrote in the chat while an intent was open: that message is their answer (the agent reads it
+    itself). Returns the intent's id, or None when nothing was open."""
+    i = open_intent(root)
+    if i is None:
+        return None
+    iid = i.pop("id")
+    i.pop("mtime", None)
+    save_intent(root, iid, {**i, "status": "answered", "delivered": True,
+                            "choice": {"kind": "chat", "text": str(text or "")[:500], "at": datetime.now().astimezone().isoformat(timespec="seconds")}})
+    return iid
+
+
 def undelivered(root):
     """The newest intent's answer if its agent never read it (it stopped waiting, or had no shell to wait with),
     marked as read; else None."""

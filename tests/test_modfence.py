@@ -954,6 +954,19 @@ class JitTest(unittest.TestCase):
         self.assertEqual(self.jit.choose(self.jit.candidates(self.d, task + ". Do not run the tests; only read and edit the code.")),
                          self.jit.choose(self.jit.candidates(self.d, task)))
 
+    def test_an_open_question_holds_edits_until_the_answer(self):
+        # TinyDB probe: with no shell to wait in, the agent wrote its intent and edited the code anyway
+        from modfence import mod
+        f = load(self.fence) if os.path.exists(self.fence) else None
+        scope = ["@module:core"]
+        mod.save_intent(self.d, "q1", {"words": "make it bigger", "candidates": [{"name": "a", "evidence": "x"}, {"name": "b", "evidence": "y"}]})
+        edit = lambda p: scope_guard.decide({"tool_name": "Edit", "tool_input": {"file_path": p}}, self.d, scope)
+        self.assertIn("you asked the user", edit("app/core/values.py") or "")
+        self.assertIsNone(edit(".mod/intents/q1.mod"), "the question itself may still be written")
+        self.assertEqual(mod.answer_in_chat(self.d, "make it 100"), "q1", "a chat message answers it")
+        self.assertIsNone(edit("app/core/values.py"))
+        self.assertEqual(mod.load_intent(self.d, "q1")["choice"]["kind"], "chat")
+
     def test_a_constant_is_a_place_and_queries_is_query(self):
         # TinyDB K1: "make the query cache bigger" is `default_query_cache_capacity = 10` in table.py; it fenced queries.py
         write(os.path.join(self.d, "MODULES.md"), "# Modules\n\n## core\nTables.\n- app/core/\n\n## query\nQuery interface.\n- app/queries.py\n")

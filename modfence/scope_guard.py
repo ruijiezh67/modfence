@@ -17,7 +17,7 @@ set, with this hook added to <root>/.claude/settings.local.json. So an agent the
 Cursor, Copilot, Codex) is fenced too. Payloads in Claude Code, Cursor, Copilot (toolName, toolArgs) and Codex
 (apply_patch) shapes are read; an unknown tool whose name says it changes files is denied. No fence: allow everything.
 """
-import json, os, re, sys
+import json, os, re, sys, time
 from datetime import datetime
 
 EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
@@ -103,6 +103,22 @@ def patch_paths(text):
     return [p.strip() for p in PATCH_PATH.findall(text)]
 
 
+def _held(root, paths):
+    """An open intent holds every edit but the intent files: the agent asked, so it changes nothing until the answer
+    (TinyDB probe: with no shell to wait in, Haiku wrote its intent and edited the code anyway)."""
+    if all((_rel(p, root) or "").startswith(".mod/intents/") for p in paths):
+        return None
+    d = os.path.join(root, ".mod", "intents")  # as mod.open_intent; read here, as this file also runs on its own
+    try:
+        newest = max((os.path.join(d, f) for f in os.listdir(d) if f.endswith(".mod")), key=os.path.getmtime)
+        if time.time() - os.path.getmtime(newest) >= 1800 or (_read_json(newest) or {}).get("status") == "answered":
+            return None
+    except (OSError, ValueError):
+        return None
+    return (f"modfence: you asked the user (intent {os.path.basename(newest)[:-4]}), so change nothing until they "
+            "answer. End your turn now in one line; their answer comes with their next message.")
+
+
 def decide(event, root, scope, fence=None, asked=None):
     """None to allow, or the reason to deny. fence: what a sealed run may read (None: not sealed). asked: a list that
     gets the project path of an edit denied for being outside the scope."""
@@ -120,6 +136,9 @@ def decide(event, root, scope, fence=None, asked=None):
     if paths is not None:
         if not paths or not all(paths):
             return "modfence: no file path in this edit, so its scope cannot be checked."
+        held = _held(root, paths)
+        if held:
+            return held
         path = next((p for p in paths if not allowed(p, root, scope)), None)
         if path is None:
             return None

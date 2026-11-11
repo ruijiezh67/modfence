@@ -121,7 +121,7 @@ function drawIntent(i) {
         : k === 1 && sc.pick ? `<span class="sc">${scaleText(sc)}</span>` : "") + `</div>`).join("")}${fenceNode()}</div>`
     + `</div>`
     + `<p class="legend"><span class="chip guess"><span class="cv">x</span><span class="cm">?</span></span> guessed <span class="chip memory"><span class="cv">x</span><span class="cd">date</span></span> remembered <span class="chip user"><span class="cv">x</span></span> you said <span class="chip default"><span class="cv">x</span></span> default${done ? "" : " · click a value to change it"}</p>`
-    + (done ? `<p class="done">You chose: ${esc(i.choice?.kind === "own" ? i.choice.text : i.choice?.name || cands[i.choice?.index]?.name || "")}. Your agent has it.</p>`
+    + (done ? `<p class="done">You ${i.choice?.kind === "chat" ? "answered in the chat" : "chose"}: ${esc(["own", "chat"].includes(i.choice?.kind) ? i.choice.text : i.choice?.name || cands[i.choice?.index]?.name || "")}. Your agent has it.</p>`
       : `<div class="bar"><span class="what" id="what"></span><button type="button" class="go" id="go" disabled>Continue <kbd>Enter</kbd></button></div>`);
   wireIntent(i);
 }

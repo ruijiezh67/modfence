@@ -153,6 +153,7 @@ def hook(raw):
     if not root:
         return 0
     answer = mod.undelivered(root)  # answered on the page after the agent stopped waiting: hand it over now
+    mod.answer_in_chat(root, ev.get("prompt"))  # or this message is the answer: the open intent no longer holds edits
     pick, cands, _ = apply(root, ev.get("prompt") or "")
     agent, person = message(pick, cands) if pick else (None, None)
     agent = "\n".join(x for x in (answer, agent) if x)
