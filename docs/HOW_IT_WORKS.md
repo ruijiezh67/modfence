@@ -31,6 +31,12 @@ An edit outside the fence is blocked and logged; the map's top bar shows it with
 
 The older hand-off (`runner.Handoff`: snapshot, a line to paste, *Review changes*, revert) and headless runs (`/api/ask`, `done_check.py`) remain in the server; the page no longer starts them.
 
+## What the agent would otherwise guess: `.mod`
+
+`mod.py` keeps two kinds of file under `.mod/` (git-ignored by default). `project.mod` holds the modules (it replaces `MODULES.md`) and the settings the person confirmed. An intent file holds one request the agent could not act on without guessing: the person's words, 2-3 readings (`name`, `description`, `weight`, `evidence`, and `differs`: the settings where that reading differs), every setting with its `source` (user, default, memory with `at`, guess) and `from` (the words it came from), the `scale` (one run, a sample, everything; runs, cost, time) and a three-step plan slice. The format follows Michelle Lam's objective schema (Poppins, BSD-3-Clause) and adds the sources.
+
+The SessionStart hook prints `mod.context()`: modules by name, confirmed settings, the last intent's answer and the protocol (about 430 tokens, once per session and after each compaction). The agent writes the intent and runs `modfence mod wait <id>`, which checks the file, marks it waiting and blocks up to 110 s. The page (`web/mod.html`) polls `/api/mod`, jumps to a waiting intent and posts `/api/mod/answer`; `mod.answer` records the choice, writes changed, guessed and remembered settings into the project as confirmed, and the wait returns one paragraph for the agent.
+
 ## An agent you run yourself (Claude API, Agent SDK, any tool loop)
 
 The same fence, with no plugin: call two functions where your loop already decides things. Checked with the Agent SDK
