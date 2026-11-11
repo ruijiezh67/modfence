@@ -12,11 +12,13 @@ DEF = re.compile(r"^[ \t]*(?:async[ \t]+)?(?:def|class)[ \t]+(\w+)", re.M)
 MIN_SCORE = 8      # ponytail: below this the task names nothing in the code; calibrated on the rich and lab tasks
 SECOND = 0.75      # a second module this close to the first is fenced too, so a task that spans two is not blocked
 WHERE = 3          # likely places shown to the agent; more is a search it does better itself
+NAMED = 4          # per task word in a module's name or purpose: the person's (or the map's) own words for it
 
 
 def candidates(root, task, mods=None, k=3):
-    """[{module, score, where: [(path, line, name)]}], best first. A function scores 3 per task word in its name, 1 per
-    word in its body, plus the words in its file's name; a module scores the sum of its best WHERE functions."""
+    """[{module, score, where: [(path, line, name)]}], best first. A function scores 3 per task word in its name or its
+    file's name and 1 per word in its body; a module scores the sum of its best WHERE functions plus NAMED per task
+    word in its name and purpose."""
     q = _words(task or "")
     mods = mods if mods is not None else modules.load(root)
     if not q or not mods:
@@ -30,7 +32,7 @@ def candidates(root, task, mods=None, k=3):
             text = analyze.read_text(os.path.join(root, path))
         except (OSError, ValueError):
             continue
-        in_file = len(q & _words(os.path.basename(path)))
+        in_file = 3 * len(q & _words(os.path.basename(path)))
         defs = [(d.start(), d.group(1)) for d in DEF.finditer(text)]
         for i, (at, name) in enumerate(defs):
             body = text[at:defs[i + 1][0] if i + 1 < len(defs) else len(text)]
@@ -38,9 +40,12 @@ def candidates(root, task, mods=None, k=3):
             if s >= 3:
                 found.setdefault(m, []).append((s, path, text.count("\n", 0, at) + 1, name))
     out = []
-    for m, fs in found.items():
+    for mm in mods:
+        fs, named = found.get(mm["name"], []), NAMED * len(q & _words(mm["name"] + " " + (mm.get("purpose") or "")))
+        if not fs and not named:
+            continue
         fs.sort(key=lambda f: (-f[0], f[1], f[2]))
-        out.append({"module": m, "score": sum(f[0] for f in fs[:WHERE]), "where": [list(f[1:]) for f in fs[:WHERE]]})
+        out.append({"module": mm["name"], "score": named + sum(f[0] for f in fs[:WHERE]), "where": [list(f[1:]) for f in fs[:WHERE]]})
     return sorted(out, key=lambda c: (-c["score"], c["module"]))[:k]
 
 

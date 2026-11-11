@@ -907,6 +907,16 @@ class JitTest(unittest.TestCase):
         self.assertIn("outside", modfence.check_edit("app/api/handlers.py", self.d))
         self.assertEqual(scope_guard.pending_asks(self.d, ["@module:core"]), ["app/api/handlers.py"], "the map shows it as a request")
 
+    def test_a_module_is_found_by_its_own_name_and_purpose(self):
+        # TinyDB probe 2026-11-11: "add an update operation toggle(field)" went to the table code, whose functions are
+        # named update, instead of operations.py, whose module purpose says "update operations ... fields"
+        write(os.path.join(self.d, "MODULES.md"), "# Modules\n\n## core\nValues.\n- app/core/\n\n"
+              "## operations\nUpdate operations that modify document fields.\n- app/ops.py\n")
+        write(os.path.join(self.d, "app/core/table.py"), "def update(fields):\n    perform_update(fields)\n\n"
+              "def perform_update(fields):\n    return update_fields(fields)\n")
+        write(os.path.join(self.d, "app/ops.py"), "def delete(field):\n    return field\n\ndef increment(field):\n    return field\n")
+        self.assertEqual(self.jit.choose(self.jit.candidates(self.d, "add an update operation toggle(field) that flips a boolean field"))[0], "operations")
+
     def test_a_fence_the_person_set_is_kept(self):
         scope_guard.arm(self.d, ["@module:cli"], False, "cli")
         self.assertEqual(self.hook("double_value should respect the limit when doubling a value"), "")
