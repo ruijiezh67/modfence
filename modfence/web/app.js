@@ -341,7 +341,7 @@ function fileList(files, fdoc) {
 }
 function renderCrumbs() {
   const c = $("#crumbs"), big = S.full.modules.length > GROUP_AT, has = S.roles && S.roles.roles.length;
-  const step = (n, text, attrs, cur) => `<button type="button" ${attrs}${cur ? ' aria-current="true"' : ""}><b>${n}</b> ${esc(text)}</button>`;
+  const step = (n, text, attrs, cur) => `<button type="button" ${attrs}${cur ? ' aria-current="true"' : ""}>${esc(text)}</button>`; // a path, not numbered steps
   let h = "";
   if (S.level === "modules") {
     if (!big && !has && S.full.modules.length <= ROLE_AT) { c.hidden = true; return; }
@@ -353,11 +353,11 @@ function renderCrumbs() {
     const r = S.roles.roles.find((x) => x.id === S.role), A = (S.roles.areas || []).find((a) => a.id === S.area);
     let n = 1;
     if (S.roles.areas?.length) {
-      h = step(n++, "Modules", 'data-lv="areas"', S.level === "areas");
+      h = step(n++, S.level === "areas" ? plural(S.roles.areas.length, "module") : "All modules", 'data-lv="areas"', S.level === "areas");
       if (S.level !== "areas" && A) h += `<span>/</span>` + step(n++, A.name, `data-area="${esc(A.id)}"`, S.level === "roles");
     } else h = step(n++, "Roles", 'data-lv="roles"', S.level === "roles");
     if (S.level === "parts") h += `<span>/</span>` + step(n, S.role === "?" ? "not placed yet" : rname(S.role), `data-role="${esc(S.role)}"`, true);
-    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "module")}</em>${S.roles.modules_file ? `<a class="act q" href="/mod.html#p=${S.p}&v=project" title="Rename, split or merge the modules on the Intents page">Edit modules</a>` : `<button type="button" class="act" data-savemods title="Keep these modules for the fence and your agent (in .mod/project.mod)">Save modules</button>`}`;
+    if (S.level === "areas") h += `${S.roles.modules_file ? `<a class="act q" href="/mod.html#p=${S.p}&v=project" title="Rename, split or merge the modules on the Intents page">Edit modules</a>` : `<button type="button" class="act" data-savemods title="Keep these modules for the fence and your agent (in .mod/project.mod)">Save modules</button>`}`;
     if (S.hiddenLinks && !S.dense) h += `<em title="Strongest ${KEEP_LINKS} links per box">${S.hiddenLinks} weak links hidden</em>`;
     if (S.level === "roles" && !A) h += `<em title="${esc(S.roles.how || "")}">${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}</em>`
 ;
@@ -722,7 +722,10 @@ function renderLegend(focus) {
   if (S.selected && !S.readOnly) items.push(["var(--fence)", "hatch", "editable (in the fence)"]);
   if (S.marks.changed.size) items.push(["var(--ok)", "", "changed by the last run"]);
   if (S.marks.ripple.size) items.push(["var(--warn)", "", "uses changed code"]);
-  $("#legend").innerHTML = items.map(([c, cls, t]) => `<span><i class="${cls}" style="border-color:${c}"></i>${esc(t)}</span>`).join("");
+  const DASH = { line: "", dash: "6 4", dashdot: "8 3 2 3", dot: "2 3" }; // a link is shown as a line, a box as a box
+  $("#legend").innerHTML = items.map(([c, cls, t]) => `<span>${cls in DASH
+    ? `<svg class="ln" width="24" height="8" aria-hidden="true"><line x1="0" y1="4" x2="24" y2="4" stroke="${c}" stroke-width="2" stroke-dasharray="${DASH[cls]}"/></svg>`
+    : `<i class="${cls}" style="border-color:${c}"></i>`}${esc(t)}</span>`).join("");
 }
 
 /* ---------------- camera: 1:1 pan, zoom at pointer, critically damped spring for fit/focus ---------------- */
