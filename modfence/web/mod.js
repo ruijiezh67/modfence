@@ -40,7 +40,10 @@ async function load(first) {
   try { S.data = await api(`/api/mod?${q()}`); } catch (e) { $("#main").innerHTML = `<p class="empty">${esc(e.message)}</p>`; return; }
   const waiting = S.data.intents.find((i) => left(i) > 0 && !S.seen.has(i.id));
   if (waiting) { S.seen.add(waiting.id); select(waiting.id); document.title = "● modfence: your agent is waiting"; return; }
-  if (first) select(S.data.intents[0]?.id || "project"); else drawList();
+  if (first) return select(S.data.intents[0]?.id || "project");
+  const cur = S.data.intents.find((i) => i.id === S.cur);
+  if (cur && cur.status === "answered" && S.drawn === "open") return select(S.cur); // answered elsewhere (the agent, another tab)
+  drawList();
 }
 function drawList() {
   const list = $("#list"), it = S.data.intents;
@@ -74,6 +77,7 @@ function chip(s, editable) {
     + (s.source === "memory" && !changed && s.at ? `<span class="cd">${esc(short(s.at))}</span>` : "") + `</span>`;
 }
 function drawIntent(i) {
+  S.drawn = i.status === "answered" ? "answered" : "open";
   const settings = (i.settings || []).slice().sort((a, b) => ORDER[a.source] - ORDER[b.source]);
   let quote = esc(String(i.words || ""));
   settings.forEach((s) => {
@@ -94,12 +98,12 @@ function drawIntent(i) {
       + `<div class="rh"><kbd>${k + 1}</kbd>` + (r.editing && !done
         ? `<input class="rn-in" value="${esc(name)}" aria-label="Reading name">` : `<b class="rn">${esc(name)}</b>`)
       + (done ? "" : `<span class="tools"><button type="button" data-edit="${ci}" title="Edit this reading">${r.editing ? "Done" : "Edit"}</button><button type="button" data-del="${ci}" title="Delete: this is not what I meant" aria-label="Delete">×</button></span>`) + `</div>`
-      + (r.editing && !done ? `<textarea class="rd-in" rows="2" aria-label="Description">${esc(desc)}</textarea>` : desc ? `<p class="rd">${esc(desc)}</p>` : "")
+      + (r.editing && !done ? `<textarea class="rd-in" rows="2" aria-label="Description">${esc(desc)}</textarea>` : desc ? `<p class="rd" title="${esc(desc)}">${esc(desc)}</p>` : "")
       + (keys.length ? `<p class="diffs">${keys.map((key) => { const ch = (r.differs || {})[key] !== undefined, v = ch ? r.differs[key] : (c.differs || {})[key] ?? "—";
         return `<span class="chip alt${ch ? " changed" : ""}" data-ci="${ci}" data-dk="${esc(key)}"><span class="ck">${esc(key)}</span>${done ? `<span class="cv">${esc(v)}</span>` : `<button type="button" class="cv" title="Change this value">${esc(v)}</button>`}</span>`; }).join(" ")}</p>` : "")
       + `<div class="wt" title="Weight: how much this matters to you (1-10)">${[...Array(10).keys()].map((t) => `<button type="button" class="tick${t < w ? " f" : ""}" data-w="${ci}:${t + 1}" aria-label="Weight ${t + 1}"${done ? " disabled" : ""}></button>`).join("")}<span>${w ? `weight ${w}` : "how much it matters"}</span></div>`
       + (c.scale && multi ? `<p class="cost">${scaleText(c.scale)}</p>` : "")
-      + (c.evidence ? `<p class="ev">because ${esc(c.evidence)}</p>` : "") + `</div>`;
+      + (c.evidence ? `<p class="ev" title="because ${esc(c.evidence)}">because ${esc(c.evidence)}</p>` : "") + `</div>`;
   };
   $("#main").innerHTML = `<p class="state" id="state">${stateText(i)} · ${esc(i.id)}</p>`
     + `<div class="graph" id="graph"><svg class="wires" id="wires" aria-hidden="true"></svg>`
@@ -111,7 +115,7 @@ function drawIntent(i) {
     + (rest.length ? `<details class="node more"><summary>${rest.length} ${rest.every((s) => s.source === "default") ? "default" : "more value"}${rest.length > 1 ? "s" : ""}</summary><p class="chips">${rest.map((s) => chip(s, !done)).join(" ")}</p></details>` : "")
     + `</div><div class="col">${order.map(node).join("")}`
     + (done ? "" : `<div class="node reading own${S.pick === "own" ? " on" : ""}" id="n-own"><div class="rh"><kbd>${cands.length + 1}</kbd><b class="rn">None of these</b></div><input type="text" id="own" placeholder="Say it in your own words" value="${esc(S.own)}"></div>`)
-    + `</div><div class="col plan">${plan.map((p, k) => `<div class="node step${k === 1 ? " here" : ""}" id="n-p${k}">${k === 1 ? `<span class="nl">The agent stopped here</span>` : ""}${esc(p || (k ? "next" : "before"))}`
+    + `</div><div class="col plan">${plan.map((p, k) => `<div class="node step${k === 1 ? " here" : ""}" id="n-p${k}">${k === 1 ? `<span class="nl">The agent stopped here</span>` : ""}<span class="st" title="${esc(p)}">${esc(p || (k ? "next" : "before"))}</span>`
       + (k === 1 && multi && !pc ? `<span class="sc">cost depends on your pick</span>` // no reading's cost stands in as a default
         : k === 1 && sc.pick ? `<span class="sc">${scaleText(sc)}</span>` : "") + `</div>`).join("")}</div>`
     + `</div>`

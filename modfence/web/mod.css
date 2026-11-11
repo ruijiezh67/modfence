@@ -150,3 +150,7 @@ kbd { font: 600 11px var(--mono); border: 1px solid currentColor; border-radius:
   body { grid-template-columns: 1fr; } .side { display: none; } .bar { left: 0; } .graph { grid-template-columns: 1fr; } .wires, .cap { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* an agent writes long: two lines per description and evidence, three per plan step; the rest on hover */
+.rd, .ev { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.step .st { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
