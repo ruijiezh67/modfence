@@ -7,6 +7,7 @@ for each task and arm runs `claude -p` with a simulated person:
 - mod: the same with this repository as a plugin (`--plugin-dir`). When an intent waits, the person picks the reading
   whose values hold the goal, or writes the goal in their own words; then the same correction rule.
 The person's goal for each task is drawn once with random.Random(7) from plausible values. Writes one JSON line per run.
+No MCP servers are started (--strict-mcp-config; the committed results were run before this flag was added).
 
     python bench/rework_probe.py --runs 3 --out bench/results/rework.jsonl [--model claude-haiku-5-5] [--claude PATH]
 """
@@ -81,7 +82,7 @@ def main():
 
     def claude(extra, prompt):
         t0 = time.time()
-        r = subprocess.run([a.claude, "-p", "--model", a.model, "--permission-mode", "acceptEdits", "--allowedTools",
+        r = subprocess.run([a.claude, "-p", "--strict-mcp-config", "--model", a.model, "--permission-mode", "acceptEdits", "--allowedTools",
                             "Bash Read Edit Write Glob Grep", "--output-format", "json", *extra, prompt],
                            cwd=p, env=env, capture_output=True, text=True, encoding="utf-8", timeout=600)
         try:
