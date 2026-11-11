@@ -42,7 +42,7 @@ call (through your Claude Code login, cents) to name its modules; everything els
 
 1. **Give Claude Code your task as usual.** The plugin reads it, picks the module it most likely lives in (from the task's words and the code, no model), fences the agent to it and tells it where to start. Claude Code shows you which module, why, and the other candidates. A follow-up like "continue" keeps the fence.
 2. **If the task leaves something open, answer on a page.** The agent writes an intent to `.mod/intents/` and waits. The *Intents* page shows your words, the values you never said (marked as guessed or remembered, with the date), the 2-3 readings side by side with what each costs, and where the agent stopped. Nothing is preselected or ranked. Press 1-3 and Enter, edit a reading or one of its values, or say it in your own words. The agent continues at once; a setting you confirm is never asked again. Not at the page? Answer in the chat instead: until you answer, the agent may not edit. It stops only for values you would want exactly (an experiment's settings, a run, anything hard to undo); for a code tweak where any sensible value would do, it picks one and says which.
-3. **If it needs another module, it asks.** The edit is blocked and shown on the map with *Allow* and *Refuse*.
+3. **If it needs another module, it says why.** The first edit outside is denied; the agent says why and tries again, and the file is listed on the map. A fence you set yourself is hard: the edit waits on the map for *Allow* or *Refuse*.
 4. **When it stops, read the receipt.** The modules it changed, the code that uses them, interfaces it broke and edits outside the fence. A round that broke something is sent back once.
 
 ## What is built in
@@ -76,7 +76,7 @@ Write-ups in [docs/EVALUATION.md](docs/EVALUATION.md). The short version, newest
 ## Limits
 
 - **Python only** for the map.
-- **The fence is a guess from words.** A catch-all module can outscore the right one; a second module is fenced when it scores at least half as well, and a wrong deny is one click to allow.
+- **The fence is a guess from words.** A catch-all module can outscore the right one, so a fence the task picked is soft: the agent may cross it on a second try after saying why, and you see the file on the map and in the receipt. A fence you set yourself is hard.
 - **The hook sees file tools, not shell commands.** A script can still write outside the fence; the receipt reports it.
 - **Hooks cost time:** about 0.6 s each on Windows, 4-5 per task.
 - **Stops are judged by the agent.** Haiku stopped on "bigger" where its own guess was fine and not on "more often" where it was wrong, until the protocol limited stops to values people want exactly. Measured with a simulated person only.

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **A fence picked from the task is soft**: the agent may cross it on a second try after saying why, recorded and shown on the map and in the receipt. A fence you set stays hard.
 - **Intents page in one column, without weights**, after a design review: the graph's wires said nothing a column does not, and weights read as scores. The map's fence bar leads with the agent's request; boxes say "selected uses" / "uses selected".
 - **Stops only where a guess would cost.** The protocol names the pattern (a comparative like bigger, longer, fewer with no number), says "change nothing yet", and skips code tweaks where any sensible value would do. Measured: -33% to -41% cost on experiment settings (`bench/rework_probe.py`), -8% on TinyDB code constants (no stops).
 - **An open question holds the agent's edits** until the person answers (on the page or in the chat); intents work without a shell; if no page is served, `mod wait` returns at once and the agent says how to answer. The answer never reaches the agent contradicted (shared values only) or as a traceback.
