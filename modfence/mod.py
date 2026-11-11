@@ -15,7 +15,7 @@ from datetime import datetime
 DIR = ".mod"
 PROJECT = "project.mod"
 SOURCES = ("user", "default", "memory", "guess")
-WAIT_S = 240  # ponytail: under the 5-minute prompt-cache life, so continuing re-reads nothing; waiting costs no tokens
+WAIT_S = 110  # ponytail: inside Claude Code's default 2-minute Bash timeout and the 5-minute prompt-cache life; waiting costs no tokens
 ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$")
 
 
