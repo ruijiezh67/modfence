@@ -835,6 +835,9 @@ class ModTest(unittest.TestCase):
         code, text = mod.wait(d, "r1", seconds=0)
         self.assertEqual(code, 2)
         self.assertIn("2 or 3 distinct readings", text, "a bad file comes back with what to fix")
+        self.assertTrue(any("scale" in p for p in mod.problems({"words": "w", "candidates": [{"name": "a", "evidence": "e", "scale": "10x smaller"}, {"name": "b", "evidence": "e"}]})),
+                        "a scale that is not an object is sent back to fix (end to end it crashed the reply)")
+        self.assertIn("Its values", mod.reply({"candidates": [{"name": "a", "differs": {"lr": 0.001}, "scale": "10x"}], "choice": {"kind": "pick", "index": 0}}))
         intent = {"words": "rerun the bench",
                   "candidates": [{"name": "one try", "evidence": "the user said 'rerun'", "differs": {"runs": "1"}},
                                  {"name": "full grid", "evidence": "results_rich2.jsonl", "differs": {"runs": "60"}}],

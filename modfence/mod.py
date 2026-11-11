@@ -123,6 +123,11 @@ def problems(intent):
     for i, c in enumerate(cands):
         if not isinstance(c, dict) or not c.get("name") or not c.get("evidence"):
             out.append(f'"candidates"[{i}]: needs "name" and "evidence" (a file:line, a diff line or the user\'s words)')
+    for i, c in enumerate(cands):
+        if isinstance(c, dict) and "scale" in c and not isinstance(c["scale"], dict):
+            out.append(f'"candidates"[{i}].scale: an object {{"pick", "runs", "cost", "time"}}, or leave it out')
+    if "scale" in intent and not isinstance(intent["scale"], dict):
+        out.append('"scale": an object {"pick", "runs", "cost", "time"}')
     for i, s in enumerate(intent.get("settings") or []):
         if not isinstance(s, dict) or "key" not in s or s.get("source") not in SOURCES:
             out.append(f'"settings"[{i}]: needs "key", "value" and "source" (one of {", ".join(SOURCES)})')
@@ -170,7 +175,7 @@ def reply(intent):
         if vals:
             head += ". Its values: " + "; ".join(f"{k}={v}" + (" (changed by the user)" if k in (c.get("differs") or {}) else "") for k, v in vals.items())
         sc = cand.get("scale") or intent.get("scale")
-        if sc and sc.get("pick"):
+        if isinstance(sc, dict) and sc.get("pick"):  # an agent once wrote a reading's scale as "10x smaller"
             head += f'. Scale: {sc["pick"]}' + (f', {sc["runs"]} runs' if sc.get("runs") is not None else "")
     if c.get("weights"):
         head += ". How much each reading matters to the user (1-10): " + "; ".join(
