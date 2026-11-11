@@ -330,7 +330,8 @@ Haiku 5.5, a simulated person whose goal for each task was drawn once with `rand
 in the same session. Mod arm: the person picks the reading that holds the goal, else writes it.
 
 Reproduce: `python bench/rework_probe.py --runs 3` (it builds the toy in a temporary folder); results in
-`bench/results/rework.jsonl`. Two rounds, the first from the author's harness on the same toy:
+`bench/results/rework.jsonl` (28078d3) and `rework_40a0199.jsonl`. Three rounds, the first from the author's harness on
+the same toy:
 
 | Round | Arm | Runs | Right in the end | Corrections | Mean cost | Mean time |
 |---|---|---|---|---|---|---|
@@ -338,6 +339,8 @@ Reproduce: `python bench/rework_probe.py --runs 3` (it builds the toy in a tempo
 | local (eae4edc) | with the plugin | 9 | 9/9 | 0 | $0.0088 (-41%) | 35.5 s (-11%) |
 | `bench/` (40a0199) | plain | 9 | 9/9 | 8 | $0.0165 | 39.3 s |
 | `bench/` (40a0199) | with the plugin | 9 | 9/9 | 0 | $0.0099 (-40%) | 37.2 s (-5%) |
+| `bench/` (28078d3) | plain | 9 | 9/9 | 7 | $0.0157 | 39.4 s |
+| `bench/` (28078d3) | with the plugin | 9 | 9/9 | 0 | $0.0104 (-33%) | 39.1 s |
 
 Every plain first guess missed (epochs 50 or 100, lr 0.001, a guessed speed-up), so every plain run needed one
 correction. The plugin's agent stopped in 9 of 9 runs and was right first time in all 9 (3 picks, 6 own words: no
@@ -355,11 +358,15 @@ shorter name for the default table", "make the caching middleware write to disk 
 | 122ba4e | with the plugin | 9/9 | 6 | 3 | $0.0167 (+12%) | 37.7 s |
 | 3dd16f7 | plain | 9/9 | 6 | N/A | $0.0155 | 27.0 s |
 | 3dd16f7 | with the plugin | 9/9 | 4 | 4 | $0.0164 (+6%) | 36.6 s |
+| 28078d3 | plain | 9/9 | 6 | N/A | $0.0150 | 27.5 s |
+| 28078d3 | with the plugin | 9/9 | 6 | 0 | $0.0138 (-8%) | 31.2 s |
 
 The agent stopped most where its guess was right (plain chose 100 for "bigger" every time) and least where it was
 wrong. In the first round it also wrote its intent and edited the code anyway; since 3dd16f7 an open intent holds edits
 until the answer, and every run that stopped then waited. So stopping pays on settings people want exactly (an
-experiment's epochs or learning rate), and not, so far, on code constants where a sensible guess is often fine. The
+experiment's epochs or learning rate), and not, so far, on code constants where a sensible guess is often fine. Since
+28078d3 the protocol says so ("for a code tweak where any sensible value would do: pick one and name it"): on TinyDB
+the agent no longer stopped (-8%), and on the toy it still stopped every time (-33%). The
 simulated person wants one exact value, which is harsher on guessing than most people.
 
 How it got here: before 6eb826a ("longer, smaller, faster ... with no number leaves that setting open") the agent did
