@@ -6,7 +6,7 @@ of its own. Other root files belong to the module ".".
 An edge A -> B exists when a file in A imports a file in B. Nothing here asks a model: the graph is what the
 code says, so a node or an edge can always be traced back to a file and a line.
 """
-import ast, hashlib, os, threading, time
+import ast, hashlib, json, os, threading, time
 
 
 def read_text(path):
@@ -246,6 +246,35 @@ def _parse(full, p):
     return r
 
 
+_ON_DISK = set()  # roots whose parse cache was read from .modfence/parsed.json in this process
+
+
+def _disk_cache(root, save=False):
+    """A hook is a new process each time: without this it parsed every file again (0.7 s on rich, at every stop)."""
+    f = os.path.join(root, ".modfence", "parsed.json")
+    if save:
+        try:
+            os.makedirs(os.path.dirname(f), exist_ok=True)
+            gi = os.path.join(os.path.dirname(f), ".gitignore")
+            if not os.path.exists(gi):  # modfence's state stays out of git
+                with open(gi, "w", newline="\n") as g:
+                    g.write("*\n")
+            mine = {k: [list(v[0]), v[1]] for k, v in _PARSED.items() if k.startswith(root + os.sep)}
+            with open(f + ".tmp", "w", encoding="utf-8") as g:
+                json.dump(mine, g)
+            os.replace(f + ".tmp", f)
+        except OSError:
+            pass
+    elif root not in _ON_DISK:
+        _ON_DISK.add(root)
+        try:
+            with open(f, encoding="utf-8") as g:
+                for k, (key, r) in json.load(g).items():
+                    _PARSED.setdefault(k, (tuple(key), r))
+        except (OSError, ValueError, TypeError):
+            pass
+
+
 def analyze(root):
     """The full graph: modules, files and edges with receipts."""
     root = os.path.abspath(root)
@@ -253,7 +282,11 @@ def analyze(root):
     files = set(paths)
     split = split_dirs(paths)
     mods, edges, fileinfo = {}, {}, {}
+    _disk_cache(root)
+    seen = {k: v[0] for k, v in _PARSED.items()}
     parsed = {p: _parse(os.path.join(root, p), p) for p in paths}
+    if any(seen.get(os.path.join(root, p)) != _PARSED[os.path.join(root, p)][0] for p in paths):
+        _disk_cache(root, save=True)
     learned = learn_roots([(p, r["imports"]) for p, r in parsed.items()], files)
     for p in paths:
         r = parsed[p]

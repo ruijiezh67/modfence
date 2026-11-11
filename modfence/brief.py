@@ -396,7 +396,7 @@ def contract_breaks(graph, files_before_after):
     files_before_after: {path: (before bytes or None, after bytes or None)}. Returns [{file, name, change, users}]."""
     mod_of = {f: i["module"] for f, i in graph["files"].items()}
     users = defaultdict(lambda: defaultdict(list))
-    for user, line, target, name in _named_receipts(graph):
+    for user, line, target, name in _named_receipts(graph, files_before_after):
         if target in files_before_after and mod_of.get(user) != mod_of.get(target):
             users[target][name].append(f"{user}:{line}")
     out = []
@@ -461,10 +461,13 @@ def attr_uses(root, receipt):
                    if isinstance(n, ast.Attribute) and isinstance(n.value, (ast.Name, ast.Attribute)) and ast.unparse(n.value) in aliases})
 
 
-def _named_receipts(graph):
-    """Every receipt as (user file, line, target file, name): direct from-imports, plus attribute uses of modules."""
+def _named_receipts(graph, targets=None):
+    """Every receipt as (user file, line, target file, name): direct from-imports, plus attribute uses of modules.
+    targets: only receipts into these files (a receipt parses its user file: 0.8 s for all of rich, per stop)."""
     for e in graph["edges"]:
         for r in e["receipts"]:
+            if targets is not None and r["target_file"] not in targets:
+                continue
             if r["name"]:
                 yield r["file"], r["line"], r["target_file"], r["name"]
             else:
