@@ -308,7 +308,10 @@ What the rounds did show:
   whose functions are named update) and twice in rich (words about how to work, like "do not run the tests, only read
   and edit the code", moved the fence; a catch-all module outscored the right one 46 to 26). The right edit was denied
   and the task failed. Fixes: a module's own name and purpose count, plural s is stripped, such words are dropped, and
-  a second module is fenced at half the first's score. Each is a regression test.
+  a second module is fenced at half the first's score. Each is a regression test. Two more came from the ambiguity
+  probe on TinyDB (section 10): "make the query cache bigger" is a class attribute (`default_query_cache_capacity`)
+  that the picker did not score, and the fence denied the agent's own intent file under `.mod/intents/`, so it guessed
+  instead of asking. Constants now score like functions and intent files are always writable.
 - **Hooks cost time on Windows:** about 0.6 s each (bash about 0.2 s, Python start about 0.3 s; the work itself 0.03 to
   0.16 s), 4 to 5 per task. `python -S` saves about 50 ms each.
 - **A pointer can mislead.** The "likely start" listed functions that scored close to the right one, and the agent
