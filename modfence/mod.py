@@ -130,7 +130,8 @@ def problems(intent):
 
 
 def answer(root, iid, choice, edits=None):
-    """The person's answer from the page: choice = {"kind": "pick"|"own", "index"|"text"}; edits = {key: value}.
+    """The person's answer from the page: choice = {"kind": "pick"|"own", "index"|"text", and optionally "name" and
+    "description" (an edited reading), "weights" {index: 1-10}, "deleted" [index]}; edits = {key: value}.
     Picked or edited settings are confirmed for the project."""
     intent = load_intent(root, iid)
     if intent is None:
@@ -153,8 +154,14 @@ def answer(root, iid, choice, edits=None):
 def reply(intent):
     """What the waiting agent reads: the reading to follow and the settings to use, nothing else."""
     c = intent["choice"]
-    head = (f'The user picked: "{intent["candidates"][c["index"]]["name"]}"' if c["kind"] == "pick"
-            else f'The user wrote their own goal, use it verbatim: "{c["text"]}"')
+    if c["kind"] == "pick" and c.get("name"):  # Lam's Edit: the person's wording replaces the agent's, verbatim
+        head = f'The user edited a reading; use it verbatim: "{c["name"]}"' + (f' ({c["description"]})' if c.get("description") else "")
+    elif c["kind"] == "pick":
+        head = f'The user picked: "{intent["candidates"][c["index"]]["name"]}"'
+    else:
+        head = f'The user wrote their own goal, use it verbatim: "{c["text"]}"'
+    if c.get("deleted"):
+        head += ". Readings the user deleted as wrong: " + "; ".join(intent["candidates"][k]["name"] for k in c["deleted"] if 0 <= k < len(intent["candidates"]))
     rows = [f'{s["key"]}={s["value"]}' + (" (changed by the user)" if s.get("edited") else "") for s in intent.get("settings") or []]
     return head + ". Settings: " + ("; ".join(rows) or "none") + ". Follow exactly this; ask again only if it turns out impossible."
 
@@ -191,7 +198,8 @@ PROTOCOL = ("When the user states an intent whose settings they did not all give
             "\"settings\": [{{\"key\", \"value\", \"source\": user|default|memory|guess, \"at\": date if memory, \"from\": the "
             "user's words it comes from or null}}], \"scale\": {{\"pick\": one|sample|full, \"runs\", \"cost\", \"time\"}}, "
             "\"plan\": [\"prev step\", \"this step\", \"next step\"]}}, then run `{cmd} mod wait <id>` and follow its answer. "
-            "Never mark a reading as recommended. Skip this for clear small edits.")
+            "Write every field in English (translate the user's words if they are in another language). Never mark a reading "
+            "as recommended. Skip this for clear small edits.")
 
 
 def context(root, cmd="modfence"):
