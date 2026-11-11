@@ -9,7 +9,7 @@ JSON, so the page and any agent read them without a parser of ours. `.mod/` is g
 `.mod/.gitignore`); delete that file to share the folder with a team. project.mod replaces MODULES.md, which is read
 once, as it was, when a project has no project.mod yet.
 """
-import json, os, re, time
+import json, os, re, socket, time
 from datetime import datetime
 
 DIR = ".mod"
@@ -196,6 +196,18 @@ def undelivered(root):
     return None
 
 
+PAGE = "http://127.0.0.1:8765/mod.html"
+
+
+def page_up(port=8765):
+    """Is the modfence page being served? Without it nobody can answer there, so waiting is 110 s for nothing."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+            return True
+    except OSError:
+        return False
+
+
 def wait(root, iid, seconds=WAIT_S, poll=1.0):
     """Block until the person answers on the page. (exit code, text for the agent)."""
     intent = load_intent(root, iid)
@@ -204,9 +216,14 @@ def wait(root, iid, seconds=WAIT_S, poll=1.0):
     bad = problems(intent)
     if bad:
         return 2, "modfence: fix the intent file, then run this again: " + "; ".join(bad)
+    up = intent.get("status") == "answered" or page_up()
     if intent.get("status") != "answered":  # the page counts down from here, and says when the agent gave up waiting
-        intent.update(status="waiting", waiting_at=datetime.now().astimezone().isoformat(timespec="seconds"), wait_s=seconds)
+        intent.update(status="waiting", waiting_at=datetime.now().astimezone().isoformat(timespec="seconds"), wait_s=seconds if up else 0)
         save_intent(root, iid, intent)
+    if not up:
+        return 3, ("modfence: the modfence page is not running, so nobody can answer there yet. Stop here and tell the "
+                   f"user in one line: run `modfence` in the project and answer at {PAGE}, or answer here in the chat. Do "
+                   "not list the readings or their weights. Their answer comes with their next message.")
     end = time.time() + seconds
     while True:
         intent = load_intent(root, iid) or intent
@@ -219,7 +236,7 @@ def wait(root, iid, seconds=WAIT_S, poll=1.0):
             break
         time.sleep(poll)
     return 3, ("modfence: the user has not answered on the page yet. Stop here and say only, in one line, that the "
-               "readings are waiting on the modfence page; do not list them or their weights in the chat (the page shows "
+               f"readings are waiting at {PAGE}; do not list them or their weights in the chat (the page shows "
                "them, unranked). Their answer comes with their next message.")
 
 

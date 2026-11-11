@@ -101,6 +101,13 @@ def main():
                     threading.Thread(target=person, args=(p, goal, stop, log), daemon=True).start()
                 steps = []
                 d, secs = claude(plug, prompt + ". Reply in English.")
+                if arm == "mod" and d.get("session_id") and any(i.get("status") == "answered" and not i.get("delivered") for i in mod.intents(p)):
+                    # the agent stopped before the person answered (no page served, or the wait ran out): "continue"
+                    first = d
+                    d, secs2 = claude(plug + ["--resume", first["session_id"]], "continue")
+                    d = {**d, "total_cost_usd": (first.get("total_cost_usd") or 0) + (d.get("total_cost_usd") or 0),
+                         "num_turns": (first.get("num_turns") or 0) + (d.get("num_turns") or 0)}
+                    secs += secs2
                 steps.append({"cost": d.get("total_cost_usd"), "turns": d.get("num_turns"), "secs": secs, "ok": holds(p, goal),
                               "config": json.load(open(os.path.join(p, "config.json"), encoding="utf-8")), "result": (d.get("result") or d.get("error") or "")[:400]})
                 while not steps[-1]["ok"] and len(steps) < 3 and d.get("session_id"):

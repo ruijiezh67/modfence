@@ -843,6 +843,15 @@ class ModTest(unittest.TestCase):
                   "scale": {"pick": "full", "runs": 60}}
         mod.save_intent(d, "r1", intent)
         self.assertEqual(mod.wait(d, "r1", seconds=0)[0], 3, "no answer yet: the agent stops instead of guessing")
+        up, mod.page_up = mod.page_up, lambda port=8765: False
+        try:
+            t0 = time.time()
+            code, text = mod.wait(d, "r1", seconds=30)
+            self.assertEqual(code, 3)
+            self.assertLess(time.time() - t0, 5, "no page served: no 110 s wait for nobody")
+            self.assertIn("not running", text)
+        finally:
+            mod.page_up = up
         self.assertEqual(mod.load_intent(d, "r1")["status"], "waiting")
         self.assertIn("waiting_at", mod.load_intent(d, "r1"), "the page counts down from when the agent started waiting")
         with self.assertRaises(ValueError):
