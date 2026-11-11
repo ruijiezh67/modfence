@@ -305,7 +305,7 @@ def context(root, cmd="modfence"):
         lines.append("confirmed by the user, do not ask again: " + "; ".join(f'{s["key"]}={s["value"]} ({s.get("at", "")})' for s in p["settings"]))
     for i in intents(root)[:1]:
         if i.get("status") == "answered":
-            lines.append(f'last intent {i["id"]}: ' + reply(i))
+            lines.append(f'last intent {i["id"]}: ' + safe_reply(i))
         elif i.get("status") == "waiting":
             lines.append(f'intent {i["id"]} is waiting for the user on the modfence page; run `{cmd} mod wait {i["id"]}` before acting on it.')
     lines.append(PROTOCOL.format(dir=DIR, cmd=cmd))
