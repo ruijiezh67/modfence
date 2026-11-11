@@ -589,6 +589,7 @@ function drawChip(m, ng) { // a box with no link: a small chip under the map, no
   el("title", {}, n).textContent = `${boxName(m)}: no import, call, copy or shared history with the rest`;
   n.addEventListener("pointerdown", (ev) => ev.stopPropagation());
   n.addEventListener("click", (ev) => onNodeClick(m.id, ev));
+  n.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onNodeClick(m.id, ev); } }); // as the boxes
 }
 function drawGraph() {
   const g = S.graph, eg = $("#edges"), ng = $("#nodes"), mx = maxLines();
