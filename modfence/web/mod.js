@@ -41,7 +41,7 @@ function drawList() {
   $("#proj").setAttribute("aria-current", String(S.cur === "project"));
 }
 function select(id) {
-  if (S.cur !== id) { S.pick = null; S.own = ""; S.edits = {}; S.rx = {}; }
+  if (S.cur !== id) { S.pick = null; S.own = ""; S.edits = {}; S.rx = {}; S.openedAt = Date.now(); }
   S.cur = id; drawList();
   if (id === "project") return drawProject();
   const i = S.data.intents.find((x) => x.id === id);
@@ -173,6 +173,8 @@ async function send(i) {
   const r = S.rx[S.pick] || {}, c = i.candidates[S.pick] || {}, choice = S.pick === "own" ? { kind: "own", text: S.own } : { kind: "pick", index: S.pick };
   if (S.pick !== "own" && ((r.name && r.name !== c.name) || (r.description !== undefined && r.description !== (c.description || "")))) { choice.name = r.name ?? c.name; choice.description = r.description ?? c.description; }
   if (S.pick !== "own" && r.differs && Object.keys(r.differs).length) choice.differs = r.differs;
+  if (S.pick !== "own") choice.shown = shuffled(i.candidates.length, i.id || "").indexOf(S.pick) + 1; // where it stood on screen
+  choice.ms = Date.now() - S.openedAt; // with "shown": do you read, or confirm the first thing you see?
   choice.weights = Object.fromEntries(Object.entries(S.rx).filter(([, v]) => v.weight).map(([k, v]) => [k, v.weight]));
   choice.deleted = Object.entries(S.rx).filter(([, v]) => v.deleted).map(([k]) => +k);
   try { await api(`/api/mod/answer?${q()}`, { id: i.id, choice, edits: S.edits }); }
@@ -182,6 +184,20 @@ async function send(i) {
 }
 
 /* ---------- the project: modules and the settings you confirmed ---------- */
+function habits() { // Lam: people confirm quickly unless a reading is clearly off; these numbers show if you do
+  const a = S.data.intents.filter((i) => i.status === "answered" && i.choice), n = a.length;
+  if (!n) return "";
+  const c = (f) => a.filter(f).length, ms = a.map((i) => i.choice.ms).filter((x) => x > 0).sort((x, y) => x - y);
+  const timed = a.filter((i) => i.choice.shown), first = c((i) => i.choice.shown === 1);
+  const cell = (k, v, t) => `<div><b>${v}</b><span>${k}</span>${t ? `<i>${t}</i>` : ""}</div>`;
+  return `<section><h3>Your answers</h3><div class="habits">`
+    + cell("answered", n)
+    + cell("picked the first one shown", timed.length ? `${first}/${timed.length}` : "N/A", timed.length >= 3 && first / timed.length > 0.6 ? "more than chance: read before you pick" : "")
+    + cell("changed a value or a reading", `${c((i) => i.choice.name || i.choice.differs || Object.values(i.settings || []).some((s) => s.edited))}/${n}`)
+    + cell("wrote their own", `${c((i) => i.choice.kind === "own")}/${n}`)
+    + cell("median time to answer", ms.length ? `${Math.round(ms[ms.length >> 1] / 1000)} s` : "N/A")
+    + `</div></section>`;
+}
 function drawProject() {
   const p = S.data.project || { modules: [], settings: [] }, mods = p.modules || [], sets = p.settings || [];
   $("#main").innerHTML = `<p class="quote">Project</p><p class="counts">${mods.length} modules · ${sets.length} settings you confirmed (never asked again)</p>`
@@ -190,6 +206,7 @@ function drawProject() {
       + `<textarea class="paths" rows="${Math.min(6, Math.max(2, m.paths.length))}" aria-label="Folders and files, one per line">${esc(m.paths.join("\n"))}</textarea></div>`).join("")
       || `<p class="empty">No modules yet: open the map and save its modules.</p>`}</div>`
     + `<div class="row"><button type="button" class="btn" id="addm">Add a module</button><button type="button" class="go" id="savem">Save modules</button></div></section>`
+    + habits()
     + `<section><h3>Confirmed settings</h3><table><tbody>${sets.map((s) => `<tr><td class="key">${esc(s.key)}</td><td class="val">${esc(s.value)}</td>`
       + `<td class="from">${esc(short(s.at))}</td><td><button type="button" class="x" data-forget="${esc(s.key)}" aria-label="Forget ${esc(s.key)}">forget</button></td></tr>`).join("")
       || `<tr><td class="empty">None yet.</td></tr>`}</tbody></table></section>`;
