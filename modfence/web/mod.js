@@ -96,8 +96,8 @@ function drawIntent(i) {
   const node = (ci, k) => {
     const c = cands[ci], r = rx(ci), name = r.name ?? c.name, desc = r.description ?? c.description ?? "", w = r.weight ?? 0; // the agent's own weight is never shown: it would read as a recommendation
     if (r.deleted) return `<div class="node reading gone" id="n-r${ci}"><s>${esc(name)}</s> <button type="button" class="link" data-undo="${ci}">undo</button></div>`;
-    return `<div class="node reading${S.pick === ci ? " on" : ""}" id="n-r${ci}" data-ci="${ci}" role="button" tabindex="0" aria-pressed="${S.pick === ci}">`
-      + `<div class="rh"><kbd>${k + 1}</kbd>` + (r.editing && !done
+    return `<div class="node reading${S.pick === ci ? " on" : ""}" id="n-r${ci}" data-ci="${ci}" role="group" aria-label="Reading ${k + 1}: ${esc(name)}">`
+      + `<div class="rh"><button type="button" class="pk" data-pick="${ci}" aria-pressed="${S.pick === ci}" title="Pick this reading (key ${k + 1})"${done ? " disabled" : ""}>${k + 1}</button>` + (r.editing && !done
         ? `<input class="rn-in" value="${esc(name)}" aria-label="Reading name">` : `<b class="rn">${esc(name)}</b>`)
       + `<span class="wt" title="How much this matters to you (1-10)">${[...Array(10).keys()].map((t) => `<button type="button" class="tick${t < w ? " f" : ""}" data-w="${ci}:${t + 1}" aria-label="Weight ${t + 1}"${done ? " disabled" : ""}></button>`).join("")}${w ? `<span>${w}</span>` : ""}</span>` // in the head row: one line less per reading
       + (done ? "" : `<span class="tools"><button type="button" data-edit="${ci}" title="Edit this reading">${r.editing ? "Done" : "Edit"}</button><button type="button" data-del="${ci}" title="Delete: this is not what I meant" aria-label="Delete">×</button></span>`) + `</div>`
@@ -149,8 +149,7 @@ addEventListener("resize", () => requestAnimationFrame(wires));
 function wireIntent(i) {
   const main = $("#main"), redraw = () => drawIntent(i);
   main.querySelectorAll(".reading[data-ci]").forEach((n) => {
-    n.onclick = (e) => { if (e.target.closest("button, input, textarea")) return; choose(+n.dataset.ci); };
-    n.onkeydown = (e) => { if ((e.key === " " || e.key === "Enter") && e.target === n) { e.preventDefault(); e.stopPropagation(); choose(+n.dataset.ci); } };
+    n.onclick = (e) => { if (e.target.closest("button:not(.pk), input, textarea")) return; choose(+n.dataset.ci); }; // the number is the pick button
   });
   main.querySelectorAll("[data-edit]").forEach((b) => (b.onclick = () => { // Lam's Edit: your wording replaces the agent's
     const ci = +b.dataset.edit, r = rx(ci), n = $(`#n-r${ci}`);
@@ -187,7 +186,7 @@ function wireIntent(i) {
   requestAnimationFrame(wires);
 }
 const cands = (i) => i.candidates || [];
-function choose(ci) { S.pick = ci; S.own = ""; const i = S.data.intents.find((x) => x.id === S.cur); drawIntent(i); $(`#n-r${ci}`)?.focus(); }
+function choose(ci) { S.pick = ci; S.own = ""; const i = S.data.intents.find((x) => x.id === S.cur); drawIntent(i); $(`#n-r${ci} .pk`)?.focus(); }
 function mark(i) {
   const go = $("#go"), what = $("#what"), n = Object.keys(S.edits).length + Object.keys((typeof S.pick === "number" && S.rx[S.pick]?.differs) || {}).length;
   if (!go) return;
