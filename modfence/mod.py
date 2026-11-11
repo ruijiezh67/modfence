@@ -213,8 +213,9 @@ def wait(root, iid, seconds=WAIT_S, poll=1.0):
         if time.time() >= end:
             break
         time.sleep(poll)
-    return 3, ("modfence: the user has not answered on the page yet. Stop here, say in one line that the readings are "
-               "waiting on the modfence page, and continue when they answer.")
+    return 3, ("modfence: the user has not answered on the page yet. Stop here and say only, in one line, that the "
+               "readings are waiting on the modfence page; do not list them or their weights in the chat (the page shows "
+               "them, unranked). Their answer comes with their next message.")
 
 
 # ---------- what an agent reads instead of conversation memory ----------
