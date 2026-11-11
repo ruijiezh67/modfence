@@ -344,6 +344,24 @@ correction. The plugin's agent stopped in 9 of 9 runs and was right first time i
 reading held epochs 40 or 2). A plain run that guesses right costs $0.0066 to $0.0079, so stopping pays when the agent
 would guess right less than about 73% to 76% of the time. The person's time on the page is not counted.
 
+**On a real repository it did not pay.** Three one-constant requests on TinyDB ("make the query cache bigger", "use a
+shorter name for the default table", "make the caching middleware write to disk more often"), goals drawn the same way
+(100, 'default', 500), edit-only (no shell, so the agent writes its intent and ends its turn; the answer comes with
+"continue"), 9 runs per arm:
+
+| Plugin | Arm | Right in the end | Corrections | Stops | Mean cost | Mean time |
+|---|---|---|---|---|---|---|
+| 122ba4e | plain | 9/9 | 6 | N/A | $0.0150 | 26.7 s |
+| 122ba4e | with the plugin | 9/9 | 6 | 3 | $0.0167 (+12%) | 37.7 s |
+| 3dd16f7 | plain | 9/9 | 6 | N/A | $0.0155 | 27.0 s |
+| 3dd16f7 | with the plugin | 9/9 | 4 | 4 | $0.0164 (+6%) | 36.6 s |
+
+The agent stopped most where its guess was right (plain chose 100 for "bigger" every time) and least where it was
+wrong. In the first round it also wrote its intent and edited the code anyway; since 3dd16f7 an open intent holds edits
+until the answer, and every run that stopped then waited. So stopping pays on settings people want exactly (an
+experiment's epochs or learning rate), and not, so far, on code constants where a sensible guess is often fine. The
+simulated person wants one exact value, which is harsher on guessing than most people.
+
 How it got here: before 6eb826a ("longer, smaller, faster ... with no number leaves that setting open") the agent did
 not stop on "use a smaller learning rate"; before eae4edc ("change nothing yet") it once removed the toy's sleep for
 "make the training faster" and only then asked. An earlier round (-23%) is void for one task: the harness did not
