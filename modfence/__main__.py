@@ -2,7 +2,7 @@
 modfence receipt [PROJECT] [--since REV] [--json]   what a change touched and may break (exit 1 on a break)
 modfence receipt --fleet [PROJECT] [--base main]   one receipt per worktree, for many agents at once
 modfence quiz [PROJECT] [--since REV]              five questions on the round: do you still know what it did?
-modfence fence MODULE | --off                       fence every agent in this project to one module of MODULES.md
+modfence fence MODULE | --off                       fence every agent in this project to one module of .mod/project.mod
 modfence mod wait ID                                wait for the person's answer to an intent on the page
 modfence jit "TASK"                                 which module the plugin would fence for this task, and why
 
@@ -57,10 +57,10 @@ def main(argv=None):
 
 def fence(argv):
     """modfence fence MODULE [--sealed] | --allow MODULE_OR_PATH ... | --off | (nothing: what is fenced, what was blocked).
-    Fence every agent in this project to one module of MODULES.md; --allow widens the fence the agent already works in
+    Fence every agent in this project to one module of .mod/project.mod; --allow widens the fence the agent already works in
     (golden rule 4: the person who set the fence approves a crossing, from the terminal as well as from the map)."""
     from . import modules, scope_guard
-    ap = argparse.ArgumentParser(prog="modfence fence", description="Fence agents in this project to one module of MODULES.md.")
+    ap = argparse.ArgumentParser(prog="modfence fence", description="Fence agents in this project to one module of .mod/project.mod.")
     ap.add_argument("module", nargs="?")
     ap.add_argument("--allow", nargs="+", metavar="MODULE_OR_PATH", help="widen the current fence by a module or a file or folder")
     ap.add_argument("--off", action="store_true", help="lift the fence")

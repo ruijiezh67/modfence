@@ -188,7 +188,7 @@ def text(r):
     if r["blocked"]:
         out.append("blocked by the fence: " + ", ".join(r["blocked"][:8]))
     if r["map"] and (r["map"]["lines"] or r["map"]["unassigned"]):
-        out.append(f"MODULES.md is out of date: {len(r['map']['lines'])} line(s) match no file"
+        out.append(f"The modules (.mod/project.mod) are out of date: {len(r['map']['lines'])} line(s) match no file"
                    + (f" ({', '.join(r['map']['lines'][:3])})" if r["map"]["lines"] else "")
                    + f"; {len(r['map']['unassigned'])} code file(s) belong to no module"
                    + (f" ({', '.join(r['map']['unassigned'][:3])})" if r["map"]["unassigned"] else ""))

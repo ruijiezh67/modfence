@@ -170,7 +170,7 @@ def context_note(graph, scope, read_only=False, phase=None, sealed=False, lean=T
     mods = {m["id"]: m for m in graph["modules"]}
     out_edges = [e for e in graph["edges"] if e["source"] in scope and e["target"] not in scope]
     in_edges = [e for e in graph["edges"] if e["target"] in scope and e["source"] not in scope]
-    where = ", ".join("`(project root files)`" if s == "." else f"module `{s[8:]}` of MODULES.md" if s.startswith("@module:")
+    where = ", ".join("`(project root files)`" if s == "." else f"module `{s[8:]}` of .mod/project.mod" if s.startswith("@module:")
                       else f"function `{s.split('::')[1]}` in `{s.split('::')[0]}`"
                       if "::" in s else f"`{s}`" if s.endswith(".py") else f"`{s}/`" for s in scope)
     if phase == "plan":
