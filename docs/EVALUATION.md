@@ -297,9 +297,11 @@ real past fixes (the commit's parent, the commit's own tests or its files as the
 | D (TinyDB) | TinyDB (4,900 lines), Haiku 5.5, the plugin, edit-only | 3 x 3 | $0.0079, 19.4 s | $0.0081 (+3%), 22.3 s (+15%) | diffs read by hand, all right after the fix below |
 | E (rich round 3) | rich, Haiku 5.5, the plugin as shipped, edit-only | 5 x 3 | $0.0111, 32.1 s | $0.0114 (+3%), 36.6 s (+14%) | 15/15 edited the commit's files |
 | F (rich round 3, again) | as E, with faster hooks and rarity-ranked pointers (28991a2), arms interleaved | 5 x 2 | $0.0109, 31.8 s | $0.0114 (+5%), 37.3 s (+17%) | 10/10 edited the commit's files |
+| G (rich round 3, again) | as F, with every fix of 2026-11-11 (b5382a0), arms interleaved | 5 x 2 | $0.0116, 35.3 s | $0.0115 (-1%), 36.5 s (+3%) | 10/10 edited the commit's files |
 
 Round C is the only saving, and plain cost 70% more in it than in round B, so it holds within that round only. Rounds
-D, E and F, with the plugin as it ships (the fence picked from the task by a hook), saved nothing; "edit-only" means no
+D, E and F, with the plugin as it ships (the fence picked from the task by a hook), saved nothing; in G, after the day's
+fixes, it also cost nothing (-1% cost, +3% time), so the fence is now neutral on cost and is there to keep edits in scope; "edit-only" means no
 Bash and nothing run, because running third-party code was not allowed in this environment (tests: N/A).
 
 What the rounds did show:
