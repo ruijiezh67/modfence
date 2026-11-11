@@ -10,7 +10,8 @@ from .runner import _words, is_test
 
 DEF = re.compile(r"^[ \t]*(?:async[ \t]+)?(?:def|class)[ \t]+(\w+)", re.M)
 MIN_SCORE = 8      # ponytail: below this the task names nothing in the code; calibrated on the rich and lab tasks
-SECOND = 0.75      # a second module this close to the first is fenced too, so a task that spans two is not blocked
+SECOND = 0.5       # a second module at half the first's score is fenced too: a wrong deny costs the whole task (TinyDB T3,
+                   # rich r3: a catch-all module outscored the right one 46 to 26), a looser fence costs little
 WHERE = 3          # likely places shown to the agent; more is a search it does better itself
 NAMED = 4          # per task word in a module's name or purpose: the person's (or the map's) own words for it
 
