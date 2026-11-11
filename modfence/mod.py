@@ -177,8 +177,10 @@ def reply(intent):
             f'{intent["candidates"][int(k)]["name"]}={w}' for k, w in c["weights"].items() if 0 <= int(k) < len(intent["candidates"]))
     if c.get("deleted"):
         head += ". Readings the user deleted as wrong: " + "; ".join(intent["candidates"][k]["name"] for k in c["deleted"] if 0 <= k < len(intent["candidates"]))
+    split = {k for cand in intent.get("candidates") or [] for k in (cand.get("differs") or {})}  # what the readings disagree on
     rows = [f'{s["key"]}={s["value"]}' + (" (changed by the user)" if s.get("edited") else "") for s in intent.get("settings") or []
-            if s["key"] not in vals]  # said once: the picked reading's value is not repeated (or contradicted) here
+            if s["key"] not in vals and (s.get("edited") or s["key"] not in split)]  # said once, never against the answer:
+    # an own-words "set epochs to 2" next to "Settings: epochs=10" made an agent set epochs=5
     return head + ". Settings: " + ("; ".join(rows) or "none") + ". Follow exactly this; ask again only if it turns out impossible."
 
 

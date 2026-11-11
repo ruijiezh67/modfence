@@ -860,6 +860,12 @@ class ModTest(unittest.TestCase):
         self.assertIn("Scale: one, 1 runs", text, "a reading's own scale beats the intent's")
         self.assertIn("one try=9", text)
         self.assertEqual(text.count("runs="), 1, "a value is said once, not again under Settings")
+        mod.save_intent(d, "r3", {**intent, "settings": [{"key": "runs", "value": "3", "source": "default", "from": None},
+                                                         {"key": "model", "value": "sonnet", "source": "default", "from": None}]})
+        mod.answer(d, "r3", {"kind": "own", "text": "just 2 runs"})
+        text = mod.wait(d, "r3", seconds=0)[1]
+        self.assertNotIn("runs=3", text, "own words are not contradicted by a value the readings disagreed on")
+        self.assertIn("model=sonnet", text, "a value every reading shares still goes with them")
         settings = {s["key"]: s for s in mod.load_project(d)["settings"]}
         self.assertEqual((settings["runs"]["value"], settings["runs"]["source"]), ("2", "user"), "confirmed once, for good")
         self.assertNotIn("model", settings, "a default the person did not touch is not a confirmation")
