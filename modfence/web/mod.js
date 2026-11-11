@@ -71,8 +71,10 @@ function drawIntent(i) {
   });
   const cands = i.candidates || [], order = shuffled(cands.length, i.id || ""), done = i.status === "answered";
   const keys = [...new Set(cands.flatMap((c) => Object.keys(c.differs || {})))].filter((k) => new Set(cands.map((c) => String((c.differs || {})[k] ?? "—"))).size > 1);
-  const open = settings.filter((s) => s.source === "guess" || s.source === "memory"), rest = settings.filter((s) => !open.includes(s));
-  const sc = i.scale || {}, plan = Array.isArray(i.plan) && i.plan.length ? i.plan : ["", "this step", ""];
+  const open = settings.filter((s) => s.source === "guess" || s.source === "memory");
+  const took = settings.filter((s) => !open.includes(s) && s.from && quote.includes(`data-key="${esc(s.key)}"`)), rest = settings.filter((s) => !open.includes(s) && !took.includes(s));
+  const pc = typeof S.pick === "number" ? cands[S.pick] : done && i.choice?.kind === "pick" ? cands[i.choice.index] : null;
+  const sc = pc?.scale || i.scale || {}, plan = Array.isArray(i.plan) && i.plan.length ? i.plan : ["", "this step", ""];
   const node = (ci, k) => {
     const c = cands[ci], r = rx(ci), name = r.name ?? c.name, desc = r.description ?? c.description ?? "", w = r.weight ?? 0; // the agent's own weight is never shown: it would read as a recommendation
     if (r.deleted) return `<div class="node reading gone" id="n-r${ci}"><s>${esc(name)}</s> <button type="button" class="link" data-undo="${ci}">undo</button></div>`;
@@ -81,16 +83,19 @@ function drawIntent(i) {
         ? `<input class="rn-in" value="${esc(name)}" aria-label="Reading name">` : `<b class="rn">${esc(name)}</b>`)
       + (done ? "" : `<span class="tools"><button type="button" data-edit="${ci}" title="Edit this reading">${r.editing ? "Done" : "Edit"}</button><button type="button" data-del="${ci}" title="Delete: this is not what I meant" aria-label="Delete">×</button></span>`) + `</div>`
       + (r.editing && !done ? `<textarea class="rd-in" rows="2" aria-label="Description">${esc(desc)}</textarea>` : desc ? `<p class="rd">${esc(desc)}</p>` : "")
-      + (keys.length ? `<p class="diffs">${keys.map((key) => `<span class="chip alt"><span class="ck">${esc(key)}</span><span class="cv">${esc((c.differs || {})[key] ?? "—")}</span></span>`).join(" ")}</p>` : "")
+      + (keys.length ? `<p class="diffs">${keys.map((key) => { const ch = (r.differs || {})[key] !== undefined, v = ch ? r.differs[key] : (c.differs || {})[key] ?? "—";
+        return `<span class="chip alt${ch ? " changed" : ""}" data-ci="${ci}" data-dk="${esc(key)}"><span class="ck">${esc(key)}</span>${done ? `<span class="cv">${esc(v)}</span>` : `<button type="button" class="cv" title="Change this value">${esc(v)}</button>`}</span>`; }).join(" ")}</p>` : "")
       + `<div class="wt" title="Weight: how much this matters to you (1-10)">${[...Array(10).keys()].map((t) => `<button type="button" class="tick${t < w ? " f" : ""}" data-w="${ci}:${t + 1}" aria-label="Weight ${t + 1}"${done ? " disabled" : ""}></button>`).join("")}<span>${w ? `weight ${w}` : "how much it matters"}</span></div>`
       + (c.evidence ? `<p class="ev">because ${esc(c.evidence)}</p>` : "") + `</div>`;
   };
   $("#main").innerHTML = `<p class="state">${done ? "Answered" : i.status === "waiting" ? "<b>Your agent is waiting for you</b>" : "Open"} · ${esc(i.id)}</p>`
     + `<div class="graph" id="graph"><svg class="wires" id="wires" aria-hidden="true"></svg>`
+    + `<p class="cap">What you said</p><p class="cap">${done ? "What it understood" : "Which one did you mean?"}</p><p class="cap">Where the agent is</p>`
     + `<div class="col">`
-    + `<div class="node words" id="n-words"><span class="nl">You said</span><p class="said">“${quote}”</p></div>`
+    + `<div class="node words" id="n-words"><p class="said">“${quote}”</p>`
+      + (took.length ? `<p class="took">${took.map((s) => `<span class="tw">${esc(s.from)}</span><span class="ar">→</span>${chip(s, !done)}`).join("")}</p>` : "") + `</div>`
     + (open.length ? `<div class="node assume" id="n-assume"><span class="nl">${open.length} value${open.length > 1 ? "s" : ""} you never said</span><p class="chips">${open.map((s) => chip(s, !done)).join(" ")}</p></div>` : "")
-    + (rest.length ? `<details class="node more"><summary>${rest.length} from you or defaults</summary><p class="chips">${rest.map((s) => chip(s, !done)).join(" ")}</p></details>` : "")
+    + (rest.length ? `<details class="node more"><summary>${rest.length} ${rest.every((s) => s.source === "default") ? "default" : "more value"}${rest.length > 1 ? "s" : ""}</summary><p class="chips">${rest.map((s) => chip(s, !done)).join(" ")}</p></details>` : "")
     + `</div><div class="col">${order.map(node).join("")}`
     + (done ? "" : `<div class="node reading own${S.pick === "own" ? " on" : ""}" id="n-own"><div class="rh"><kbd>${cands.length + 1}</kbd><b class="rn">None of these</b></div><input type="text" id="own" placeholder="Say it in your own words" value="${esc(S.own)}"></div>`)
     + `</div><div class="col plan">${plan.map((p, k) => `<div class="node step${k === 1 ? " here" : ""}" id="n-p${k}">${k === 1 ? `<span class="nl">The agent stopped here</span>` : ""}${esc(p || (k ? "next" : "before"))}`
@@ -112,11 +117,6 @@ function wires() { // curves between the nodes, drawn after layout and on resize
   document.querySelectorAll(".reading:not(.gone)").forEach((n) => { const a = R(w), b = R(n); out.push(curve([a.r, a.y], [b.l, b.y], n === pickEl ? "on" : n.classList.contains("own") ? "dash" : "")); });
   if (pickEl && here) { const a = R(pickEl), b = R(here); out.push(curve([a.r, a.y], [b.l, b.y], "on")); }
   ["#n-p0", "#n-p1", "#n-p2"].map((s) => $(s)).reduce((p, n) => { if (p && n) { const a = R(p), b = R(n); out.push(`<path class="plan" d="M${a.x},${a.b} L${b.x},${b.t - 3}"/>`); } return n; }, null);
-  document.querySelectorAll(".said u").forEach((u) => { // a value that came from your words is wired to them
-    const c = document.querySelector(`.chips .chip[data-key="${CSS.escape(u.dataset.key)}"]`);
-    if (!c || c.closest("details:not([open])")) return; // folded away: no wire into nothing
-    const a = R(u), b = R(c); out.push(`<path class="from" d="M${a.x},${a.b} C${a.x},${a.b + 30} ${b.x},${b.t - 30} ${b.x},${b.t}"/>`);
-  });
   svg.innerHTML = out.join("");
 }
 addEventListener("resize", () => requestAnimationFrame(wires));
@@ -136,6 +136,16 @@ function wireIntent(i) {
   main.querySelectorAll("[data-w]").forEach((b) => (b.onclick = () => { const [ci, w] = b.dataset.w.split(":").map(Number); rx(ci).weight = w; redraw(); }));
   const own = $("#own");
   if (own) { own.oninput = () => { S.own = own.value; S.pick = own.value.trim() ? "own" : null; mark(i); $("#n-own").classList.toggle("on", S.pick === "own"); wires(); }; }
+  main.querySelectorAll(".diffs .chip[data-dk]").forEach((c) => {
+    const b = c.querySelector("button.cv");
+    if (b) b.onclick = () => {
+      const ci = +c.dataset.ci, key = c.dataset.dk, input = document.createElement("input");
+      input.value = b.textContent; input.size = Math.max(4, b.textContent.length + 2); b.replaceWith(input); input.focus(); input.select();
+      const fin = (keep) => { const r = rx(ci); if (keep && input.value !== String((cands(i)[ci].differs || {})[key] ?? "—")) { (r.differs ||= {})[key] = input.value; S.pick = ci; } redraw(); };
+      input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); fin(true); } if (e.key === "Escape") fin(false); };
+      input.onblur = () => fin(true);
+    };
+  });
   main.querySelectorAll(".chips .chip").forEach((c) => {
     const b = c.querySelector("button.cv");
     if (b) b.onclick = () => {
@@ -150,17 +160,19 @@ function wireIntent(i) {
   mark(i);
   requestAnimationFrame(wires);
 }
+const cands = (i) => i.candidates || [];
 function choose(ci) { S.pick = ci; S.own = ""; const i = S.data.intents.find((x) => x.id === S.cur); drawIntent(i); }
 function mark(i) {
-  const go = $("#go"), what = $("#what"), n = Object.keys(S.edits).length;
+  const go = $("#go"), what = $("#what"), n = Object.keys(S.edits).length + Object.keys((typeof S.pick === "number" && S.rx[S.pick]?.differs) || {}).length;
   if (!go) return;
   go.disabled = S.pick === null;
-  what.textContent = S.pick === null ? `Press 1-${(i.candidates || []).length + 1}, or click the one you meant.` : (S.pick === "own" ? `Your words: “${S.own}”` : `“${S.rx[S.pick]?.name ?? i.candidates[S.pick].name}”`) + (n ? ` · ${n} setting${n > 1 ? "s" : ""} changed` : "");
+  what.textContent = S.pick === null ? `Press 1-${(i.candidates || []).length + 1}, or click the one you meant.` : (S.pick === "own" ? `Your words: “${S.own}”` : `“${S.rx[S.pick]?.name ?? i.candidates[S.pick].name}”`) + (n ? ` · ${n} value${n > 1 ? "s" : ""} changed` : "");
 }
 async function send(i) {
   if (S.pick === null) return;
   const r = S.rx[S.pick] || {}, c = i.candidates[S.pick] || {}, choice = S.pick === "own" ? { kind: "own", text: S.own } : { kind: "pick", index: S.pick };
   if (S.pick !== "own" && ((r.name && r.name !== c.name) || (r.description !== undefined && r.description !== (c.description || "")))) { choice.name = r.name ?? c.name; choice.description = r.description ?? c.description; }
+  if (S.pick !== "own" && r.differs && Object.keys(r.differs).length) choice.differs = r.differs;
   choice.weights = Object.fromEntries(Object.entries(S.rx).filter(([, v]) => v.weight).map(([k, v]) => [k, v.weight]));
   choice.deleted = Object.entries(S.rx).filter(([, v]) => v.deleted).map(([k]) => +k);
   try { await api(`/api/mod/answer?${q()}`, { id: i.id, choice, edits: S.edits }); }

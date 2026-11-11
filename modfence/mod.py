@@ -131,7 +131,8 @@ def problems(intent):
 
 def answer(root, iid, choice, edits=None):
     """The person's answer from the page: choice = {"kind": "pick"|"own", "index"|"text", and optionally "name" and
-    "description" (an edited reading), "weights" {index: 1-10}, "deleted" [index]}; edits = {key: value}.
+    "description" (an edited reading), "differs" {key: value} (values of the picked reading the person changed),
+    "weights" {index: 1-10}, "deleted" [index]}; edits = {key: value}.
     Picked or edited settings are confirmed for the project."""
     intent = load_intent(root, iid)
     if intent is None:
@@ -160,6 +161,18 @@ def reply(intent):
         head = f'The user picked: "{intent["candidates"][c["index"]]["name"]}"'
     else:
         head = f'The user wrote their own goal, use it verbatim: "{c["text"]}"'
+    if c["kind"] == "pick":  # the picked reading's own values, so the agent need not recall them
+        cand = intent["candidates"][c["index"]]
+        mine = {s["key"] for s in intent.get("settings") or [] if s.get("edited")}  # a value the person typed wins
+        vals = {k: v for k, v in {**(cand.get("differs") or {}), **(c.get("differs") or {})}.items() if k not in mine}
+        if vals:
+            head += ". Its values: " + "; ".join(f"{k}={v}" + (" (changed by the user)" if k in (c.get("differs") or {}) else "") for k, v in vals.items())
+        sc = cand.get("scale") or intent.get("scale")
+        if sc and sc.get("pick"):
+            head += f'. Scale: {sc["pick"]}' + (f', {sc["runs"]} runs' if sc.get("runs") is not None else "")
+    if c.get("weights"):
+        head += ". How much each reading matters to the user (1-10): " + "; ".join(
+            f'{intent["candidates"][int(k)]["name"]}={w}' for k, w in c["weights"].items() if 0 <= int(k) < len(intent["candidates"]))
     if c.get("deleted"):
         head += ". Readings the user deleted as wrong: " + "; ".join(intent["candidates"][k]["name"] for k in c["deleted"] if 0 <= k < len(intent["candidates"]))
     rows = [f'{s["key"]}={s["value"]}' + (" (changed by the user)" if s.get("edited") else "") for s in intent.get("settings") or []]
@@ -194,11 +207,11 @@ PROTOCOL = ("When the user states an intent whose settings they did not all give
             "prompt, before writing an experiment config, before running an experiment, before writing results into docs, "
             "before something hard to undo, or when two readings are plausible), do not guess silently: write "
             "{dir}/intents/<yyyymmdd-hhmm-slug>.mod as JSON {{\"words\": the user's exact words, \"candidates\": 2-3 distinct "
-            "readings [{{\"name\", \"description\", \"weight\": 1-10, \"evidence\", \"differs\": {{setting: value}}}}], "
+            "readings [{{\"name\", \"description\", \"weight\": 1-10, \"evidence\", \"differs\": {{setting: value}}, \"scale\" if it differs}}], "
             "\"settings\": [{{\"key\", \"value\", \"source\": user|default|memory|guess, \"at\": date if memory, \"from\": the "
             "user's words it comes from or null}}], \"scale\": {{\"pick\": one|sample|full, \"runs\", \"cost\", \"time\"}}, "
             "\"plan\": [\"prev step\", \"this step\", \"next step\"]}}, then run `{cmd} mod wait <id>` and follow its answer. "
-            "Write every field in English (translate the user's words if they are in another language). Never mark a reading "
+            "First read the code and the confirmed settings; ask only what they cannot settle. Write every field in English (translate the user's words if they are in another language). Never mark a reading "
             "as recommended. Skip this for clear small edits.")
 
 

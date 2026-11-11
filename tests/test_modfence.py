@@ -851,6 +851,13 @@ class ModTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn('"full grid"', text)
         self.assertIn("runs=2 (changed by the user)", text)
+        self.assertNotIn("runs=60", text, "the value the person typed wins over the reading's own")
+        mod.save_intent(d, "r2", {**intent, "settings": [], "candidates": [{**c, "scale": {"pick": "one", "runs": 1}} if k == 0 else c for k, c in enumerate(intent["candidates"])]})
+        mod.answer(d, "r2", {"kind": "pick", "index": 0, "differs": {"seed": "7"}, "weights": {"0": 9}})
+        text = mod.wait(d, "r2", seconds=0)[1]
+        self.assertIn("Its values: runs=1; seed=7 (changed by the user)", text, "the picked reading's values travel with it")
+        self.assertIn("Scale: one, 1 runs", text, "a reading's own scale beats the intent's")
+        self.assertIn("one try=9", text)
         settings = {s["key"]: s for s in mod.load_project(d)["settings"]}
         self.assertEqual((settings["runs"]["value"], settings["runs"]["source"]), ("2", "user"), "confirmed once, for good")
         self.assertNotIn("model", settings, "a default the person did not touch is not a confirmation")

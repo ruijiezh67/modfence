@@ -1,5 +1,5 @@
 """Just-in-time fence (golden rules 4 and 6). You give Claude Code a task as usual; a UserPromptSubmit hook reads it at
-that moment, finds the module of MODULES.md it most likely lives in, fences the agent to it and tells the agent where
+that moment, finds the module of .mod/project.mod it most likely lives in, fences the agent to it and tells the agent where
 to start. No model: the task's words against each module's function names and code. You see the guess, its evidence
 and the other candidates (in Claude Code and on the map), and switch with one command or click. A fence you set
 yourself is never replaced; a short follow-up ("continue", "approved") keeps the fence it has."""
@@ -122,7 +122,7 @@ def check_edit(path, root=None):
 
 
 def hook(raw):
-    """UserPromptSubmit: fence the task's module and tell both sides. Silent without MODULES.md, on a fence the person
+    """UserPromptSubmit: fence the task's module and tell both sides. Silent without .mod/project.mod, on a fence the person
     set, and on a follow-up too vague to point anywhere (the fence it has stays)."""
     try:
         ev = json.loads(raw or "{}")
@@ -146,7 +146,7 @@ def main(argv):
     root = os.path.abspath(argv[argv.index("--project") + 1]) if "--project" in argv else project_root(os.getcwd())
     task = " ".join(a for i, a in enumerate(argv) if a != "--project" and (i == 0 or argv[i - 1] != "--project"))
     if not root:
-        print(f"modfence: no {modules.FILE} here or above; save one from the map first.", file=sys.stderr)
+        print("modfence: no .mod/project.mod here or above; save the modules from the map first.", file=sys.stderr)
         return 2
     cands = candidates(root, task)
     pick = choose(cands)
