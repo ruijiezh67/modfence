@@ -63,11 +63,11 @@ function select(id) {
   if (i) drawIntent(i);
 }
 
-/* ---------- one intent: a decision graph ----------
-   Left: your words, and under them the values you never said (wired to the words they came from, if any).
-   Middle: the readings, as Lam's just-in-time objectives: select one, edit its name or description, set its weight,
-   delete it, or add your own. Right: the plan, with the step where the agent stopped; the reading you pick is wired
-   into it. Nothing is preselected or recommended, and the order is shuffled per intent. */
+/* ---------- one intent, one column ----------
+   Your words and the values you never said; the readings, as Lam's just-in-time objectives (select one, edit its name,
+   description or a value, delete it, or say it in your own words); then where the agent stopped. Nothing is preselected
+   or recommended, and the order is shuffled per intent. (A three-column graph with wires and per-reading weights was
+   dropped after a design review, 2026-11-11: the wires told nothing and the weights read as scores.) */
 const SRCWORD = { guess: "guessed", memory: "remembered", user: "you said", default: "default" };
 const rx = (ci) => (S.rx[ci] ||= {});
 const scaleText = (sc) => `${{ one: "one run", sample: "a sample", full: "everything" }[sc.pick] || esc(sc.pick || "")} · ${sc.runs != null ? esc(sc.runs) + (+sc.runs === 1 ? " run" : " runs") : "runs N/A"} · ${esc(sc.cost || "cost N/A")} · ${esc(sc.time || "time N/A")}`;
@@ -94,12 +94,11 @@ function drawIntent(i) {
   const multi = new Set(cands.map((c) => JSON.stringify(c.scale || null))).size > 1; // a cost line only where they differ
   const sc = pc?.scale || i.scale || {}, plan = Array.isArray(i.plan) && i.plan.length ? i.plan : ["", "this step", ""];
   const node = (ci, k) => {
-    const c = cands[ci], r = rx(ci), name = r.name ?? c.name, desc = r.description ?? c.description ?? "", w = r.weight ?? 0; // the agent's own weight is never shown: it would read as a recommendation
+    const c = cands[ci], r = rx(ci), name = r.name ?? c.name, desc = r.description ?? c.description ?? "";
     if (r.deleted) return `<div class="node reading gone" id="n-r${ci}"><s>${esc(name)}</s> <button type="button" class="link" data-undo="${ci}">undo</button></div>`;
     return `<div class="node reading${S.pick === ci ? " on" : ""}" id="n-r${ci}" data-ci="${ci}" role="group" aria-label="Reading ${k + 1}: ${esc(name)}">`
       + `<div class="rh"><button type="button" class="pk" data-pick="${ci}" aria-pressed="${S.pick === ci}" title="Pick this reading (key ${k + 1})"${done ? " disabled" : ""}>${k + 1}</button>` + (r.editing && !done
         ? `<input class="rn-in" value="${esc(name)}" aria-label="Reading name">` : `<b class="rn">${esc(name)}</b>`)
-      + `<span class="wt" title="How much this matters to you (1-10)">${[...Array(10).keys()].map((t) => `<button type="button" class="tick${t < w ? " f" : ""}" data-w="${ci}:${t + 1}" aria-label="Weight ${t + 1}"${done ? " disabled" : ""}></button>`).join("")}${w ? `<span>${w}</span>` : ""}</span>` // in the head row: one line less per reading
       + (done ? "" : `<span class="tools"><button type="button" data-edit="${ci}" title="Edit this reading">${r.editing ? "Done" : "Edit"}</button><button type="button" data-del="${ci}" title="Delete: this is not what I meant" aria-label="Delete">×</button></span>`) + `</div>`
       + (r.editing && !done ? `<textarea class="rd-in" rows="2" aria-label="Description">${esc(desc)}</textarea>` : desc ? `<p class="rd" title="${esc(desc)}">${esc(desc)}</p>` : "")
       + (keys.length ? `<p class="diffs">${keys.map((key) => { const ch = (r.differs || {})[key] !== undefined, v = ch ? r.differs[key] : (c.differs || {})[key] ?? "—";
@@ -108,16 +107,15 @@ function drawIntent(i) {
       + (c.evidence ? `<p class="ev" title="${esc(c.evidence)}"><b>why</b> ${esc(c.evidence)}</p>` : "") + `</div>`;
   };
   $("#main").innerHTML = `<p class="state" id="state" role="status" title="${esc(i.id)}">${stateText(i)}</p>`
-    + `<div class="graph" id="graph"><svg class="wires" id="wires" aria-hidden="true"></svg>`
-    + `<p class="cap">What you said</p><p class="cap">${done ? "What it understood" : "Which one did you mean?"}</p><p class="cap">Where the agent is</p>`
-    + `<div class="col">`
+    + `<div class="graph" id="graph">`
+    + `<div class="col"><p class="cap">What you said</p>`
     + `<div class="node words" id="n-words"><p class="said">“${quote}”</p>`
       + (took.length ? `<p class="took">${took.map((s) => `<span class="tw">${esc(s.from)}</span><span class="ar">→</span>${chip(s, !done)}`).join("")}</p>` : "") + `</div>`
     + (open.length ? `<div class="node assume" id="n-assume"><span class="nl">${open.length} value${open.length > 1 ? "s" : ""} you never said</span><p class="chips">${open.map((s) => chip(s, !done)).join(" ")}</p></div>` : "")
     + (rest.length ? `<details class="node more"><summary>${rest.length} ${rest.every((s) => s.source === "default") ? "default" : "more value"}${rest.length > 1 ? "s" : ""}</summary><p class="chips">${rest.map((s) => chip(s, !done)).join(" ")}</p></details>` : "")
-    + `</div><div class="col">${order.map(node).join("")}`
+    + `</div><div class="col"><p class="cap">${done ? "What it understood" : "Which one did you mean?"}</p>${order.map(node).join("")}`
     + (done ? "" : `<div class="node reading own${S.pick === "own" ? " on" : ""}" id="n-own"><div class="rh"><kbd>${cands.length + 1}</kbd><b class="rn">None of these</b></div><input type="text" id="own" placeholder="Say it in your own words${keys.length ? `, e.g. ${esc(keys.map((k) => k + " …").join(", "))}` : ""}" value="${esc(S.own)}"></div>`)
-    + `</div><div class="col plan">${plan.map((p, k) => `<div class="node step${k === 1 ? " here" : ""}" id="n-p${k}">${k === 1 ? `<span class="nl">The agent stopped here</span>` : ""}<span class="st" title="${esc(p)}">${esc(p || (k ? "next" : "before"))}</span>`
+    + `</div><div class="col plan"><p class="cap">Where the agent is</p>${plan.map((p, k) => `<div class="node step${k === 1 ? " here" : ""}" id="n-p${k}">${k === 1 ? `<span class="nl">The agent stopped here</span>` : ""}<span class="st" title="${esc(p)}">${esc(p || (k ? "next" : "before"))}</span>`
       + (k === 1 && !multi && sc.pick ? `<span class="sc">${scaleText(sc)}</span>` : "") + `</div>`).join("")}${fenceNode()}</div>`  // a reading's own cost is on the reading
     + `</div>`
     + `<p class="legend"><span class="chip guess"><span class="sg">?</span></span> guessed <span class="chip memory"><span class="sg">◷</span><span class="cd">date</span></span> remembered <span class="chip user"><span class="sg">●</span></span> you said <span class="chip default"><span class="sg">○</span></span> default${done ? "" : " · click a value to change it"}</p>`
@@ -132,20 +130,7 @@ function fenceNode() { // the scope the agent works in, so an answer is read aga
   return `<a class="node fencen" href="/#p=${S.p}" title="Open the map"><span class="nl">It may edit</span>${esc(mods || f.label || "")}`
     + `<span class="sc">${f.by === "jit" ? "picked from your task" : "set by you"}${n ? ` · <b>${n} request${n > 1 ? "s" : ""}</b> on the map` : ""}</span></a>`;
 }
-function wires() { // curves between the nodes, drawn after layout and on resize
-  const g = $("#graph"), svg = $("#wires");
-  if (!g || !svg) return;
-  const G = g.getBoundingClientRect(), R = (el) => { const r = el.getBoundingClientRect(); return { l: r.left - G.left, r: r.right - G.left, t: r.top - G.top, b: r.bottom - G.top, y: r.top - G.top + r.height / 2, x: r.left - G.left + r.width / 2 }; };
-  svg.setAttribute("viewBox", `0 0 ${G.width} ${G.height}`); svg.setAttribute("width", G.width); svg.setAttribute("height", G.height);
-  const curve = (a, b, cls) => { const dx = Math.max(28, (b[0] - a[0]) / 2); return `<path class="${cls}" d="M${a[0]},${a[1]} C${a[0] + dx},${a[1]} ${b[0] - dx},${b[1]} ${b[0]},${b[1]}"/>`; };
-  const w = $("#n-words"), here = $("#n-p1"), out = [];
-  const pickEl = S.pick === "own" ? $("#n-own") : S.pick !== null ? $(`#n-r${S.pick}`) : null;
-  document.querySelectorAll(".reading:not(.gone)").forEach((n) => { const a = R(w), b = R(n); out.push(curve([a.r, a.y], [b.l, b.y], n === pickEl ? "on" : n.classList.contains("own") ? "dash" : "")); });
-  if (pickEl && here) { const a = R(pickEl), b = R(here); out.push(curve([a.r, a.y], [b.l, b.y], "on")); }
-  ["#n-p0", "#n-p1", "#n-p2"].map((s) => $(s)).reduce((p, n) => { if (p && n) { const a = R(p), b = R(n); out.push(`<path class="plan" d="M${a.x},${a.b} L${b.x},${b.t - 3}"/>`); } return n; }, null);
-  svg.innerHTML = out.join("");
-}
-addEventListener("resize", () => requestAnimationFrame(wires));
+
 function wireIntent(i) {
   const main = $("#main"), redraw = () => drawIntent(i);
   main.querySelectorAll(".reading[data-ci]").forEach((n) => {
@@ -158,9 +143,8 @@ function wireIntent(i) {
   }));
   main.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => { const ci = +b.dataset.del; rx(ci).deleted = true; if (S.pick === ci) S.pick = null; redraw(); }));
   main.querySelectorAll("[data-undo]").forEach((b) => (b.onclick = () => { rx(+b.dataset.undo).deleted = false; redraw(); }));
-  main.querySelectorAll("[data-w]").forEach((b) => (b.onclick = () => { const [ci, w] = b.dataset.w.split(":").map(Number); rx(ci).weight = w; redraw(); }));
   const own = $("#own");
-  if (own) { own.onkeydown = (e) => { if (e.key === "Enter" && S.pick === "own") { e.preventDefault(); send(i); } }; own.oninput = () => { S.own = own.value; S.pick = own.value.trim() ? "own" : null; mark(i); $("#n-own").classList.toggle("on", S.pick === "own"); wires(); }; }
+  if (own) { own.onkeydown = (e) => { if (e.key === "Enter" && S.pick === "own") { e.preventDefault(); send(i); } }; own.oninput = () => { S.own = own.value; S.pick = own.value.trim() ? "own" : null; mark(i); $("#n-own").classList.toggle("on", S.pick === "own"); }; }
   main.querySelectorAll(".diffs .chip[data-dk]").forEach((c) => {
     const b = c.querySelector("button.cv");
     if (b) b.onclick = () => {
@@ -183,7 +167,6 @@ function wireIntent(i) {
   });
   $("#go") && ($("#go").onclick = () => send(i));
   mark(i);
-  requestAnimationFrame(wires);
 }
 const cands = (i) => i.candidates || [];
 function choose(ci) { S.pick = ci; S.own = ""; const i = S.data.intents.find((x) => x.id === S.cur); drawIntent(i); $(`#n-r${ci} .pk`)?.focus(); }
@@ -200,7 +183,6 @@ async function send(i) {
   if (S.pick !== "own" && r.differs && Object.keys(r.differs).length) choice.differs = r.differs;
   if (S.pick !== "own") choice.shown = shuffled(i.candidates.length, i.id || "").indexOf(S.pick) + 1; // where it stood on screen
   choice.ms = Date.now() - S.openedAt; // with "shown": do you read, or confirm the first thing you see?
-  choice.weights = Object.fromEntries(Object.entries(S.rx).filter(([, v]) => v.weight).map(([k, v]) => [k, v.weight]));
   choice.deleted = Object.entries(S.rx).filter(([, v]) => v.deleted).map(([k]) => +k);
   try { await api(`/api/mod/answer?${q()}`, { id: i.id, choice, edits: S.edits }); }
   catch (e) { toast(e.message); return; }
