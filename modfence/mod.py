@@ -188,8 +188,8 @@ def wait(root, iid, seconds=WAIT_S, poll=1.0):
     bad = problems(intent)
     if bad:
         return 2, "modfence: fix the intent file, then run this again: " + "; ".join(bad)
-    if intent.get("status") != "answered":
-        intent["status"] = "waiting"
+    if intent.get("status") != "answered":  # the page counts down from here, and says when the agent gave up waiting
+        intent.update(status="waiting", waiting_at=datetime.now().astimezone().isoformat(timespec="seconds"), wait_s=seconds)
         save_intent(root, iid, intent)
     end = time.time() + seconds
     while True:

@@ -25,17 +25,27 @@ function shuffled(n, seed) { // a fixed order per intent id, so nothing jumps be
   return idx;
 }
 const short = (d) => (d ? String(d).slice(5) : ""); // 2026-11-10 -> 11-10
+const left = (i) => i.status !== "waiting" ? null : !i.waiting_at ? Infinity // seconds the agent still waits; <= 0: it stopped
+  : Math.round((i.wait_s ?? 110) - (Date.now() - Date.parse(i.waiting_at)) / 1000);
+function stateText(i) {
+  if (i.status === "answered") return "Answered";
+  const s = left(i);
+  if (s === null) return "Open";
+  if (s <= 0) return "<b>Your agent stopped waiting.</b> Answer here, then tell it to continue in the chat.";
+  return `<b>Your agent is waiting for you</b>${s === Infinity ? "" : ` · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} left`}`;
+}
+setInterval(() => { const i = S.data?.intents.find((x) => x.id === S.cur), el = $("#state"); if (i && el) el.innerHTML = stateText(i) + ` · ${esc(i.id)}`; }, 1000);
 
 async function load(first) {
   try { S.data = await api(`/api/mod?${q()}`); } catch (e) { $("#main").innerHTML = `<p class="empty">${esc(e.message)}</p>`; return; }
-  const waiting = S.data.intents.find((i) => i.status === "waiting" && !S.seen.has(i.id));
+  const waiting = S.data.intents.find((i) => left(i) > 0 && !S.seen.has(i.id));
   if (waiting) { S.seen.add(waiting.id); select(waiting.id); document.title = "● modfence: your agent is waiting"; return; }
   if (first) select(S.data.intents[0]?.id || "project"); else drawList();
 }
 function drawList() {
   const list = $("#list"), it = S.data.intents;
-  list.innerHTML = it.map((i) => `<li><button type="button" class="item${i.status === "waiting" ? " waiting" : ""}" data-id="${esc(i.id)}"${S.cur === i.id ? ' aria-current="true"' : ""}>`
-    + `<b>${esc(i.words)}</b><span>${esc(i.status === "waiting" ? "your agent is waiting" : i.status === "answered" ? "answered" : "open")} · ${esc(i.id)}</span></button></li>`).join("")
+  list.innerHTML = it.map((i) => `<li><button type="button" class="item${left(i) > 0 ? " waiting" : ""}" data-id="${esc(i.id)}"${S.cur === i.id ? ' aria-current="true"' : ""}>`
+    + `<b>${esc(i.words)}</b><span>${esc(left(i) > 0 ? "your agent is waiting" : left(i) !== null ? "your agent stopped waiting" : i.status === "answered" ? "answered" : "open")} · ${esc(i.id)}</span></button></li>`).join("")
     || `<li class="empty">No intents yet. When you give your agent a task it cannot do without guessing, it writes one here.</li>`;
   list.querySelectorAll("[data-id]").forEach((b) => (b.onclick = () => select(b.dataset.id)));
   $("#proj").setAttribute("aria-current", String(S.cur === "project"));
@@ -88,7 +98,7 @@ function drawIntent(i) {
       + `<div class="wt" title="Weight: how much this matters to you (1-10)">${[...Array(10).keys()].map((t) => `<button type="button" class="tick${t < w ? " f" : ""}" data-w="${ci}:${t + 1}" aria-label="Weight ${t + 1}"${done ? " disabled" : ""}></button>`).join("")}<span>${w ? `weight ${w}` : "how much it matters"}</span></div>`
       + (c.evidence ? `<p class="ev">because ${esc(c.evidence)}</p>` : "") + `</div>`;
   };
-  $("#main").innerHTML = `<p class="state">${done ? "Answered" : i.status === "waiting" ? "<b>Your agent is waiting for you</b>" : "Open"} · ${esc(i.id)}</p>`
+  $("#main").innerHTML = `<p class="state" id="state">${stateText(i)} · ${esc(i.id)}</p>`
     + `<div class="graph" id="graph"><svg class="wires" id="wires" aria-hidden="true"></svg>`
     + `<p class="cap">What you said</p><p class="cap">${done ? "What it understood" : "Which one did you mean?"}</p><p class="cap">Where the agent is</p>`
     + `<div class="col">`

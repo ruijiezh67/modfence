@@ -1223,7 +1223,8 @@ async function pollIntents() { // the header link says when your agent waits for
   if (document.hidden) return;
   let r;
   try { r = await api(`/api/mod?${q()}`); } catch { return; }
-  const n = r.intents.filter((i) => i.status === "waiting").length, a = $("#intents");
+  const waits = (i) => i.status === "waiting" && (!i.waiting_at || Date.now() - Date.parse(i.waiting_at) < (i.wait_s ?? 110) * 1000);
+  const n = r.intents.filter(waits).length, a = $("#intents"); // an agent that gave up waiting is not waiting
   a.href = `/mod.html#p=${S.p}`;
   a.classList.toggle("waiting", n > 0);
   a.textContent = n ? `Your agent waits (${n})` : "Intents";

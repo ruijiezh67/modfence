@@ -844,6 +844,7 @@ class ModTest(unittest.TestCase):
         mod.save_intent(d, "r1", intent)
         self.assertEqual(mod.wait(d, "r1", seconds=0)[0], 3, "no answer yet: the agent stops instead of guessing")
         self.assertEqual(mod.load_intent(d, "r1")["status"], "waiting")
+        self.assertIn("waiting_at", mod.load_intent(d, "r1"), "the page counts down from when the agent started waiting")
         with self.assertRaises(ValueError):
             mod.answer(d, "r1", {"kind": "pick", "index": 5})
         mod.answer(d, "r1", {"kind": "pick", "index": 1}, {"runs": "2"})
