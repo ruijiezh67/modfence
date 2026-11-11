@@ -487,6 +487,7 @@ function stressLayout(ids, edges, rank) {
     });
     if (moved < 0.5) break;
   }
+  if (innerWidth < 900) P.forEach((p) => (p.x *= 0.5)); // a narrow pane: squeeze sideways; the overlap pass then stacks boxes, so text stays legible
   const W = NODE_W + 48, H = NODE_H + 56;
   for (let pass = 0; pass < 200; pass++) { // remove box overlaps along the axis that overlaps less
     let any = false;
