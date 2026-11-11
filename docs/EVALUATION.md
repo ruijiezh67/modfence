@@ -295,14 +295,17 @@ real past fixes (the commit's parent, the commit's own tests or its files as the
 | B (rich round 1) | rich, Sonnet 5.5, fence + note file | 5 x 3 | $0.114, 38 s | $0.176, 55 s | tests 15/15 vs 13/15 (one task fenced to the wrong module) |
 | C (rich round 2) | rich, Sonnet 5.5, the fence line in the user's prompt | 5 x 3 x 4 arms | $0.194, 61 s | line + 3 likely places: $0.146 (-25%), 33 s (-46%) | tests 15/15 vs 14/15 |
 | D (TinyDB) | TinyDB (4,900 lines), Haiku 5.5, the plugin, edit-only | 3 x 3 | $0.0079, 19.4 s | $0.0081 (+3%), 22.3 s (+15%) | diffs read by hand, all right after the fix below |
-| E (rich round 3) | rich, Haiku 5.5, the plugin as shipped, edit-only | 5 x 3 | $0.0111, 32.1 s | $0.0114 (+3%), 36.6 s (+14%) | 15/15 edited the commit's files |
-| F (rich round 3, again) | as E, with faster hooks and rarity-ranked pointers (28991a2), arms interleaved | 5 x 2 | $0.0109, 31.8 s | $0.0114 (+5%), 37.3 s (+17%) | 10/10 edited the commit's files |
-| G (rich round 3, again) | as F, with every fix of 2026-11-11 (b5382a0), arms interleaved | 5 x 2 | $0.0116, 35.3 s | $0.0115 (-1%), 36.5 s (+3%) | 10/10 edited the commit's files |
+| E (rich round 3) | rich, Haiku 5.5, the plugin as shipped, edit-only | 5 x 3 | $0.0111, 32.1 s | $0.0114 (+3%), 36.6 s (+14%) | commit's tests, run afterwards: plain 14/15, fenced 15/15 |
+| F (rich round 3, again) | as E, with faster hooks and rarity-ranked pointers (28991a2), arms interleaved | 5 x 2 | $0.0109, 31.8 s | $0.0114 (+5%), 37.3 s (+17%) | tests: plain 9/10, fenced 10/10 |
+| G (rich round 3, again) | as F, with every fix of 2026-11-11 (b5382a0), arms interleaved | 5 x 2 | $0.0116, 35.3 s | $0.0115 (-1%), 36.5 s (+3%) | tests: plain 9/10, fenced 10/10 |
 
 Round C is the only saving, and plain cost 70% more in it than in round B, so it holds within that round only. Rounds
 D, E and F, with the plugin as it ships (the fence picked from the task by a hook), saved nothing; in G, after the day's
 fixes, it also cost nothing (-1% cost, +3% time), so the fence is now neutral on cost and is there to keep edits in scope; "edit-only" means no
-Bash and nothing run, because running third-party code was not allowed in this environment (tests: N/A).
+Bash during the run; afterwards (with the person's approval) every run's diff was applied to the commit's parent and the
+commit's own test files were run: the fenced arms after the picker fixes passed 35 of 35, plain 32 of 35, all three
+plain failures on r2 (it fixed the centred title only; the fenced runs, pointed at `rule.py`, fixed every alignment).
+Small numbers, one task: a direction, not a claim. TinyDB's suite (227 tests) passed after every TinyDB run's diff.
 
 What the rounds did show:
 
