@@ -221,17 +221,17 @@ def wait(root, iid, seconds=WAIT_S, poll=1.0):
 
 
 # ---------- what an agent reads instead of conversation memory ----------
-PROTOCOL = ("When the user states an intent whose settings they did not all give (a new task or experiment from a short "
-            "prompt, before writing an experiment config, before running an experiment, before writing results into docs, "
-            "before something hard to undo, or when two readings are plausible; a word like longer, smaller, faster, more or "
-            "a few with no number leaves that setting open), do not guess silently: write "
+PROTOCOL = ("When the user's words leave a setting open (a new task or experiment from a short prompt, an experiment "
+            "config or run, results into docs, anything hard to undo, two plausible readings; longer, smaller, faster, "
+            "more or a few with no number), do not guess and change nothing yet: first write "
             "{dir}/intents/<yyyymmdd-hhmm-slug>.mod as JSON {{\"words\": the user's exact words, \"candidates\": 2-3 distinct "
-            "readings [{{\"name\", \"description\", \"weight\": 1-10, \"evidence\", \"differs\": {{setting: value}}, \"scale\" if it differs}}], "
-            "\"settings\": [{{\"key\", \"value\", \"source\": user|default|memory|guess, \"at\": date if memory, \"from\": the "
-            "user's words it comes from or null}}], \"scale\": {{\"pick\": one|sample|full, \"runs\", \"cost\", \"time\"}}, "
-            "\"plan\": [\"prev step\", \"this step\", \"next step\"]}}, then run `{cmd} mod wait <id>` and follow its answer. "
-            "First read the code and the confirmed settings; ask only what they cannot settle. Write every field in English (translate the user's words if they are in another language). Never mark a reading "
-            "as recommended. Skip this for clear small edits.")
+            "readings [{{\"name\", \"description\", \"weight\": 1-10, \"evidence\", \"differs\": {{setting: concrete value}}, "
+            "\"scale\" if it differs}}], \"settings\": [{{\"key\", \"value\", \"source\": user|default|memory|guess, \"at\": "
+            "date if memory, \"from\": the user's words it comes from or null}}], \"scale\": {{\"pick\": one|sample|full, "
+            "\"runs\", \"cost\", \"time\"}}, \"plan\": [\"prev step\", \"this step\", \"next step\"]}}, then run `{cmd} mod wait "
+            "<id>` and follow its answer. Read the code and the confirmed settings first; ask only what they cannot settle. "
+            "Values are concrete (a number, not \"a smaller value\"). Every field in English. Never mark a reading as "
+            "recommended. Skip this for clear small edits.")
 
 
 def context(root, cmd="modfence"):
