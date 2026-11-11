@@ -40,13 +40,15 @@ async function boot() {
   $("#picker").value = S.p;
   await loadGraph(true);
   pollFence(); setInterval(pollFence, 3000); // ponytail: a 3 s poll of one small file; an event stream when it matters
+  pollIntents(); setInterval(pollIntents, 5000);
 }
 
 async function loadGraph(fit) {
-  if (!S.full) $("#stats").textContent = "Reading the project…"; // a big project's first scan takes seconds
+  if (!S.full) $("#loading").hidden = false; // a big project's first scan takes seconds: say so where the map will be
   S.full = await api(`/api/graph?${q()}`);
   try { S.roles = await api(`/api/roles?${q()}`); } catch { S.roles = null; }
   S.sig = JSON.stringify(S.full) + JSON.stringify(S.roles); S.loadedAt = Date.now(); // a rescan redraws only on a change
+  $("#loading").hidden = true;
   if (!S.level) S.level = S.roles?.areas?.length ? "areas" : S.roles && S.roles.roles.length ? "roles" : "modules";
   regroup();
   if (S.roles && S.roles.status === "none" && S.full.modules.length > ROLE_AT && S.claude && !S.proposed) { S.proposed = true; proposeRoles(); }
@@ -355,7 +357,7 @@ function renderCrumbs() {
       if (S.level !== "areas" && A) h += `<span>/</span>` + step(n++, A.name, `data-area="${esc(A.id)}"`, S.level === "roles");
     } else h = step(n++, "Roles", 'data-lv="roles"', S.level === "roles");
     if (S.level === "parts") h += `<span>/</span>` + step(n, S.role === "?" ? "not placed yet" : rname(S.role), `data-role="${esc(S.role)}"`, true);
-    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "module")}</em>${S.roles.modules_file ? `<span class="act q" title="The modules come from MODULES.md at the project root: edit it in your editor, and the map follows">MODULES.md</span>` : `<button type="button" class="act" data-savemods title="Write these modules to MODULES.md at the project root: the fence and your agent read it, and you edit it as text">Save as MODULES.md</button>`}`;
+    if (S.level === "areas") h += `<em title="${esc(S.roles.areas_how || "")}">${plural(S.roles.areas.length, "module")}</em>${S.roles.modules_file ? `<a class="act q" href="/mod.html#p=${S.p}&v=project" title="Rename, split or merge the modules on the Intents page">Edit modules</a>` : `<button type="button" class="act" data-savemods title="Keep these modules for the fence and your agent (in .mod/project.mod)">Save modules</button>`}`;
     if (S.hiddenLinks && !S.dense) h += `<em title="Strongest ${KEEP_LINKS} links per box">${S.hiddenLinks} weak links hidden</em>`;
     if (S.level === "roles" && !A) h += `<em title="${esc(S.roles.how || "")}">${S.roles.status === "confirmed" ? "Confirmed" : "Proposed"}</em>`
 ;
@@ -367,7 +369,7 @@ function renderCrumbs() {
   c.querySelectorAll("[data-lv]").forEach((b) => (b.onclick = () => { S.level = b.dataset.lv; regroup(); fitView(); }));
   c.querySelectorAll("[data-role]").forEach((b) => (b.onclick = () => openRole(b.dataset.role)));
   c.querySelectorAll("[data-area]").forEach((b) => (b.onclick = () => openArea(b.dataset.area)));
-  $("[data-savemods]", c)?.addEventListener("click", () => rolesDo("save_modules", {}, "Saved MODULES.md at the project root. Edit it as text; the map and the fence follow it."));
+  $("[data-savemods]", c)?.addEventListener("click", () => rolesDo("save_modules", {}, "Modules saved. Edit them any time on the Intents page; the map and the fence follow."));
 }
 
 const inSet = (set, id) => set.has(id) || !!(mod(id)?.members && mod(id).members.some((x) => set.has(x))) || !!(id.includes(":") && mod(id)?.files.some((f) => set.has(f)));
@@ -1214,6 +1216,15 @@ function showRunbar() { // while your agent works: one line at the top; a click 
 /* The task's fence (jit.py, golden rule 4): set when you give your agent a task in Claude Code. The bar says which
    module, for which task, because of which functions, and what else it could have been; a click switches. A file the
    agent was blocked from is a request: allow its module, or refuse. */
+async function pollIntents() { // the header link says when your agent waits for you on the Intents page
+  if (document.hidden) return;
+  let r;
+  try { r = await api(`/api/mod?${q()}`); } catch { return; }
+  const n = r.intents.filter((i) => i.status === "waiting").length, a = $("#intents");
+  a.href = `/mod.html#p=${S.p}`;
+  a.classList.toggle("waiting", n > 0);
+  a.textContent = n ? `Your agent waits (${n})` : "Intents";
+}
 async function pollFence() {
   if (document.hidden || !S.full) return;
   let r;
@@ -1323,7 +1334,7 @@ async function switchProject(p) {
   S.p = p; $("#picker").value = p; store.set("modfence.project", p); location.hash = `p=${p}`;
   if (S.job) { clearInterval(S.job.poll); S.job = null; showRunbar(); } // found again by restoreHand when you come back
   unpick(); closePanel(); S.marks = { changed: new Set(), ripple: new Set(), stats: {} }; S.userCam = false; S.focus = ""; S.level = null; S.role = null; S.area = null; S.proposed = false; S.proposedAreas = false;
-  S.fence = null; S.fenceKey = null; showFence();
+  S.fence = null; S.fenceKey = null; showFence(); pollIntents();
   await loadGraph(true);
   pollFence();
 }

@@ -161,8 +161,10 @@ addEventListener("keydown", (e) => {
   S.p = projects[+hp.get("p")] ? +hp.get("p") : 0;
   $("#picker").innerHTML = projects.map((p) => `<option value="${p.i}">${esc(p.name)}</option>`).join("");
   $("#picker").value = S.p;
+  document.querySelector(".brand a").href = `/#p=${S.p}`;
   $("#picker").onchange = (e) => { S.p = +e.target.value; location.hash = `p=${S.p}`; S.cur = null; S.seen.clear(); load(true); };
   $("#proj").onclick = () => select("project");
   await load(true);
+  if (hp.get("v") === "project") select("project");
   setInterval(() => { if (!document.hidden) load(false); }, 2000); // ponytail: a 2 s poll of small files; an event stream if it ever matters
 })();

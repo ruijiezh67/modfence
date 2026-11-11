@@ -493,8 +493,11 @@ def serve(projects, port=8765, claude_bin=None, open_browser=True):
     print(f"  claude: {app.claude or 'NOT FOUND (set CLAUDE_BIN)'}", flush=True)
     def warm():  # parse and hash every project once, so the first graph and the first run start fast
         for p in app.projects:
-            analyze.analyze(p)
-            analyze.snapshot(p)
+            try:
+                roles.view(p, analyze.analyze(p))  # the slowest first load: every file's strings for runtime links
+                analyze.snapshot(p)
+            except Exception:  # a project that cannot be read shows its error when opened
+                pass
     threading.Thread(target=warm, daemon=True).start()
     if open_browser and not in_vscode():
         import webbrowser

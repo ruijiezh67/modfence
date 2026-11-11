@@ -124,7 +124,7 @@ kbd { font: 11.5px var(--mono); padding: 0 5px; border: 1px solid var(--line-2);
 .tabs button:hover { color: var(--text); }
 .tabs button[aria-pressed="true"] { color: var(--text); }
 .tabs button kbd { margin-left: 6px; font-size: 10.5px; opacity: 0.8; }
-.search { position: relative; margin-left: auto; display: flex; align-items: center; }
+.search { position: relative; display: flex; align-items: center; }
 .search input { width: 220px; height: 32px; border: 1.5px solid var(--line-2); border-radius: var(--r); padding: 0 30px 0 10px; background: var(--surface-2); font-family: var(--mono); font-size: 13px; }
 .search input:focus { background: var(--surface); }
 .search kbd { position: absolute; right: 8px; pointer-events: none; }
@@ -147,6 +147,15 @@ kbd { font: 11.5px var(--mono); padding: 0 5px; border: 1px solid var(--line-2);
 .runbar .mono { font-size: 12.5px; }
 .runbar button { margin-left: auto; height: 24px; font-size: 12px; }
 .runbar.still::after { display: none; }
+.intents { margin-left: auto; margin-right: 10px; font-size: 13px; font-weight: 600; color: var(--text-2); text-decoration: none; padding: 4px 8px; border-radius: var(--r); }
+.intents:hover { background: var(--sunken); color: var(--text); }
+.intents.waiting { color: var(--fence-ink); }
+.intents.waiting::before { content: "● "; }
+.loading { position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; text-align: center; color: var(--text-2); pointer-events: none; }
+.loading[hidden] { display: none; }
+.loading b { font-size: 17px; color: var(--text); }
+.loading b::after { content: "…"; animation: blink 1.6s ease-in-out infinite; }
+.loading span { font-size: 13px; max-width: 36ch; }
 .runbar.still .dot { animation: none; }
 .runbar .others, .runbar .ask { display: inline-flex; gap: 6px; align-items: center; margin-left: 12px; }
 .runbar .others button, .runbar .ask button { margin-left: 0; }
