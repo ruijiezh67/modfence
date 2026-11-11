@@ -924,6 +924,8 @@ class JitTest(unittest.TestCase):
         self.assertEqual((f["files"], f["by"]), (["@module:core"], "jit"))
         self.assertFalse(os.path.exists(os.path.join(self.d, ".claude")), "the plugin's own hook enforces it: no settings written")
         self.assertIsNotNone(scope_guard.decide({"tool_name": "Edit", "tool_input": {"file_path": "app/api/handlers.py"}}, self.d, f["files"]))
+        self.assertIsNone(scope_guard.decide({"tool_name": "Write", "tool_input": {"file_path": ".mod/intents/x.mod"}}, self.d, f["files"]),
+                          "an intent can always be written: TinyDB K3, the fence blocked the question and the agent guessed")
         self.assertEqual(self.hook("continue"), "", "a follow-up names nothing: the fence it has stays")
         self.assertEqual(load(self.fence)["files"], ["@module:core"])
 
@@ -951,6 +953,15 @@ class JitTest(unittest.TestCase):
         task = "add an update operation toggle(field) that flips a boolean field"
         self.assertEqual(self.jit.choose(self.jit.candidates(self.d, task + ". Do not run the tests; only read and edit the code.")),
                          self.jit.choose(self.jit.candidates(self.d, task)))
+
+    def test_a_constant_is_a_place_and_queries_is_query(self):
+        # TinyDB K1: "make the query cache bigger" is `default_query_cache_capacity = 10` in table.py; it fenced queries.py
+        write(os.path.join(self.d, "MODULES.md"), "# Modules\n\n## core\nTables.\n- app/core/\n\n## query\nQuery interface.\n- app/queries.py\n")
+        write(os.path.join(self.d, "app/core/table.py"), "class Table:\n    default_query_cache_capacity = 10\n\n    def insert(self, doc):\n        return doc\n")
+        write(os.path.join(self.d, "app/queries.py"), "class QueryInstance:\n    def test(self, value):\n        return value\n")
+        c = self.jit.candidates(self.d, "make the query cache bigger")
+        self.assertIn("core", self.jit.choose(c))
+        self.assertIn("default_query_cache_capacity", [w[2] for x in c for w in x["where"]])
 
     def test_where_to_start_weighs_rare_words(self):
         # TinyDB T2: count, _read_table and _update_table were all "likely starts"; the agent searched all three

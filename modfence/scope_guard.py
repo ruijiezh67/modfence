@@ -59,6 +59,8 @@ def allowed(path, root, scope):
     rel = _rel(path, root)
     if rel is None:
         return False
+    if rel.startswith(".mod/intents/"):  # where the agent asks the person: a fence that blocks it turns a stop into a guess
+        return True
     for s in scope:
         if s.startswith("@module:"):
             if _is_test(rel) or _module_owner(root, rel) == s[len("@module:"):]:

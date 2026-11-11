@@ -129,8 +129,8 @@ STOP = set("the and for with that this from into when what make keep add use not
 def _words(text):
     """The stems of the words in a text or an identifier: camelCase and snake_case split, 6 letters kept."""
     text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text).replace("_", " ").lower()
-    return {(w[:-1] if len(w) > 4 and w[-1] == "s" and w[-2] != "s" else w)[:6]  # fields ~ field, not class ~ clas
-            for w in re.findall(r"[a-z]{3,}", text) if w not in STOP}
+    return {(w[:-3] + "y" if len(w) > 4 and w.endswith("ies") else w[:-1] if len(w) > 4 and w[-1] == "s" and w[-2] != "s" else w)[:6]
+            for w in re.findall(r"[a-z]{3,}", text) if w not in STOP}  # fields ~ field, queries ~ query, not class ~ clas
 
 
 LOCATE = 5  # ponytail: the five most likely places; a longer list is a search the agent would do better itself

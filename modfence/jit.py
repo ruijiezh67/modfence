@@ -8,7 +8,9 @@ import json, math, os, re, sys
 from . import analyze, mod, modules, scope_guard
 from .runner import _words, is_test
 
-DEF = re.compile(r"^[ \t]*(?:async[ \t]+)?(?:def|class)[ \t]+(\w+)", re.M)
+DEF = re.compile(r"^[ \t]*(?:async[ \t]+)?(?:def|class)[ \t]+(\w+)|^(?: {4})?([A-Za-z_]\w*)[ \t]*(?::[^=\n]+)?=(?!=)", re.M)
+# a def, a class, or a constant at module or class level (TinyDB: "make the query cache bigger" is the class attribute
+# default_query_cache_capacity = 10, which no function's name holds)
 MIN_SCORE = 8      # ponytail: below this the task names nothing in the code; calibrated on the rich and lab tasks
 SECOND = 0.5       # a second module at half the first's score is fenced too: a wrong deny costs the whole task (TinyDB T3,
                    # rich r3: a catch-all module outscored the right one 46 to 26), a looser fence costs little
@@ -38,7 +40,7 @@ def candidates(root, task, mods=None, k=3):
         except (OSError, ValueError):
             continue
         in_file = 3 * len(q & _words(os.path.basename(path)))
-        defs = [(d.start(), d.group(1)) for d in DEF.finditer(text)]
+        defs = [(d.start(), d.group(1) or d.group(2)) for d in DEF.finditer(text)]
         for i, (at, name) in enumerate(defs):
             body = text[at:defs[i + 1][0] if i + 1 < len(defs) else len(text)]
             nw, bw = q & _words(name), q & _words(body)
