@@ -223,7 +223,8 @@ def wait(root, iid, seconds=WAIT_S, poll=1.0):
 # ---------- what an agent reads instead of conversation memory ----------
 PROTOCOL = ("When the user states an intent whose settings they did not all give (a new task or experiment from a short "
             "prompt, before writing an experiment config, before running an experiment, before writing results into docs, "
-            "before something hard to undo, or when two readings are plausible), do not guess silently: write "
+            "before something hard to undo, or when two readings are plausible; a word like longer, smaller, faster, more or "
+            "a few with no number leaves that setting open), do not guess silently: write "
             "{dir}/intents/<yyyymmdd-hhmm-slug>.mod as JSON {{\"words\": the user's exact words, \"candidates\": 2-3 distinct "
             "readings [{{\"name\", \"description\", \"weight\": 1-10, \"evidence\", \"differs\": {{setting: value}}, \"scale\" if it differs}}], "
             "\"settings\": [{{\"key\", \"value\", \"source\": user|default|memory|guess, \"at\": date if memory, \"from\": the "
