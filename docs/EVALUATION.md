@@ -296,9 +296,10 @@ real past fixes (the commit's parent, the commit's own tests or its files as the
 | C (rich round 2) | rich, Sonnet 5.5, the fence line in the user's prompt | 5 x 3 x 4 arms | $0.194, 61 s | line + 3 likely places: $0.146 (-25%), 33 s (-46%) | tests 15/15 vs 14/15 |
 | D (TinyDB) | TinyDB (4,900 lines), Haiku 5.5, the plugin, edit-only | 3 x 3 | $0.0079, 19.4 s | $0.0081 (+3%), 22.3 s (+15%) | diffs read by hand, all right after the fix below |
 | E (rich round 3) | rich, Haiku 5.5, the plugin as shipped, edit-only | 5 x 3 | $0.0111, 32.1 s | $0.0114 (+3%), 36.6 s (+14%) | 15/15 edited the commit's files |
+| F (rich round 3, again) | as E, with faster hooks and rarity-ranked pointers (28991a2), arms interleaved | 5 x 2 | $0.0109, 31.8 s | $0.0114 (+5%), 37.3 s (+17%) | 10/10 edited the commit's files |
 
 Round C is the only saving, and plain cost 70% more in it than in round B, so it holds within that round only. Rounds
-D and E, with the plugin as it ships (the fence picked from the task by a hook), saved nothing; "edit-only" means no
+D, E and F, with the plugin as it ships (the fence picked from the task by a hook), saved nothing; "edit-only" means no
 Bash and nothing run, because running third-party code was not allowed in this environment (tests: N/A).
 
 What the rounds did show:
@@ -311,7 +312,10 @@ What the rounds did show:
 - **Hooks cost time on Windows:** about 0.6 s each (bash about 0.2 s, Python start about 0.3 s; the work itself 0.03 to
   0.16 s), 4 to 5 per task. `python -S` saves about 50 ms each.
 - **A pointer can mislead.** The "likely start" listed functions that scored close to the right one, and the agent
-  searched them (one extra turn). A rarity-weighted score would separate them; not done.
+  searched them (one extra turn); it is now ranked by word rarity (28991a2). In rich r1 the first module (styling, from
+  the words "style" and "background") still sent the agent to style.py before console.py.
+- **Fenced runs did more of the commit.** In r3 the fenced agent changed `_wrap.py`, `cells.py` and a test (the
+  commit's own three files) in most runs; plain changed `_wrap.py` alone more often. Part of the extra cost is extra work.
 
 ## 10. Does stopping at a decision point save rework? (2026-11-11)
 
@@ -324,15 +328,18 @@ in the same session. Mod arm: the person picks the reading that holds the goal, 
 
 | Arm | Runs | Right in the end | Corrections | Mean cost | Mean time |
 |---|---|---|---|---|---|
-| plain | 9 | 9/9 | 9 | $0.0141 | 36.6 s |
-| with the plugin | 9 | 9/9 | 2 | $0.0109 (-23%) | 38.1 s |
+| plain | 9 | 9/9 | 9 | $0.0149 | 39.7 s |
+| with the plugin | 9 | 9/9 | 0 | $0.0088 (-41%) | 35.5 s (-11%) |
 
-Every plain first guess missed (epochs 50 or 100, lr 0.001, "already fast"). The plugin's agent stopped in 7 of 9 runs
-and was right first time in all 7; twice it did not stop on "make the training faster" and then cost more than plain.
-A plain run that guesses right costs $0.0062, so stopping pays only when the agent would guess right less than about
-41% of the time. The person's time on the page is not counted. Before a protocol change (6eb826a: "a word like
-longer, smaller, faster ... with no number leaves that setting open"), the agent did not stop on "use a smaller
-learning rate" at all.
+Every plain first guess missed (epochs 50 or 100, lr 0.001, a guessed speed-up), so every plain run needed one
+correction. The plugin's agent stopped in 9 of 9 runs and was right first time in all 9 (3 picks, 6 own words: no
+reading held epochs 40 or 2). A plain run that guesses right costs $0.0066, so stopping pays when the agent would guess
+right less than about 73% of the time. The person's time on the page is not counted.
+
+How it got here: before 6eb826a ("longer, smaller, faster ... with no number leaves that setting open") the agent did
+not stop on "use a smaller learning rate"; before eae4edc ("change nothing yet") it once removed the toy's sleep for
+"make the training faster" and only then asked. An earlier round (-23%) is void for one task: the harness did not
+restore the toy script, which an agent had edited.
 
 ## How modfence compares with popular tools
 
