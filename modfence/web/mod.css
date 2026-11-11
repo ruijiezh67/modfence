@@ -135,8 +135,9 @@ kbd { font: 600 11px var(--mono); border: 1px solid currentColor; border-radius:
 .done { margin-top: 14px; padding: 10px 12px; border-left: 3px solid var(--ok); background: var(--surface); font-size: 14px; }
 
 /* project: modules and settings */
-.mods { display: grid; gap: 10px; max-width: 760px; }
-.modc { border: 1.5px solid var(--line-2); border-radius: 8px; background: var(--surface); padding: 10px 12px; display: grid; gap: 6px; }
+.mods { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); } /* dense: all modules on one screen */
+.modc { border: 1.5px solid var(--line-2); border-radius: 8px; background: var(--surface); padding: 8px 10px; display: grid; gap: 4px; align-content: start; }
+.modc textarea.purpose { font: 13px/1.45 var(--font); color: var(--text-2); resize: none; field-sizing: content; min-height: 2.6em; }
 .modc input, .modc textarea { width: 100%; font: inherit; color: var(--text); background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 3px 6px; }
 .modc input:hover, .modc textarea:hover, .modc input:focus, .modc textarea:focus { border-color: var(--line-2); background: var(--bg); }
 .modc .name { font-weight: 700; font-size: 15px; } .modc textarea { font: 12.5px/1.5 var(--mono); resize: vertical; }

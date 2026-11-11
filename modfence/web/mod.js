@@ -216,7 +216,7 @@ function drawProject() {
   const p = S.data.project || { modules: [], settings: [] }, mods = p.modules || [], sets = p.settings || [];
   $("#main").innerHTML = `<p class="quote">Project</p><p class="counts">${mods.length} modules · ${sets.length} settings you confirmed (never asked again)</p>`
     + `<section><h3>Modules</h3><div class="mods">${mods.map((m, k) => `<div class="modc" data-k="${k}"><input class="name" value="${esc(m.name)}" aria-label="Module name">`
-      + `<input class="purpose" value="${esc(m.purpose || "")}" placeholder="What it does, in one line" aria-label="Purpose">`
+      + `<textarea class="purpose" rows="2" placeholder="What it does, in one line" aria-label="Purpose">${esc(m.purpose || "")}</textarea>`
       + `<textarea class="paths" rows="${Math.min(6, Math.max(2, m.paths.length))}" aria-label="Folders and files, one per line">${esc(m.paths.join("\n"))}</textarea></div>`).join("")
       || `<p class="empty">No modules yet: open the map and save its modules.</p>`}</div>`
     + `<div class="row"><button type="button" class="btn" id="addm">Add a module</button><button type="button" class="go" id="savem">Save modules</button></div></section>`
