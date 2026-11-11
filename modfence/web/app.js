@@ -237,11 +237,10 @@ function pick(id) { // a click only selects; the card below says what it is and 
   const mine = new Set(m.files), shared = [...new Set(S.full.edges.flatMap((e) => e.receipts).filter((r) => mine.has(r.file) && kindOf(r.target_file) === "shared").map((r) => r.target_file))].sort();
   const doc = folder ? "" : m.doc || mdoc(m);
   const fdoc = (f) => S.full.files[f]?.doc || "";
-  card.innerHTML = `<div class="pk"><b>${esc(name)}</b></div>`
+  card.innerHTML = `<div class="pk"><b>${esc(name)}</b><button type="button" class="btn quiet" data-x aria-label="Close">×</button></div>`
     + `<div class="pm mono">${plural(m.files.length, "file")} · ${m.lines.toLocaleString()} ln</div>`
     + (doc ? `<p>${esc(doc)}</p>` : `<p class="none">No description in the code.</p>`)
     // golden rule 3: say what to change right here; the box is the fence, the map stays where it is
-    + (folder || id === "role:?" ? "" : `<p class="meta">To change it, just give your agent the task: the fence picks this module when the task needs it.</p>`)
     + `<div class="pa">${role || folder ? `<button type="button" class="btn" data-open>${area ? "Open roles" : role ? "Open parts" : "Open folder"} ▸</button>` : ""}</div>`
     + (out.length ? `<h4>Uses <i>${out.length}</i></h4><ul class="pl">${out.map((e) => link(e, e.target)).join("")}</ul>` : "")
     + (inn.length ? `<h4>Used by <i>${inn.length}</i></h4><ul class="pl">${inn.map((e) => link(e, e.source)).join("")}</ul>` : "")
@@ -255,7 +254,7 @@ function pick(id) { // a click only selects; the card below says what it is and 
   if (opening && !S.userCam) fitView();
   card.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => pick(b.dataset.go)));
   $("[data-open]", card)?.addEventListener("click", () => { unpick(); area ? openArea(id.slice(5)) : role ? openRole(id.slice(5)) : (S.focus = id.slice(0, -1), regroup(), fitView()); });
-  $("[data-open]", card)?.focus();
+  $("[data-x]", card).onclick = () => { unpick(); document.querySelector(`.node[data-id="${CSS.escape(id)}"]`)?.focus(); };
   paintSelection();
 }
 function unpick() { const was = !$("#pick").hidden; S.picked = null; $("#pick").hidden = true; paintSelection(); if (was && !S.userCam && !document.body.classList.contains("panel-open")) fitView(); }
@@ -693,7 +692,7 @@ function paintSelection(hover) {
     const tag = $("[data-tag]", n);
     const d = diffTag(id);
     tag.setAttribute("class", `tag ${d ? "plus" : fenced(id) ? "fence" : ""}`);
-    tag.textContent = d || (fenced(id) ? "editable" : "");
+    tag.textContent = d || (fenced(id) ? "editable" : focus && rel.dep.has(id) ? "selected uses" : focus && rel.use.has(id) ? "uses selected" : "");
     n.setAttribute("aria-label", `Module ${shown(id)}, ${plural(m.files.length, "file")}, ${m.lines} lines${stateWords(id, rel, focus).length ? ", " + stateWords(id, rel, focus).join(", ") : ""}`);
   });
   document.querySelectorAll("#edges .flow").forEach((f) => f.remove());
@@ -717,7 +716,7 @@ function hoverNode(id, on) {
 }
 function renderLegend(focus) {
   const items = [];
-  if (focus) items.push(["var(--select)", "", "selected"], ["var(--dep)", "", "uses"], ["var(--use)", "", "used by"]);
+  if (focus) items.push(["var(--select)", "", "selected"], ["var(--dep)", "", "selected uses"], ["var(--use)", "", "uses selected"]);
   if (S.free && S.graph.edges.some((e) => e.kind)) items.push(["var(--text-3)", "line", "imports"], ["var(--text-3)", "dash", "calls over HTTP or starts"], ["var(--text-3)", "dashdot", "copied code"], ["var(--text-3)", "dot", "changed together (git)"]);
   if ((S.selected && !S.readOnly) || S.fenceOn) items.push(["var(--fence)", "hatch", "editable (in the fence)"]);
   if (S.marks.changed.size) items.push(["var(--ok)", "", "changed by the last run"]);
@@ -1247,9 +1246,11 @@ function showFence() {
   const cands = f.candidates || [], held = (c) => f.files.includes("@module:" + c.module);
   const why = cands.filter(held).map(names).join("; "), others = cands.filter((c) => !held(c));
   bar.onclick = null;
-  bar.innerHTML = `<span class="dot" aria-hidden="true"></span><span>Fence <b>${esc(f.label || f.files.join(", "))}</b>${f.task ? ` for “${esc(clip(f.task, 70))}”` : ""}${why ? ` · because ${esc(why)}` : ""}</span>`
-    + (others.length ? `<span class="others">other:${others.map((c) => ` <button type="button" class="lk" data-to="${esc(c.module)}" title="Fence this task to ${esc(c.module)} instead (${esc(names(c))})">${esc(c.module)}</button>`).join("")}</span>` : "")
-    + (S.fence.asks || []).map((a, i) => `<span class="ask">asks to edit <span class="mono">${esc(a)}</span> <button type="button" class="btn primary" data-allow="${i}">Allow ${S.fence.owners[a] ? "module " + esc(S.fence.owners[a]) : "this file"}</button><button type="button" class="btn quiet" data-refuse="${i}">Refuse</button></span>`).join("");
+  // requests first (the one action that matters), then where the agent may edit, then the switch; the evidence is on hover
+  bar.innerHTML = (S.fence.asks || []).map((a, i) => `<span class="ask">Your agent asks to edit <span class="mono">${esc(a)}</span> <button type="button" class="btn primary" data-allow="${i}">Allow ${S.fence.owners[a] ? "module " + esc(S.fence.owners[a]) : "this file"}</button><button type="button" class="btn quiet" data-refuse="${i}">Refuse</button></span>`).join("")
+    + `<span class="dot" aria-hidden="true"></span><span role="status" title="${esc(why ? "Picked from your task's words; it matched " + why : "")}">Agent may edit <b>${esc(f.label || f.files.join(", "))}</b>${f.task ? ` · task “${esc(clip(f.task, 60))}”` : ""}</span>`
+    + (others.length ? `<span class="others">Switch to:${others.map((c) => ` <button type="button" class="lk" data-to="${esc(c.module)}" title="Fence this task to ${esc(c.module)} instead (${esc(names(c))})">${esc(c.module)}</button>`).join("")}</span>` : "");
+  document.body.style.setProperty("--runbar-h", bar.offsetHeight + "px"); // the map starts below the bar, however tall it wrapped
   const set = async (body, ok) => { try { await api(`/api/fence/set?${q()}`, body); toast(ok); S.fenceKey = null; pollFence(); } catch (e) { toast(e.message, false); } };
   bar.querySelectorAll("[data-to]").forEach((b) => (b.onclick = () => set({ scope: ["@module:" + b.dataset.to] }, `This task is now fenced to ${b.dataset.to}. Tell your agent if it already started.`)));
   bar.querySelectorAll("[data-allow]").forEach((b) => (b.onclick = () => { const a = S.fence.asks[+b.dataset.allow], o = S.fence.owners[a];
