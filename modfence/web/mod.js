@@ -221,6 +221,7 @@ function habits() { // Lam: people confirm quickly unless a reading is clearly o
     + cell("picked the first one shown", timed.length ? `${first}/${timed.length}` : "N/A", timed.length >= 3 && first / timed.length > 0.6 ? "more than chance: read before you pick" : "")
     + cell("changed a value or a reading", `${c((i) => i.choice.name || i.choice.differs || Object.values(i.settings || []).some((s) => s.edited))}/${n}`)
     + cell("wrote their own", `${c((i) => i.choice.kind === "own")}/${n}`)
+    + cell("answered in the chat", `${c((i) => i.choice.kind === "chat")}/${n}`)
     + cell("median time to answer", ms.length ? `${Math.round(ms[ms.length >> 1] / 1000)} s` : "N/A")
     + `</div></section>`;
 }
