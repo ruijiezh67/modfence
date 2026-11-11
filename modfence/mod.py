@@ -185,9 +185,10 @@ def reply(intent):
 
 
 def undelivered(root):
-    """The newest intent's answer if its agent never read it (it stopped waiting first), marked as read; else None."""
+    """The newest intent's answer if its agent never read it (it stopped waiting, or had no shell to wait with),
+    marked as read; else None."""
     for i in intents(root)[:1]:
-        if i.get("status") == "answered" and not i.get("delivered") and i.get("waiting_at"):
+        if i.get("status") == "answered" and not i.get("delivered"):  # it stopped waiting, or never could (no shell)
             iid = i.pop("id")
             i.pop("mtime", None)
             save_intent(root, iid, {**i, "delivered": True})
@@ -224,14 +225,14 @@ def wait(root, iid, seconds=WAIT_S, poll=1.0):
 
 # ---------- what an agent reads instead of conversation memory ----------
 PROTOCOL = ("When the user's words leave a setting open (a new task or experiment from a short prompt, an experiment "
-            "config or run, results into docs, anything hard to undo, two plausible readings; longer, smaller, faster, "
-            "more or a few with no number), do not guess and change nothing yet: first write "
+            "config or run, results into docs, anything hard to undo, two plausible readings; a comparative like bigger, "
+            "smaller, longer, shorter, faster, more or fewer with no number), do not guess and change nothing yet: first write "
             "{dir}/intents/<yyyymmdd-hhmm-slug>.mod as JSON {{\"words\": the user's exact words, \"candidates\": 2-3 distinct "
             "readings [{{\"name\", \"description\", \"weight\": 1-10, \"evidence\", \"differs\": {{setting: concrete value}}, "
             "\"scale\" if it differs}}], \"settings\": [{{\"key\", \"value\", \"source\": user|default|memory|guess, \"at\": "
             "date if memory, \"from\": the user's words it comes from or null}}], \"scale\": {{\"pick\": one|sample|full, "
             "\"runs\", \"cost\", \"time\"}}, \"plan\": [\"prev step\", \"this step\", \"next step\"]}}, then run `{cmd} mod wait "
-            "<id>` and follow its answer. Read the code and the confirmed settings first; ask only what they cannot settle. "
+            "<id>` and follow its answer (no shell: end your turn; the answer comes with the next message). Read the code and the confirmed settings first; ask only what they cannot settle. "
             "Values are concrete (a number, not \"a smaller value\"). Short: a name of 2-4 words, one line of description and of "
             "evidence. Every field in English. Never mark a reading as "
             "recommended. Skip this for clear small edits.")
