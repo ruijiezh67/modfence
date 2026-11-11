@@ -154,7 +154,7 @@ def answer(root, iid, choice, edits=None):
 
 def reply(intent):
     """What the waiting agent reads: the reading to follow and the settings to use, nothing else."""
-    c = intent["choice"]
+    c, vals = intent["choice"], {}
     if c["kind"] == "pick" and c.get("name"):  # Lam's Edit: the person's wording replaces the agent's, verbatim
         head = f'The user edited a reading; use it verbatim: "{c["name"]}"' + (f' ({c["description"]})' if c.get("description") else "")
     elif c["kind"] == "pick":
@@ -175,7 +175,8 @@ def reply(intent):
             f'{intent["candidates"][int(k)]["name"]}={w}' for k, w in c["weights"].items() if 0 <= int(k) < len(intent["candidates"]))
     if c.get("deleted"):
         head += ". Readings the user deleted as wrong: " + "; ".join(intent["candidates"][k]["name"] for k in c["deleted"] if 0 <= k < len(intent["candidates"]))
-    rows = [f'{s["key"]}={s["value"]}' + (" (changed by the user)" if s.get("edited") else "") for s in intent.get("settings") or []]
+    rows = [f'{s["key"]}={s["value"]}' + (" (changed by the user)" if s.get("edited") else "") for s in intent.get("settings") or []
+            if s["key"] not in vals]  # said once: the picked reading's value is not repeated (or contradicted) here
     return head + ". Settings: " + ("; ".join(rows) or "none") + ". Follow exactly this; ask again only if it turns out impossible."
 
 

@@ -858,6 +858,7 @@ class ModTest(unittest.TestCase):
         self.assertIn("Its values: runs=1; seed=7 (changed by the user)", text, "the picked reading's values travel with it")
         self.assertIn("Scale: one, 1 runs", text, "a reading's own scale beats the intent's")
         self.assertIn("one try=9", text)
+        self.assertEqual(text.count("runs="), 1, "a value is said once, not again under Settings")
         settings = {s["key"]: s for s in mod.load_project(d)["settings"]}
         self.assertEqual((settings["runs"]["value"], settings["runs"]["source"]), ("2", "user"), "confirmed once, for good")
         self.assertNotIn("model", settings, "a default the person did not touch is not a confirmation")
