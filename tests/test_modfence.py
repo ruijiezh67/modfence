@@ -869,7 +869,7 @@ class ModTest(unittest.TestCase):
         mod.answer(d, "r2", {"kind": "pick", "index": 0, "differs": {"seed": "7"}, "weights": {"0": 9}})
         text = mod.wait(d, "r2", seconds=0)[1]
         self.assertIn("Its values: runs=1; seed=7 (changed by the user)", text, "the picked reading's values travel with it")
-        self.assertIn("Scale: one, 1 runs", text, "a reading's own scale beats the intent's")
+        self.assertIn("Scale: one, 1 run.", text, "a reading's own scale beats the intent's")
         self.assertIn("one try=9", text)
         self.assertEqual(text.count("runs="), 1, "a value is said once, not again under Settings")
         mod.save_intent(d, "r3", {**intent, "settings": [{"key": "runs", "value": "3", "source": "default", "from": None},

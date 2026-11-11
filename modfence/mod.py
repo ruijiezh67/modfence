@@ -184,7 +184,7 @@ def reply(intent):
             head += ". Its values: " + "; ".join(f"{k}={v}" + (" (changed by the user)" if k in (c.get("differs") or {}) else "") for k, v in vals.items())
         sc = cand.get("scale") or intent.get("scale")
         if isinstance(sc, dict) and sc.get("pick"):  # an agent once wrote a reading's scale as "10x smaller"
-            head += f'. Scale: {sc["pick"]}' + (f', {sc["runs"]} runs' if sc.get("runs") is not None else "")
+            head += f'. Scale: {sc["pick"]}' + (f', {sc["runs"]} run' + ("" if str(sc["runs"]) == "1" else "s") if sc.get("runs") is not None else "")
     if c.get("weights"):
         head += ". How much each reading matters to the user (1-10): " + "; ".join(
             f'{intent["candidates"][int(k)]["name"]}={w}' for k, w in c["weights"].items() if 0 <= int(k) < len(intent["candidates"]))
