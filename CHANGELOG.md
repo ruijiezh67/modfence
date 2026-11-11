@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Intents page in one column, without weights**, after a design review: the graph's wires said nothing a column does not, and weights read as scores. The map's fence bar leads with the agent's request; boxes say "selected uses" / "uses selected".
 - **Stops only where a guess would cost.** The protocol names the pattern (a comparative like bigger, longer, fewer with no number), says "change nothing yet", and skips code tweaks where any sensible value would do. Measured: -33% to -41% cost on experiment settings (`bench/rework_probe.py`), -8% on TinyDB code constants (no stops).
 - **An open question holds the agent's edits** until the person answers (on the page or in the chat); intents work without a shell; if no page is served, `mod wait` returns at once and the agent says how to answer. The answer never reaches the agent contradicted (shared values only) or as a traceback.
 - **JIT fence picker:** constants at module or class level count; queries ~ query; intent files are always writable. All 11 probe tasks fence the right module. The fence now costs nothing measurable on rich (-1% cost, +3% time).

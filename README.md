@@ -52,7 +52,7 @@ call (through your Claude Code login, cents) to name its modules; everything els
 | **Map** | Your project as at most 7 modules, then roles, then files, drawn from imports, HTTP calls, copied code and git co-change. Every line keeps its evidence (file:line). Python only. |
 | **Just-in-time fence** | A `UserPromptSubmit` hook picks the module(s) from the task; a `PreToolUse` hook blocks edits elsewhere. A fence you set yourself (`/modfence:fence <module>`) is never replaced. |
 | **`.mod` files** | `.mod/project.mod`: modules and the settings you confirmed. `.mod/intents/*.mod`: one open question each. A new or compacted session reads `.mod` (about 440 tokens) instead of conversation memory. Git-ignored unless you share it. |
-| **Intents page** | One screen per decision, keyboard first. Readings follow Michelle Lam's just-in-time objectives (select, edit, weight, delete, write your own); values show their source; your answer habits are counted, so rubber-stamping shows. |
+| **Intents page** | One column per decision, keyboard first. Readings follow Michelle Lam's just-in-time objectives (select, edit a reading or one of its values, delete, write your own; her weights are left out, as they read as scores); values show their source; your answer habits are counted, so rubber-stamping shows. |
 | **Receipt** | `modfence receipt` and the plugin's `Stop` hook: changed modules, users of changed code, broken signatures, new cross-module imports, edits outside the fence. |
 | **Your own tool loop** | `modfence.fence_for(task)` and `modfence.check_edit(path)` give an Agent SDK or raw API loop the same fence. |
 
