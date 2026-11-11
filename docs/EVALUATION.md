@@ -326,20 +326,27 @@ Haiku 5.5, a simulated person whose goal for each task was drawn once with `rand
 (epochs 40; lr 0.005; epochs 2). Plain arm: after a wrong result the person says "Not what I meant: I want KEY=VALUE"
 in the same session. Mod arm: the person picks the reading that holds the goal, else writes it.
 
-| Arm | Runs | Right in the end | Corrections | Mean cost | Mean time |
-|---|---|---|---|---|---|
-| plain | 9 | 9/9 | 9 | $0.0149 | 39.7 s |
-| with the plugin | 9 | 9/9 | 0 | $0.0088 (-41%) | 35.5 s (-11%) |
+Reproduce: `python bench/rework_probe.py --runs 3` (it builds the toy in a temporary folder); results in
+`bench/results/rework.jsonl`. Two rounds, the first from the author's harness on the same toy:
+
+| Round | Arm | Runs | Right in the end | Corrections | Mean cost | Mean time |
+|---|---|---|---|---|---|---|
+| local (eae4edc) | plain | 9 | 9/9 | 9 | $0.0149 | 39.7 s |
+| local (eae4edc) | with the plugin | 9 | 9/9 | 0 | $0.0088 (-41%) | 35.5 s (-11%) |
+| `bench/` (40a0199) | plain | 9 | 9/9 | 8 | $0.0165 | 39.3 s |
+| `bench/` (40a0199) | with the plugin | 9 | 9/9 | 0 | $0.0099 (-40%) | 37.2 s (-5%) |
 
 Every plain first guess missed (epochs 50 or 100, lr 0.001, a guessed speed-up), so every plain run needed one
 correction. The plugin's agent stopped in 9 of 9 runs and was right first time in all 9 (3 picks, 6 own words: no
-reading held epochs 40 or 2). A plain run that guesses right costs $0.0066, so stopping pays when the agent would guess
-right less than about 73% of the time. The person's time on the page is not counted.
+reading held epochs 40 or 2). A plain run that guesses right costs $0.0066 to $0.0079, so stopping pays when the agent
+would guess right less than about 73% to 76% of the time. The person's time on the page is not counted.
 
 How it got here: before 6eb826a ("longer, smaller, faster ... with no number leaves that setting open") the agent did
 not stop on "use a smaller learning rate"; before eae4edc ("change nothing yet") it once removed the toy's sleep for
 "make the training faster" and only then asked. An earlier round (-23%) is void for one task: the harness did not
-restore the toy script, which an agent had edited.
+restore the toy script, which an agent had edited. A `bench/` round before 40a0199 measured -30% with one wrong
+answer: the reply said "use it verbatim: set epochs to 2" and also "Settings: epochs=10", and the agent set 5; the reply
+now never sends a value the readings disagreed on.
 
 ## How modfence compares with popular tools
 
