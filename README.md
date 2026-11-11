@@ -1,7 +1,7 @@
 <h1 align="center">modfence</h1>
 
-<p align="center"><b>Understand your project as modules, then direct the AI one module at a time.</b><br>
-A local map of your code where every box is a fence for your coding agent.</p>
+<p align="center"><b>Module vibe coding for Claude Code.</b><br>
+Each task is fenced to the module it needs, and the agent stops only where it would otherwise guess.</p>
 
 <p align="center">
 <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue"></a>
@@ -10,84 +10,84 @@ A local map of your code where every box is a fence for your coding agent.</p>
 <img alt="Runs locally" src="https://img.shields.io/badge/runs-locally-brightgreen">
 </p>
 
-AI agents now write most of the lines. What you still need to own is the shape: which part does what, what talks to what, and what a change touched. modfence gives you that shape and lets you act on it:
+An agent given a short prompt guesses: which part of the code to touch, how many runs, which settings. When it guesses
+wrong you find out late, after it edited three modules or ran the wrong experiment. modfence works on three things:
 
-- **See** your project as at most 7 functions, then the roles inside each, drawn from your code and git history.
-- **Fence** the agent to one box: it cannot edit, or by default even read, the rest. If it needs more, it asks you.
-- **Review** every run by box and by function: what changed, what uses it, whether the tests passed, and a one-click revert.
+- **Goal drift.** When your words leave a setting open, the agent writes 2-3 readings of what you meant and waits. You pick one on a page, in seconds, instead of reading a long plan.
+- **Scope creep.** Your task picks the module(s) it needs, and a hook blocks edits elsewhere until you allow them.
+- **Comprehension debt.** A map of your project as at most 7 modules, and a receipt at every stop: what changed, what uses it, what may break.
+
+The goal behind all three: the same coding goal for fewer tokens and less time. Whether it gets there is measured
+below, including the runs where it did not.
 
 ## Quick start
 
 ```bash
 pipx install git+https://github.com/ruijiezh67/modfence   # or: pip install git+https://...
 cd path/to/your/python/project
-modfence
+modfence                                                  # the map, at http://127.0.0.1:8765
 ```
 
-Your browser opens `http://127.0.0.1:8765`. No project at hand? From a clone of this repo, `python -m modfence examples/*` opens five small example projects.
+On the map, *Save modules* writes `.mod/project.mod`. Then add the plugin to Claude Code:
 
-**You need** Python 3.10+. modfence has no dependencies and no API key. You keep working in your own agent (Claude Code, Cursor, Codex); modfence fences it and reviews what it did. With a logged-in [Claude Code](https://code.claude.com) CLI it can also run the agent itself, and the first open of a big project asks one small model call to name the functions (cents); everything else in the map is computed locally.
+```
+/plugin marketplace add ruijiezh67/modfence
+/plugin install modfence@modfence
+```
+
+**You need** Python 3.10+ and Claude Code. No dependencies, no API key. The first open of a project asks one small model
+call (through your Claude Code login, cents) to name its modules; everything else is computed locally.
 
 ## How you work
 
-**1. Pick a box and say what to change.** Click a function, open it, click a role. The side bar says what the box does, what it uses and what uses it, and takes your instruction right there.
-
-**2. Read the lines.** Hover a line for what the link is and what it means for a change: imports, HTTP calls, copied code, or files that change together.
-
-**3. Hand it to your agent, inside the fence.** *Hand to my agent* (Ctrl Enter) sets the fence and copies your instruction with a short fence note. Paste it into Claude Code, Cursor or Codex opened in the project; a hook blocks their edits outside the box, and the map marks the boxes they change as they go. Click *Review changes* when they are done. No agent open? *Run here* starts Claude Code headless: small, self-contained tasks build at once, anything that crosses roles plans first, and if it needs another file it stops and asks, and you allow the file, the whole role, or nothing.
-
-**4. Review the run.** The boxes it changed turn green, the ones using changed code pale yellow, and a line above the map names them. The panel lists the changed functions, the tests it ran, a drafted commit message, and a revert.
+1. **Give Claude Code your task as usual.** The plugin reads it, picks the module it most likely lives in (from the task's words and the code, no model), fences the agent to it and tells it where to start. Claude Code shows you which module, why, and the other candidates. A follow-up like "continue" keeps the fence.
+2. **If the task leaves something open, answer on a page.** The agent writes an intent to `.mod/intents/` and waits. The *Intents* page shows your words, the values you never said (marked as guessed or remembered, with the date), the 2-3 readings side by side with what each costs, and where the agent stopped. Nothing is preselected or ranked. Press 1-3 and Enter, edit a reading or one of its values, or say it in your own words. The agent continues at once; a setting you confirm is never asked again.
+3. **If it needs another module, it asks.** The edit is blocked and shown on the map with *Allow* and *Refuse*.
+4. **When it stops, read the receipt.** The modules it changed, the code that uses them, interfaces it broke and edits outside the fence. A round that broke something is sent back once.
 
 ## What is built in
 
-Each feature serves one of the [golden rules](docs/GOLDEN_RULES.md) the project is designed against.
-
-| | Feature |
+| | |
 |---|---|
-| **Map** | Functions → roles → parts, at most 7 boxes on the first level. Copies of the same code are kept together, so a platform copy of your backend is the same function. Boxes with no link are listed apart, not drawn as vertices. |
-| **Links with evidence** | Imports with file:line receipts, HTTP calls matched to route decorators, copied code, and co-change from git. |
-| **Fence** | A Claude Code hook blocks edits outside the box; sealed runs also hide other modules' code and pass a compact brief of their interfaces instead. While a fence is set, agents you start yourself (Claude Code, Cursor, Copilot, Codex) are fenced too. |
-| **Your own agent** | *Hand to my agent* fences the box for every agent in the project and copies the task; *Review changes* turns whatever it did into a run with changed functions, tests, commit message and revert. *Copy brief for agents* gives a box's interfaces, and the whole map as about 1.5k tokens of text, for any agent. |
-| **Ask before crossing** | Out-of-fence needs become approval cards; approving continues the same conversation. |
-| **Fewer tokens** | Fast path or plan-first per task, a three-sentence lean rule in every edit run, pointers to the project's own docs instead of their text. |
-| **Tests** | The tests covering the fence and its users run before the agent may stop; branching logic added without a test is sent back once. |
-| **History** | Every run is a version: the prompt, changed functions per box, tests, cost, diff, revert, and the names other modules used whose signature changed. |
-| **Project knowledge** | Your markdown docs are placed on the roles they describe; a lesson from a run goes into a doc's *Gotchas* in one click. |
-| **Skills for this project** | Skills from skills.sh matched to the libraries your code actually imports, added to this project only, on a click. |
+| **Map** | Your project as at most 7 modules, then roles, then files, drawn from imports, HTTP calls, copied code and git co-change. Every line keeps its evidence (file:line). Python only. |
+| **Just-in-time fence** | A `UserPromptSubmit` hook picks the module(s) from the task; a `PreToolUse` hook blocks edits elsewhere. A fence you set yourself (`/modfence:fence <module>`) is never replaced. |
+| **`.mod` files** | `.mod/project.mod`: modules and the settings you confirmed. `.mod/intents/*.mod`: one open question each. A new or compacted session reads `.mod` (about 440 tokens) instead of conversation memory. Git-ignored unless you share it. |
+| **Intents page** | One screen per decision, keyboard first. Readings follow Michelle Lam's just-in-time objectives (select, edit, weight, delete, write your own); values show their source; your answer habits are counted, so rubber-stamping shows. |
+| **Receipt** | `modfence receipt` and the plugin's `Stop` hook: changed modules, users of changed code, broken signatures, new cross-module imports, edits outside the fence. |
+| **Your own tool loop** | `modfence.fence_for(task)` and `modfence.check_edit(path)` give an Agent SDK or raw API loop the same fence. |
 
-Details: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
+Details: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md). Design rules: [docs/GOLDEN_RULES.md](docs/GOLDEN_RULES.md).
 
 ## Measured, not claimed
 
-All numbers come from scripts in [`bench/`](bench/) and are written up in [docs/EVALUATION.md](docs/EVALUATION.md), including the ones that showed no gain.
+Write-ups in [docs/EVALUATION.md](docs/EVALUATION.md). The short version, newest first:
 
 | Question | Result |
 |---|---|
-| Does fencing the right modules make cross-module features cheaper? | 4 features, all built correctly, 21% lower cost and 27% less time than handing the whole task to Claude Code (n = 2 each). |
-| Does naming the module save tokens? | 19% lower cost on 4 rich tasks (16 runs per arm). |
-| Does sealing save tokens on small tasks? | No: about 5% more; it is on for safety. |
-| Does the lean rule save tokens? | Output tokens −9%, cost unchanged on small tasks (12 runs per arm). |
-| Can an agent use the compact brief? | 88/88 questions answered from it. |
+| Does the plugin as shipped save cost or time on a larger project? (rich, about 30k lines, Haiku, 5 real past fixes x 3 runs, edit-only) | No. $0.0114 vs $0.0111 per task (+3%), 36.6 s vs 32.1 s (+14%). Every run edited the right files. |
+| Does the plugin save cost or time on a small project? (TinyDB, 4,900 lines, Haiku, 3 tasks x 3 runs, edit-only) | No. Cost equal within noise; 2-3 s slower per task, from hook start-up (about 0.6 s per hook on Windows). |
+| Does a one-line fence with likely places save on a larger one? (rich, Sonnet, 5 tasks x 3 runs) | 25% lower cost and 46% less time than plain Claude Code, 14/15 vs 15/15 passing; but plain cost 70% more in that round than in the round before, and the shipped plugin did not repeat it (first row). The round before: the fence cost 54% more. |
+| Does a fence save on well-specified tasks from a project's history? (private project, Sonnet, 4 tasks x 3) | No: 18-29% more cost. |
+| What does a wrong fence cost? | The task. Twice the module picker chose wrong (TinyDB, rich) and the right edit was denied; both were fixed and are now regression tests. |
 | Do the contract checks raise real alarms? | 8/8 flags on three git histories were real interface changes. |
-| Which grouping keeps real changes inside one box? | Compared on five git histories; the shipped one never produces one-file crumbs. |
 
 ## Limits
 
-- **Python only** for the map; other languages are not analyzed yet.
-- **Claude Code runs the agent.** Other agents are fenced through the same hook while a fence is set, but only their payload shapes are tested.
-- **The hook sees file tools, not shell commands.** A script can still write outside the fence; modfence reports it after the run and offers a revert.
-- **Function names come from a model** and are a proposal: rename, regroup, or move roles.
-- **No user study yet.** Whether the map makes people faster is not measured. That is where you come in.
+- **Python only** for the map.
+- **The fence is a guess from words.** A catch-all module can outscore the right one; a second module is fenced when it scores at least half as well, and a wrong deny is one click to allow.
+- **The hook sees file tools, not shell commands.** A script can still write outside the fence; the receipt reports it.
+- **Hooks cost time:** about 0.6 s each on Windows, 4-5 per task.
+- **No user study yet.**
 
 ## Help test it
 
-modfence is young and needs people using it on real projects. If you try it:
-
-1. Run it on a project you know well and give the agent one real task.
-2. Open a [field report](https://github.com/ruijiezh67/modfence/issues/new?template=field-report.yml): how big the project is, whether the functions made sense, what the agent did, what confused you.
+1. Run it on a project you know well and give your agent one real task.
+2. Open a [field report](https://github.com/ruijiezh67/modfence/issues/new?template=field-report.yml): how big the project is, whether the modules made sense, whether the fence or a question got in the way.
 3. Bugs and ideas: [issues](https://github.com/ruijiezh67/modfence/issues).
 
-**Privacy.** modfence runs on `127.0.0.1` only, has no telemetry, and sends nothing anywhere by itself. Code reaches a model only through your own Claude Code runs. Its state lives in `<project>/.modfence/`, git-ignored. See [SECURITY.md](SECURITY.md).
+**Privacy.** modfence runs on `127.0.0.1` only, has no telemetry, and sends nothing anywhere by itself. Code reaches a
+model only through your own Claude Code. State lives in `<project>/.modfence/` and `<project>/.mod/`, both git-ignored
+by default. See [SECURITY.md](SECURITY.md).
 
 ## Develop
 
@@ -97,7 +97,7 @@ python -m unittest discover -s tests -t .
 python -m modfence examples/*
 ```
 
-The tests call no model: `tests/fake_claude.py` stands in for the CLI. Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [golden rules](docs/GOLDEN_RULES.md) before a change; every change names the rule it serves.
+The tests call no model. Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [golden rules](docs/GOLDEN_RULES.md) before a change.
 
 ## License
 

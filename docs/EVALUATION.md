@@ -1,6 +1,6 @@
 # Evaluation
 
-Three questions, each with its own experiment. All numbers below come from the result files in [`bench/results/`](../bench/results/); anything not measured is written N/A.
+Three questions, each with its own experiment (section 9 adds a fourth: does the fence save tokens and time?). All numbers below come from the result files in [`bench/results/`](../bench/results/); anything not measured is written N/A.
 
 1. **Does the fence keep an agent inside it?** And what does a fenced run cost compared with plain Claude Code and with Claude Code's own permission rules?
 2. **Fence coding vs vibe coding.** Building a whole cross-module feature module by module (each run fenced to one module) versus just asking the model: how often is the feature right, and how many tokens does it take?
@@ -281,6 +281,37 @@ Every edit run now carries `runner.LEAN_RULE`, three sentences in the spirit of 
 | sealed + lean rule | 12 | $0.278 | 1,596 | 27/27 | 12/12 |
 
 Cost moved by 1% (within run-to-run noise at n = 12); output tokens fell 9%; nothing got worse. These tasks are small and fully specified, so there was little to over-build: the ponytail authors' 26% cost saving comes from a benchmark where agents tend to over-engineer. Whether the rule saves cost on open-ended or multi-file tasks here is N/A. It stays on because it costs about 60 tokens and measured no harm. Spend: $6.70.
+
+## 9. Does the fence save tokens and time? (2026-11-09 to 11-11)
+
+The core goal since 2026-11-10 (golden rule 6): the same coding goal for fewer tokens and less time. Five rounds on
+real past fixes (the commit's parent, the commit's own tests or its files as the check), `claude -p`,
+`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`. Means per run. The harnesses are in the author's local archive and not yet in
+`bench/`; the private project's tasks are not published.
+
+| Round | Project, model | Runs | Plain | Fenced | Check |
+|---|---|---|---|---|---|
+| A | a private Python project (about 400 files), Sonnet 5.5 | 4 tasks x 3 | $0.213 | sealed $0.252 (+18%), open $0.274 (+29%) | tests 9/12, 8/12, 8/12 |
+| B (rich round 1) | rich, Sonnet 5.5, fence + note file | 5 x 3 | $0.114, 38 s | $0.176, 55 s | tests 15/15 vs 13/15 (one task fenced to the wrong module) |
+| C (rich round 2) | rich, Sonnet 5.5, the fence line in the user's prompt | 5 x 3 x 4 arms | $0.194, 61 s | line + 3 likely places: $0.146 (-25%), 33 s (-46%) | tests 15/15 vs 14/15 |
+| D (TinyDB) | TinyDB (4,900 lines), Haiku 5.5, the plugin, edit-only | 3 x 3 | $0.0079, 19.4 s | $0.0081 (+3%), 22.3 s (+15%) | diffs read by hand, all right after the fix below |
+| E (rich round 3) | rich, Haiku 5.5, the plugin as shipped, edit-only | 5 x 3 | $0.0111, 32.1 s | $0.0114 (+3%), 36.6 s (+14%) | 15/15 edited the commit's files |
+
+Round C is the only saving, and plain cost 70% more in it than in round B, so it holds within that round only. Rounds
+D and E, with the plugin as it ships (the fence picked from the task by a hook), saved nothing; "edit-only" means no
+Bash and nothing run, because running third-party code was not allowed in this environment (tests: N/A).
+
+What the rounds did show:
+
+- **A wrong fence costs the task.** The picker chose wrong in TinyDB (an "update operation" went to the table code
+  whose functions are named update) and twice in rich (words about how to work, like "do not run the tests, only read
+  and edit the code", moved the fence; a catch-all module outscored the right one 46 to 26). The right edit was denied
+  and the task failed. Fixes: a module's own name and purpose count, plural s is stripped, such words are dropped, and
+  a second module is fenced at half the first's score. Each is a regression test.
+- **Hooks cost time on Windows:** about 0.6 s each (bash about 0.2 s, Python start about 0.3 s; the work itself 0.03 to
+  0.16 s), 4 to 5 per task. `python -S` saves about 50 ms each.
+- **A pointer can mislead.** The "likely start" listed functions that scored close to the right one, and the agent
+  searched them (one extra turn). A rarity-weighted score would separate them; not done.
 
 ## How modfence compares with popular tools
 
