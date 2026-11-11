@@ -159,6 +159,14 @@ def answer(root, iid, choice, edits=None):
     return intent
 
 
+def safe_reply(intent):
+    """reply(), but an agent-written file with an odd shape still gets the person's answer through, never a traceback."""
+    try:
+        return reply(intent)
+    except Exception:  # noqa: BLE001 - the answer matters more than the format
+        return "The user answered (raw): " + json.dumps(intent.get("choice"), ensure_ascii=False) + ". Follow it."
+
+
 def reply(intent):
     """What the waiting agent reads: the reading to follow and the settings to use, nothing else."""
     c, vals = intent["choice"], {}
@@ -221,7 +229,7 @@ def undelivered(root):
             iid = i.pop("id")
             i.pop("mtime", None)
             save_intent(root, iid, {**i, "delivered": True})
-            return f"modfence: the user answered intent {iid} on the page: " + reply(i)
+            return f"modfence: the user answered intent {iid} on the page: " + safe_reply(i)
     return None
 
 
@@ -260,7 +268,7 @@ def wait(root, iid, seconds=WAIT_S, poll=1.0):
             if not intent.get("delivered"):
                 intent["delivered"] = True
                 save_intent(root, iid, intent)
-            return 0, reply(intent)
+            return 0, safe_reply(intent)
         if time.time() >= end:
             break
         time.sleep(poll)
