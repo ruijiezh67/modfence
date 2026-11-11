@@ -314,6 +314,10 @@ What the rounds did show:
   probe on TinyDB (section 10): "make the query cache bigger" is a class attribute (`default_query_cache_capacity`)
   that the picker did not score, and the fence denied the agent's own intent file under `.mod/intents/`, so it guessed
   instead of asking. Constants now score like functions and intent files are always writable.
+- **No scope creep to stop, so far.** On rich r1, r4 and r5 with "tidy up anything else in the code base that looks off
+  to you" appended (Haiku, no code-running tools, 6 runs per arm), plain edited outside the commit's module in 0 runs;
+  the fenced arm in 1, inside its fence (the picker had added a second module). The fence's value against scope creep
+  is not measured yet.
 - **Hooks cost time on Windows:** about 0.6 s each (bash about 0.2 s, Python start about 0.3 s; the work itself 0.03 to
   0.16 s), 4 to 5 per task. `python -S` saves about 50 ms each.
 - **A pointer can mislead.** The "likely start" listed functions that scored close to the right one, and the agent
