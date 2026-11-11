@@ -96,8 +96,9 @@ function drawIntent(i) {
   const node = (ci, k) => {
     const c = cands[ci], r = rx(ci), name = r.name ?? c.name, desc = r.description ?? c.description ?? "";
     if (r.deleted) return `<div class="node reading gone" id="n-r${ci}"><s>${esc(name)}</s> <button type="button" class="link" data-undo="${ci}">undo</button></div>`;
-    return `<div class="node reading${S.pick === ci ? " on" : ""}" id="n-r${ci}" data-ci="${ci}" role="group" aria-label="Reading ${k + 1}: ${esc(name)}">`
-      + `<div class="rh"><button type="button" class="pk" data-pick="${ci}" aria-pressed="${S.pick === ci}" title="Pick this reading (key ${k + 1})"${done ? " disabled" : ""}>${k + 1}</button>` + (r.editing && !done
+    const on = S.pick === ci || (done && i.choice?.kind === "pick" && i.choice.index === ci); // an answered intent shows what was picked
+    return `<div class="node reading${on ? " on" : ""}" id="n-r${ci}" data-ci="${ci}" role="group" aria-label="Reading ${k + 1}: ${esc(name)}">`
+      + `<div class="rh"><button type="button" class="pk" data-pick="${ci}" aria-pressed="${on}" title="Pick this reading (key ${k + 1})"${done ? " disabled" : ""}>${k + 1}</button>` + (r.editing && !done
         ? `<input class="rn-in" value="${esc(name)}" aria-label="Reading name">` : `<b class="rn">${esc(name)}</b>`)
       + (done ? "" : `<span class="tools"><button type="button" data-edit="${ci}" title="Edit this reading">${r.editing ? "Done" : "Edit"}</button><button type="button" data-del="${ci}" title="Delete: this is not what I meant" aria-label="Delete">×</button></span>`) + `</div>`
       + (r.editing && !done ? `<textarea class="rd-in" rows="2" aria-label="Description">${esc(desc)}</textarea>` : desc ? `<p class="rd" title="${esc(desc)}">${esc(desc)}</p>` : "")
