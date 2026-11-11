@@ -34,7 +34,7 @@ function stateText(i) {
   if (s <= 0) return "<b>Your agent stopped waiting.</b> Answer here, then tell it to continue in the chat.";
   return `<b>Your agent is waiting for you</b>${s === Infinity ? "" : ` · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} left`}`;
 }
-setInterval(() => { const i = S.data?.intents.find((x) => x.id === S.cur), el = $("#state"); if (i && el) el.innerHTML = stateText(i) + ` · ${esc(i.id)}`; }, 1000);
+setInterval(() => { const i = S.data?.intents.find((x) => x.id === S.cur), el = $("#state"); if (i && el) el.innerHTML = stateText(i); }, 1000);
 
 async function load(first) {
   try { S.data = await api(`/api/mod?${q()}`); } catch (e) { $("#main").innerHTML = `<p class="empty">${esc(e.message)}</p>`; return; }
@@ -48,9 +48,10 @@ async function load(first) {
 }
 function drawList() {
   const list = $("#list"), it = S.data.intents;
-  list.innerHTML = it.map((i) => `<li><button type="button" class="item${left(i) > 0 ? " waiting" : ""}" data-id="${esc(i.id)}"${S.cur === i.id ? ' aria-current="true"' : ""}>`
+  const html = it.map((i) => `<li><button type="button" class="item${left(i) > 0 ? " waiting" : ""}" data-id="${esc(i.id)}"${S.cur === i.id ? ' aria-current="true"' : ""}>`
     + `<b>${esc(i.words)}</b><span>${esc(left(i) > 0 ? "your agent is waiting" : left(i) !== null ? "your agent stopped waiting" : i.status === "answered" ? "answered" : "open")} · ${esc(i.id)}</span></button></li>`).join("")
     || `<li class="empty">No intents yet. When you give your agent a task it cannot do without guessing, it writes one here.</li>`;
+  if (list.innerHTML !== html) list.innerHTML = html; // unchanged: keep focus on the list (a 2 s poll calls this)
   list.querySelectorAll("[data-id]").forEach((b) => (b.onclick = () => select(b.dataset.id)));
   $("#proj").setAttribute("aria-current", String(S.cur === "project"));
 }
@@ -69,12 +70,12 @@ function select(id) {
    into it. Nothing is preselected or recommended, and the order is shuffled per intent. */
 const SRCWORD = { guess: "guessed", memory: "remembered", user: "you said", default: "default" };
 const rx = (ci) => (S.rx[ci] ||= {});
-const scaleText = (sc) => `${{ one: "one run", sample: "a sample", full: "everything" }[sc.pick] || esc(sc.pick || "")} · ${sc.runs != null ? esc(sc.runs) + " runs" : "runs N/A"} · ${esc(sc.cost || "cost N/A")} · ${esc(sc.time || "time N/A")}`;
+const scaleText = (sc) => `${{ one: "one run", sample: "a sample", full: "everything" }[sc.pick] || esc(sc.pick || "")} · ${sc.runs != null ? esc(sc.runs) + (+sc.runs === 1 ? " run" : " runs") : "runs N/A"} · ${esc(sc.cost || "cost N/A")} · ${esc(sc.time || "time N/A")}`;
 function chip(s, editable) {
   const v = S.edits[s.key] ?? s.value, changed = S.edits[s.key] !== undefined;
   return `<span class="chip ${changed ? "user changed" : s.source}" data-key="${esc(s.key)}" title="${esc(s.key)}: ${changed ? "changed by you" : SRCWORD[s.source] || s.source}${s.source === "memory" && s.at ? " on " + esc(s.at) : ""}">`
+    + `<span class="sg" aria-hidden="true">${changed ? "●" : (SRC[s.source] || ["·"])[0]}</span><span class="vh">${changed ? "changed by you" : SRCWORD[s.source] || s.source}: </span>`
     + `<span class="ck">${esc(s.key)}</span>` + (editable ? `<button type="button" class="cv">${esc(v ?? "?")}</button>` : `<span class="cv">${esc(v ?? "?")}</span>`)
-    + (s.source === "guess" && !changed ? `<span class="cm" aria-hidden="true">?</span>` : "")
     + (s.source === "memory" && !changed && s.at ? `<span class="cd">${esc(short(s.at))}</span>` : "") + `</span>`;
 }
 function drawIntent(i) {
@@ -104,9 +105,9 @@ function drawIntent(i) {
       + (keys.length ? `<p class="diffs">${keys.map((key) => { const ch = (r.differs || {})[key] !== undefined, v = ch ? r.differs[key] : (c.differs || {})[key] ?? "—";
         return `<span class="chip alt${ch ? " changed" : ""}" data-ci="${ci}" data-dk="${esc(key)}"><span class="ck">${esc(key)}</span>${done ? `<span class="cv">${esc(v)}</span>` : `<button type="button" class="cv" title="Change this value">${esc(v)}</button>`}</span>`; }).join(" ")}</p>` : "")
       + (c.scale && multi ? `<p class="cost">${scaleText(c.scale)}</p>` : "")
-      + (c.evidence ? `<p class="ev" title="because ${esc(c.evidence)}">because ${esc(c.evidence)}</p>` : "") + `</div>`;
+      + (c.evidence ? `<p class="ev" title="${esc(c.evidence)}"><b>why</b> ${esc(c.evidence)}</p>` : "") + `</div>`;
   };
-  $("#main").innerHTML = `<p class="state" id="state">${stateText(i)} · ${esc(i.id)}</p>`
+  $("#main").innerHTML = `<p class="state" id="state" role="status" title="${esc(i.id)}">${stateText(i)}</p>`
     + `<div class="graph" id="graph"><svg class="wires" id="wires" aria-hidden="true"></svg>`
     + `<p class="cap">What you said</p><p class="cap">${done ? "What it understood" : "Which one did you mean?"}</p><p class="cap">Where the agent is</p>`
     + `<div class="col">`
@@ -117,10 +118,9 @@ function drawIntent(i) {
     + `</div><div class="col">${order.map(node).join("")}`
     + (done ? "" : `<div class="node reading own${S.pick === "own" ? " on" : ""}" id="n-own"><div class="rh"><kbd>${cands.length + 1}</kbd><b class="rn">None of these</b></div><input type="text" id="own" placeholder="Say it in your own words${keys.length ? `, e.g. ${esc(keys.map((k) => k + " …").join(", "))}` : ""}" value="${esc(S.own)}"></div>`)
     + `</div><div class="col plan">${plan.map((p, k) => `<div class="node step${k === 1 ? " here" : ""}" id="n-p${k}">${k === 1 ? `<span class="nl">The agent stopped here</span>` : ""}<span class="st" title="${esc(p)}">${esc(p || (k ? "next" : "before"))}</span>`
-      + (k === 1 && multi && !pc ? `<span class="sc">cost depends on your pick</span>` // no reading's cost stands in as a default
-        : k === 1 && sc.pick ? `<span class="sc">${scaleText(sc)}</span>` : "") + `</div>`).join("")}${fenceNode()}</div>`
+      + (k === 1 && !multi && sc.pick ? `<span class="sc">${scaleText(sc)}</span>` : "") + `</div>`).join("")}${fenceNode()}</div>`  // a reading's own cost is on the reading
     + `</div>`
-    + `<p class="legend"><span class="chip guess"><span class="cv">x</span><span class="cm">?</span></span> guessed <span class="chip memory"><span class="cv">x</span><span class="cd">date</span></span> remembered <span class="chip user"><span class="cv">x</span></span> you said <span class="chip default"><span class="cv">x</span></span> default${done ? "" : " · click a value to change it"}</p>`
+    + `<p class="legend"><span class="chip guess"><span class="sg">?</span></span> guessed <span class="chip memory"><span class="sg">◷</span><span class="cd">date</span></span> remembered <span class="chip user"><span class="sg">●</span></span> you said <span class="chip default"><span class="sg">○</span></span> default${done ? "" : " · click a value to change it"}</p>`
     + (done ? `<p class="done">You ${i.choice?.kind === "chat" ? "answered in the chat" : "chose"}: ${esc(["own", "chat"].includes(i.choice?.kind) ? i.choice.text : i.choice?.name || cands[i.choice?.index]?.name || "")}. Your agent has it.</p>`
       : `<div class="bar"><span class="what" id="what"></span><button type="button" class="go" id="go" disabled>Continue <kbd>Enter</kbd></button></div>`);
   wireIntent(i);
@@ -161,7 +161,7 @@ function wireIntent(i) {
   main.querySelectorAll("[data-undo]").forEach((b) => (b.onclick = () => { rx(+b.dataset.undo).deleted = false; redraw(); }));
   main.querySelectorAll("[data-w]").forEach((b) => (b.onclick = () => { const [ci, w] = b.dataset.w.split(":").map(Number); rx(ci).weight = w; redraw(); }));
   const own = $("#own");
-  if (own) { own.oninput = () => { S.own = own.value; S.pick = own.value.trim() ? "own" : null; mark(i); $("#n-own").classList.toggle("on", S.pick === "own"); wires(); }; }
+  if (own) { own.onkeydown = (e) => { if (e.key === "Enter" && S.pick === "own") { e.preventDefault(); send(i); } }; own.oninput = () => { S.own = own.value; S.pick = own.value.trim() ? "own" : null; mark(i); $("#n-own").classList.toggle("on", S.pick === "own"); wires(); }; }
   main.querySelectorAll(".diffs .chip[data-dk]").forEach((c) => {
     const b = c.querySelector("button.cv");
     if (b) b.onclick = () => {
@@ -187,7 +187,7 @@ function wireIntent(i) {
   requestAnimationFrame(wires);
 }
 const cands = (i) => i.candidates || [];
-function choose(ci) { S.pick = ci; S.own = ""; const i = S.data.intents.find((x) => x.id === S.cur); drawIntent(i); }
+function choose(ci) { S.pick = ci; S.own = ""; const i = S.data.intents.find((x) => x.id === S.cur); drawIntent(i); $(`#n-r${ci}`)?.focus(); }
 function mark(i) {
   const go = $("#go"), what = $("#what"), n = Object.keys(S.edits).length + Object.keys((typeof S.pick === "number" && S.rx[S.pick]?.differs) || {}).length;
   if (!go) return;
@@ -246,6 +246,7 @@ function drawProject() {
 /* ---------- wiring ---------- */
 addEventListener("keydown", (e) => {
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "")) return;
+  if (e.key === "Enter" && e.target.closest?.("button, a, summary") && e.target.id !== "go") return; // that control's own action
   const i = S.data?.intents.find((x) => x.id === S.cur);
   if (!i || i.status === "answered") return;
   const order = shuffled((i.candidates || []).length, i.id || "");

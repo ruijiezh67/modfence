@@ -57,7 +57,7 @@ h3 { margin: 0 0 8px; font-size: 11.5px; font-weight: 650; letter-spacing: 0.06e
 /* the decision graph: your words -> readings -> the step where the agent stopped */
 .state { margin: 0 0 14px; font-size: 13px; color: var(--text-3); }
 .state b { color: var(--accent-ink); }
-.graph { position: relative; display: grid; grid-template-columns: minmax(220px, 0.95fr) minmax(300px, 1.35fr) minmax(170px, 0.7fr); gap: 22px 64px; align-items: center; }
+.graph { position: relative; display: grid; grid-template-columns: minmax(220px, 0.95fr) minmax(300px, 1.35fr) minmax(170px, 0.7fr); gap: 22px 64px; align-items: start; }
 .cap { margin: 0 0 -10px; font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); }
 .wires { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
 .wires path { fill: none; stroke: var(--line-2); stroke-width: 1.5; }
@@ -89,7 +89,7 @@ details.node > summary::before { content: "+ "; } details.node[open] > summary::
 .rn { font-size: 15px; line-height: 1.3; }
 .rn-in { flex: 1; font: 700 15px var(--font); border: 1.5px solid var(--text); border-radius: 4px; padding: 2px 6px; background: var(--bg); color: var(--text); }
 .rd-in { font: 13px/1.45 var(--font); border: 1.5px solid var(--text); border-radius: 4px; padding: 4px 6px; background: var(--bg); color: var(--text); resize: vertical; }
-.tools { display: flex; gap: 2px; opacity: 0.55; }
+.tools { display: flex; gap: 2px; }
 .reading:hover .tools, .reading:focus-within .tools { opacity: 1; }
 .tools button, .link { border: 0; background: none; font-size: 12px; color: var(--text-3); cursor: pointer; padding: 2px 5px; border-radius: 3px; }
 .tools button:hover, .link:hover { background: var(--sunken); color: var(--text); }
@@ -157,3 +157,8 @@ kbd { font: 600 11px var(--mono); border: 1px solid currentColor; border-radius:
 /* an agent writes long: two lines per description and evidence, three per plan step; the rest on hover */
 .rd, .ev { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .step .st { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+
+/* a value's source: glyph for the eye, word for screen readers */
+.chip .sg { font-size: 10px; color: var(--text-2); }
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.ev b { font-weight: 650; color: var(--text-2); }
