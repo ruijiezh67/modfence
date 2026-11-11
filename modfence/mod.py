@@ -273,10 +273,11 @@ PROTOCOL = ("When the user's words leave a setting open (a new task or experimen
             "\"scale\" if it differs}}], \"settings\": [{{\"key\", \"value\", \"source\": user|default|memory|guess, \"at\": "
             "date if memory, \"from\": the user's words it comes from or null}}], \"scale\": {{\"pick\": one|sample|full, "
             "\"runs\", \"cost\", \"time\"}}, \"plan\": [\"prev step\", \"this step\", \"next step\"]}}, then run `{cmd} mod wait "
-            "<id>` and follow its answer (no shell: end your turn; the answer comes with the next message). Read the code and the confirmed settings first; ask only what they cannot settle. "
-            "Values are concrete (a number, not \"a smaller value\"). Short: a name of 2-4 words, one line of description and of "
+            "<id>` and follow its answer (no shell: end your turn). Read the code and the confirmed settings first; ask only what they cannot settle. "
+            "Values are concrete (a number, not \"a smaller value\"). Short: 2-4 word names, one-line description and "
             "evidence. Every field in English. Never mark a reading as "
-            "recommended. Skip this for clear small edits.")
+            "recommended. Skip this for clear small edits, and for a code tweak where any sensible value would do: pick one and name it in "
+            "your reply.")
 
 
 def context(root, cmd="modfence"):
