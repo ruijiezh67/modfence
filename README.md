@@ -79,6 +79,7 @@ Write-ups in [docs/EVALUATION.md](docs/EVALUATION.md). The short version, newest
 - **The fence is a guess from words.** A catch-all module can outscore the right one; a second module is fenced when it scores at least half as well, and a wrong deny is one click to allow.
 - **The hook sees file tools, not shell commands.** A script can still write outside the fence; the receipt reports it.
 - **Hooks cost time:** about 0.6 s each on Windows, 4-5 per task.
+- **Stops are judged by the agent.** Haiku stopped on "bigger" where its own guess was fine and not on "more often" where it was wrong, until the protocol limited stops to values people want exactly. Measured with a simulated person only.
 - **No user study yet.**
 
 ## Help test it
