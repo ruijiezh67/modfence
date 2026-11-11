@@ -926,6 +926,11 @@ class JitTest(unittest.TestCase):
               "def perform_update(fields):\n    return update_fields(fields)\n")
         write(os.path.join(self.d, "app/ops.py"), "def delete(field):\n    return field\n\ndef increment(field):\n    return field\n")
         self.assertEqual(self.jit.choose(self.jit.candidates(self.d, "add an update operation toggle(field) that flips a boolean field"))[0], "operations")
+        # rich r1: "do not run the tests, only read and edit the code" moved the fence; how to work is not what to work on
+        write(os.path.join(self.d, "app/core/runner.py"), "def run_code(code):\n    read_code(code)\n\ndef read_code(code):\n    return edit(code)\n")
+        task = "add an update operation toggle(field) that flips a boolean field"
+        self.assertEqual(self.jit.choose(self.jit.candidates(self.d, task + ". Do not run the tests; only read and edit the code.")),
+                         self.jit.choose(self.jit.candidates(self.d, task)))
 
     def test_a_fence_the_person_set_is_kept(self):
         scope_guard.arm(self.d, ["@module:cli"], False, "cli")

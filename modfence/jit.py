@@ -14,13 +14,17 @@ SECOND = 0.5       # a second module at half the first's score is fenced too: a 
                    # rich r3: a catch-all module outscored the right one 46 to 26), a looser fence costs little
 WHERE = 3          # likely places shown to the agent; more is a search it does better itself
 NAMED = 4          # per task word in a module's name or purpose: the person's (or the map's) own words for it
+# Words about how to work and how to answer, not what to work on: "do not run the tests, reply in English" moved rich r1
+# to the wrong module (a rare word like "code" hits a few unrelated functions hard). Domain words (file, update) stay.
+META = _words("run runs read edit edits code tests scripts reply answer english short paragraph anything please sure "
+              "change fix explain check verify commit write summary brief concise")
 
 
 def candidates(root, task, mods=None, k=3):
     """[{module, score, where: [(path, line, name)]}], best first. A function scores 3 per task word in its name or its
     file's name and 1 per word in its body; a module scores the sum of its best WHERE functions plus NAMED per task
     word in its name and purpose."""
-    q = _words(task or "")
+    q = _words(task or "") - META
     mods = mods if mods is not None else modules.load(root)
     if not q or not mods:
         return []
