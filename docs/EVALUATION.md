@@ -336,7 +336,8 @@ Haiku 5.5, a simulated person whose goal for each task was drawn once with `rand
 in the same session. Mod arm: the person picks the reading that holds the goal, else writes it.
 
 Reproduce: `python bench/rework_probe.py --runs 3` (it builds the toy in a temporary folder); results in
-`bench/results/rework.jsonl` (28078d3) and `rework_40a0199.jsonl`. Three rounds, the first from the author's harness on
+`bench/results/rework.jsonl` and `rework_rep2.jsonl` (28078d3: together 18 runs per arm, -40% cost, -8% time, 18 of 18
+stopped, no correction) and `rework_40a0199.jsonl`. Three rounds, the first from the author's harness on
 the same toy:
 
 | Round | Arm | Runs | Right in the end | Corrections | Mean cost | Mean time |
@@ -347,6 +348,8 @@ the same toy:
 | `bench/` (40a0199) | with the plugin | 9 | 9/9 | 0 | $0.0099 (-40%) | 37.2 s (-5%) |
 | `bench/` (28078d3) | plain | 9 | 9/9 | 7 | $0.0157 | 39.4 s |
 | `bench/` (28078d3) | with the plugin | 9 | 9/9 | 0 | $0.0104 (-33%) | 39.1 s |
+| `bench/` (28078d3, repeat) | plain | 9 | 9/9 | 9 | $0.0181 | 43.4 s |
+| `bench/` (28078d3, repeat) | with the plugin | 9 | 9/9 | 0 | $0.0100 (-45%) | 36.7 s |
 
 Every plain first guess missed (epochs 50 or 100, lr 0.001, a guessed speed-up), so every plain run needed one
 correction. The plugin's agent stopped in 9 of 9 runs and was right first time in all 9 (3 picks, 6 own words: no
@@ -366,6 +369,8 @@ shorter name for the default table", "make the caching middleware write to disk 
 | 3dd16f7 | with the plugin | 9/9 | 4 | 4 | $0.0164 (+6%) | 36.6 s |
 | 28078d3 | plain | 9/9 | 6 | N/A | $0.0150 | 27.5 s |
 | 28078d3 | with the plugin | 9/9 | 6 | 0 | $0.0138 (-8%) | 31.2 s |
+| 28078d3, repeat | plain | 9/9 | 6 | N/A | $0.0153 | 27.5 s |
+| 28078d3, repeat | with the plugin | 9/9 | 5 | 0 | $0.0124 (-19%) | 28.6 s |
 
 The agent stopped most where its guess was right (plain chose 100 for "bigger" every time) and least where it was
 wrong. In the first round it also wrote its intent and edited the code anyway; since 3dd16f7 an open intent holds edits
