@@ -863,6 +863,15 @@ class ModTest(unittest.TestCase):
         settings = {s["key"]: s for s in mod.load_project(d)["settings"]}
         self.assertEqual((settings["runs"]["value"], settings["runs"]["source"]), ("2", "user"), "confirmed once, for good")
         self.assertNotIn("model", settings, "a default the person did not touch is not a confirmation")
+        mod.save_intent(d, "r0", {**intent, "status": "answered", "waiting_at": "x", "choice": {"kind": "own", "text": "just one run"}})
+        os.utime(mod.intent_path(d, "r0"), (time.time() + 60, time.time() + 60))  # the newest intent
+        from modfence import jit
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            jit.hook(json.dumps({"cwd": d, "prompt": "continue"}))
+        self.assertIn("just one run", buf.getvalue(), "an answer the agent missed comes with the next prompt")
+        self.assertIsNone(mod.undelivered(d), "and only once")
+        os.remove(mod.intent_path(d, "r0"))
         ctx = mod.context(d)
         self.assertIn("runs=2", ctx)
         self.assertIn("mod wait", ctx)

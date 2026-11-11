@@ -180,6 +180,17 @@ def reply(intent):
     return head + ". Settings: " + ("; ".join(rows) or "none") + ". Follow exactly this; ask again only if it turns out impossible."
 
 
+def undelivered(root):
+    """The newest intent's answer if its agent never read it (it stopped waiting first), marked as read; else None."""
+    for i in intents(root)[:1]:
+        if i.get("status") == "answered" and not i.get("delivered") and i.get("waiting_at"):
+            iid = i.pop("id")
+            i.pop("mtime", None)
+            save_intent(root, iid, {**i, "delivered": True})
+            return f"modfence: the user answered intent {iid} on the page: " + reply(i)
+    return None
+
+
 def wait(root, iid, seconds=WAIT_S, poll=1.0):
     """Block until the person answers on the page. (exit code, text for the agent)."""
     intent = load_intent(root, iid)
@@ -195,6 +206,9 @@ def wait(root, iid, seconds=WAIT_S, poll=1.0):
     while True:
         intent = load_intent(root, iid) or intent
         if intent.get("status") == "answered":
+            if not intent.get("delivered"):
+                intent["delivered"] = True
+                save_intent(root, iid, intent)
             return 0, reply(intent)
         if time.time() >= end:
             break

@@ -136,11 +136,14 @@ def hook(raw):
     root = project_root(ev.get("cwd"))
     if not root:
         return 0
+    answer = mod.undelivered(root)  # answered on the page after the agent stopped waiting: hand it over now
     pick, cands, _ = apply(root, ev.get("prompt") or "")
-    if not pick:
+    agent, person = message(pick, cands) if pick else (None, None)
+    agent = "\n".join(x for x in (answer, agent) if x)
+    if not agent:
         return 0
-    agent, person = message(pick, cands)
-    print(json.dumps({"systemMessage": person, "hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": agent}}))
+    out = {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": agent}}
+    print(json.dumps({**out, "systemMessage": person} if person else out))
     return 0
 
 
