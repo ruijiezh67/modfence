@@ -253,12 +253,9 @@ def _disk_cache(root, save=False):
     """A hook is a new process each time: without this it parsed every file again (0.7 s on rich, at every stop)."""
     f = os.path.join(root, ".modfence", "parsed.json")
     if save:
+        if not os.path.isdir(os.path.dirname(f)):  # viewing a project never writes into it; a fenced one has .modfence
+            return
         try:
-            os.makedirs(os.path.dirname(f), exist_ok=True)
-            gi = os.path.join(os.path.dirname(f), ".gitignore")
-            if not os.path.exists(gi):  # modfence's state stays out of git
-                with open(gi, "w", newline="\n") as g:
-                    g.write("*\n")
             mine = {k: [list(v[0]), v[1]] for k, v in _PARSED.items() if k.startswith(root + os.sep)}
             with open(f + ".tmp", "w", encoding="utf-8") as g:
                 json.dump(mine, g)
