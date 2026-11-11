@@ -64,12 +64,13 @@ Write-ups in [docs/EVALUATION.md](docs/EVALUATION.md). The short version, newest
 
 | Question | Result |
 |---|---|
-| When a prompt leaves a setting open, is stopping to ask cheaper than guessing and being corrected? (toy project, Haiku, simulated person, 3 tasks x 3) | On experiment settings, yes: 33-41% lower cost over three rounds (toy project), no correction needed; `bench/rework_probe.py` reproduces it. On code constants in TinyDB it did not pay (+6% to +12%) until the protocol stopped asking where any sensible value would do; then -8%, no stops. |
-| Does the fence save cost or time on a larger project? (rich, about 30k lines, Haiku, 5 real past fixes, 25 runs per arm over two plugin versions, edit-only) | No saving. It cost 3-5% more and took 14-17% longer until the hooks were sped up and the picker fixed; the latest round is even (-1% cost, +3% time). Every run edited the right files. |
+| When a prompt leaves a setting open, is stopping to ask cheaper than guessing and being corrected? (Haiku, a simulated person; a toy project's experiment settings and TinyDB's code constants, 3 tasks x 3 each) | On experiment settings, yes: 33-41% lower cost over three rounds (toy project), no correction needed; `bench/rework_probe.py` reproduces it. On code constants in TinyDB it did not pay (+6% to +12%) until the protocol stopped asking where any sensible value would do; then -8%, no stops. |
+| Does the fence save cost or time on a larger project? (rich, about 30k lines, Haiku, 5 real past fixes, 35 runs per arm over three plugin versions, edit-only) | No saving. It cost 3-5% more and took 14-17% longer until the hooks were sped up and the picker fixed; the latest round is even (-1% cost, +3% time). Every run edited the right files. |
 | Does the plugin save cost or time on a small project? (TinyDB, 4,900 lines, Haiku, 3 tasks x 3 runs, edit-only) | No. Cost equal within noise; 2-3 s slower per task, from hook start-up (about 0.6 s per hook on Windows). |
-| Does a one-line fence with likely places save on a larger one? (rich, Sonnet, 5 tasks x 3 runs) | 25% lower cost and 46% less time than plain Claude Code, 14/15 vs 15/15 passing; but plain cost 70% more in that round than in the round before, and the shipped plugin did not repeat it (first row). The round before: the fence cost 54% more. |
+| Does a one-line fence with likely places save on a larger one? (rich, Sonnet, 5 tasks x 3 runs) | 25% lower cost and 46% less time than plain Claude Code, 14/15 vs 15/15 passing; but plain cost 70% more in that round than in the round before, and the shipped plugin did not repeat it (row 2). The round before: the fence cost 54% more. |
 | Does a fence save on well-specified tasks from a project's history? (private project, Sonnet, 4 tasks x 3) | No: 18-29% more cost. |
-| What does a wrong fence cost? | The task. Twice the module picker chose wrong (TinyDB, rich) and the right edit was denied; both were fixed and are now regression tests. |
+| What does a wrong fence cost? | The task. These probes found five ways the picker denied the right edit (words about how to work, a catch-all module, a constant it could not see, its own intent file, a plural); each is fixed and a regression test. |
+| Does the fence stop scope creep? (rich, "tidy up anything else" appended, Haiku, 6 runs per arm) | Not shown yet: plain wandered in 0 of 6 runs; the fenced arm in 1, inside its own two-module fence. |
 | Do the contract checks raise real alarms? | 8/8 flags on three git histories were real interface changes. |
 
 ## Limits
