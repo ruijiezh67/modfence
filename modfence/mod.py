@@ -76,6 +76,8 @@ def confirm(root, settings):
     p = load_project(root) or {"modules": None, "settings": []}
     by = {s["key"]: s for s in p["settings"]}
     for s in settings:
+        if s.get("value") in (None, ""):  # an agent's blank is not something the person confirmed (seen: epochs=None)
+            continue
         by[s["key"]] = {"key": s["key"], "value": s["value"], "source": "user", "at": today()}
     p["settings"] = list(by.values())
     save_project(root, p)

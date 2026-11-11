@@ -863,6 +863,8 @@ class ModTest(unittest.TestCase):
         settings = {s["key"]: s for s in mod.load_project(d)["settings"]}
         self.assertEqual((settings["runs"]["value"], settings["runs"]["source"]), ("2", "user"), "confirmed once, for good")
         self.assertNotIn("model", settings, "a default the person did not touch is not a confirmation")
+        mod.confirm(d, [{"key": "blank", "value": None, "source": "guess"}])
+        self.assertNotIn("blank", {s["key"] for s in mod.load_project(d)["settings"]}, "a blank is never confirmed")
         mod.save_intent(d, "r0", {**intent, "status": "answered", "waiting_at": "x", "choice": {"kind": "own", "text": "just one run"}})
         os.utime(mod.intent_path(d, "r0"), (time.time() + 60, time.time() + 60))  # the newest intent
         from modfence import jit
